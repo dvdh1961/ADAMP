@@ -1,6 +1,4 @@
-<H1>ADAM+</H1> 
-![Alt text](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAM.png)
-![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAM.png)
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP.png)
 
 A ColecoVision and ADAM Emulator & Debugging Suite for Windows
 
