@@ -34,3 +34,22 @@ It serves as a central platform for integrating a wide range of hardware-related
 ## ADAM+ The Emulated Computer Entertainment System
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/AdamPpic1.png)
+
+## Credits
+
+Thanks to wavemotion-dave, who improved a lot my DS version of the Coleco Emulator, memory management of this emulator is based 
+on his version (https://github.com/wavemotion-dave/ColecoDS).
+
+Special thanks to,
+Marat Fayzullin, as the author of ColEM which is the code for the core emulation (https://fms.komkon.org/ColEm/).
+The authors of EightyOne, the skeleton of this emulator is based on it (https://sourceforge.net/projects/eightyone-sinclair-emulator/).
+E.mul T.wo for the fantastic emulator written in c++Builder, one of my reasons to port it to QT, and part of my hardware project ADAM+.  
+
+## Support ADAM+
+
+ADAM+ is free but you can donate to support its development:
+Paypal
+
+## License
+
+ADAM+ is licensed under the GNU General Public License v3.0 License, see LICENSE for more information.
