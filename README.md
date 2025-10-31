@@ -1,4 +1,6 @@
 <H1>ADAM+</H1> 
+![Alt text](https://github.com/dvdh1961/ADAMP/blob/main/path/to/image.png)
+
 A ColecoVision and ADAM Emulator & Debugging Suite for Windows
 
 ADAM+ is a modern emulator and development toolkit for the ColecoVision and Coleco ADAM systems, built with Qt6 and inspired by the original EmulTwo project.
