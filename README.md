@@ -23,3 +23,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 - 🪛 **Built-in Debugging Tools**
   - Tile, Sprite, VRAM, RAM, and Disassembly viewers  
   - Perfect for tracking bugs in homebrew or development builds
+
+## 💡Info
+- You need the free community QT Creator to build the project.
+
