@@ -10,5 +10,5 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 [![GitHub release](https://img.shields.io/github/release/DannyVdH/ADAM-Emu.svg)](https://github.com/DannyVdH/ADAM-Emu/releases/latest)
 ![Platform](https://img.shields.io/badge/windows32-green.svg)
-![Current Release](https://img.shields.io/badge/version-v0.1.1025-blue.svg)
+![Current Release](https://img.shields.io/badge/version-v1.0-blue.svg)
 ![Total Downloads](https://img.shields.io/github/downloads/DannyVdH/ADAM-Emu/total.svg)
