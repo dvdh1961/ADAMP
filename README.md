@@ -15,11 +15,6 @@ It serves as a central platform for integrating a wide range of hardware-related
 ## 🚀 Features
 
 - 🎮 **ColecoVision** game support (`.rom`, `.bin`, `.col`)
-- 💾 **Coleco ADAM** game support (`.ddp`, `.dsk`)
-- 🔊 **Super Game Module** support (inclusief AY-soundchip)
-- 🧠 **Megacart Bankswitching** up to 512 KB
-- 🎯 **Full Controller Button Mapping**
-- 💾 **Save / Load Game State**
 - 🪛 **Built-in Debugging Tools**
   - Tile, Sprite, VRAM, RAM, and Disassembly viewers  
   - Perfect for tracking bugs in homebrew or development builds
@@ -27,3 +22,10 @@ It serves as a central platform for integrating a wide range of hardware-related
 ## 💡Info
 - You need the free community QT Creator to build the project.
 
+## 🚧 ToDo
+
+- 💾 **Coleco ADAM** game support (`.ddp`, `.dsk`)
+- 🔊 **Super Game Module** support (inclusief AY-soundchip)
+- 🧠 **Megacart Bankswitching** up to 512 KB
+- 💾 **Save / Load Game State**
+- 🎯 **Full Controller Button Mapping**
