@@ -30,3 +30,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 - 🧠 **Megacart Bankswitching** up to 512 KB
 - 💾 **Save / Load Game State**
 - 🎯 **Full Controller Button Mapping**
+
+## ADAM+ The Emulated Computer Entertainment System
+
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/Adamppic1.png)
