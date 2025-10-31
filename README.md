@@ -33,4 +33,4 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ## ADAM+ The Emulated Computer Entertainment System
 
-![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/Adamppic1.png)
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/AdamPpic1.png)
