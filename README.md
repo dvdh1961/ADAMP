@@ -9,6 +9,6 @@ It serves as a central platform for integrating a wide range of hardware-related
 ## Downloads
 
 [![GitHub release](https://img.shields.io/github/release/dvdh1961/ADAMP.svg)](https://github.com/dvdh1961/ADAMP/releases/latest)
-![Platform](https://img.shields.io/badge/windows32-green.svg)
+![Platform](https://img.shields.io/badge/Current%20Release%20-windows32-green.svg)
 ![Current Release](https://img.shields.io/badge/Current%20Release%20-0.1.1025-blue)
 ![Total Downloads](https://img.shields.io/github/downloads/dvdh1961/ADAMP/total.svg)
