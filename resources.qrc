@@ -1,6 +1,0 @@
-<RCC>
-    <qresource prefix="/images">
-        <file>adamp_logo.png</file>
-        <file>ADAMP.png</file>
-    </qresource>
-</RCC>
