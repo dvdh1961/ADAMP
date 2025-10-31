@@ -52,4 +52,5 @@ Paypal
 
 ## License
 
-ADAM+ is licensed under the GNU General Public License v3.0 License, see LICENSE for more information.
+ADAM+ is licensed under the [GNU General Public License v3.0](https://github.com/dvdh1961/ADAMP/blob/master/LICENSE), see [LICENSE](https://github.com/dvdh1961/ADAMP/blob/master/LICENSE) for more information.
+
