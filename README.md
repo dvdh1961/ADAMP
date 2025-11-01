@@ -47,8 +47,9 @@ E.mul T.wo for the fantastic emulator written in c++Builder, one of my reasons t
 
 ## Support ADAM+
 
-ADAM+ is free but you can donate to support its development:
-Paypal
+ADAM+ is free but you can donate to support its development
+
+If you like this project, consider supporting it via [![PayPal](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://www.paypal.com/donate?business=dannyvdh@pandora.be).
 
 ## License
 
