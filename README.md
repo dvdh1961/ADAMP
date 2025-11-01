@@ -7,6 +7,9 @@ The software has been completely redesigned from the ground up, focusing on stab
 
 It serves as a central platform for integrating a wide range of hardware-related devices, all developed as part of the broader ADAM+ hardware project.
 
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_Hardware.png)
+
+
 ## 💾 Downloads
 
 [![release](https://img.shields.io/badge/Latest%20release-windows32-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.1.1025/ADAMP_EMU.zip)
