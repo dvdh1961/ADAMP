@@ -37,13 +37,11 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ## Credits
 
-Thanks to wavemotion-dave, who improved a lot my DS version of the Coleco Emulator, memory management of this emulator is based 
-on his version (https://github.com/wavemotion-dave/ColecoDS).
-
-Special thanks to,
-Marat Fayzullin, as the author of ColEM which is the code for the core emulation (https://fms.komkon.org/ColEm/).
-The authors of EightyOne, the skeleton of this emulator is based on it (https://sourceforge.net/projects/eightyone-sinclair-emulator/).
-E.mul T.wo for the fantastic emulator written in c++Builder, one of my reasons to port it to QT, and part of my hardware project ADAM+.  
+Thanks to everyone who shared their knowledge and inspiration — without them, this project would never have come to life.
+wavemotion-dave  (https://github.com/wavemotion-dave/ColecoDS)
+Marat Fayzullin  (https://fms.komkon.org/ColEm/)
+EightyOne        (https://sourceforge.net/projects/eightyone-sinclair-emulator/)
+E.mul T.wo       (https://github.com/alekmaul/emultwo).  
 
 ## Support ADAM+
 
