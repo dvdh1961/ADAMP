@@ -112,6 +112,8 @@ extern void Printer(BYTE V);
 extern BYTE coleco_savestate(char *filename);
 extern BYTE coleco_loadstate(char *filename);
 
+extern void coleco_set_machine_type(int isAdam);
+
 #ifdef __cplusplus
 extern "C" void RenderCalcPalette(BYTE *cv_palette_out, unsigned long nbcolors);
 #else

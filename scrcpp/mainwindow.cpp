@@ -9,6 +9,8 @@
 #include "patternwindow.h"
 #include "spritewindow.h"
 #include "settingswindow.h"
+#include "hardwarewindow.h"
+#include "coleco.h"
 
 // Qt includes
 #include <QMenuBar>
@@ -66,7 +68,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_screenWidget->setScale(2.9);
 
     m_logoLabel = new QLabel(this);
-    QPixmap logoPixmap(":/images/adamp_logo.png");
+    QPixmap logoPixmap(":/images/images/adamp_logo.png");
     m_logoLabel->setPixmap(logoPixmap);
     QVBoxLayout *mainLayout = new QVBoxLayout;
     mainLayout->setContentsMargins(0, 0, 0, 0); // Geen witruimte rondom
@@ -160,33 +162,64 @@ void MainWindow::onOpenSettings()
     if (m_settingsWindow->exec() == QDialog::Accepted) { // <--- AANGEPAST
         // 3. Als de gebruiker op OK klikt, haal de waarden op...
         m_romPath = m_settingsWindow->romPath(); // <--- AANGEPAST
-
         // 4. ...en sla ze direct op.
         saveSettings();
     }
 }
 
-// Laadt de instellingen uit config.ini (JSON)
+// Laadt de instellingen
 void MainWindow::loadSettings()
 {
-    QSettings settings; // Gebruikt automatisch de Org/App naam
+    QSettings settings;
+    m_romPath      = settings.value("romPath", ".").toString();
+    m_paletteIndex = settings.value("video/palette", 0).toInt();
+    m_machineType  = settings.value("machine/type", 0).toInt();
 
-    // Haal de waarde op. Als "romPath" niet bestaat, gebruik "."
-    m_romPath = settings.value("romPath", ".").toString();
+    // Nieuw: Additional Hardware
+    m_sgmEnabled  = settings.value("hardware/sgm",  false).toBool();
+    m_f18aEnabled = settings.value("hardware/f18a", false).toBool();
 
-    qDebug() << "Settings loaded. ROM path:" << m_romPath;}
+    // Nieuw: Additional Controllers
+    m_ctrlSteering    = settings.value("controller/steering",    false).toBool();
+    m_ctrlRoller      = settings.value("controller/roller",      false).toBool();
+    m_ctrlSuperAction = settings.value("controller/superaction", false).toBool();
 
-// Slaat de instellingen op naar config.ini (JSON)
+    qDebug() << "Loaded settings:"
+             << "machine="  << m_machineType
+             << "palette="  << m_paletteIndex
+             << "sgm="      << m_sgmEnabled
+             << "f18a="     << m_f18aEnabled
+             << "steer="    << m_ctrlSteering
+             << "roller="   << m_ctrlRoller
+             << "saction="  << m_ctrlSuperAction;
+}
+
+// Slaat de instellingen op
 void MainWindow::saveSettings()
 {
     QSettings settings;
+    settings.setValue("romPath",        m_romPath);
+    settings.setValue("video/palette",  m_paletteIndex);
+    settings.setValue("machine/type",   m_machineType);
 
-    // Sla de waarde op
-    settings.setValue("romPath", m_romPath);
+    // Nieuw: Additional Hardware
+    settings.setValue("hardware/sgm",   m_sgmEnabled);
+    settings.setValue("hardware/f18a",  m_f18aEnabled);
 
-    qDebug() << "Settings saved. ROM path:" << m_romPath;
+    // Nieuw: Additional Controllers
+    settings.setValue("controller/steering",    m_ctrlSteering);
+    settings.setValue("controller/roller",      m_ctrlRoller);
+    settings.setValue("controller/superaction", m_ctrlSuperAction);
+
+    qDebug() << "Settings saved."
+             << "palette=" << m_paletteIndex
+             << "machine=" << m_machineType
+             << "sgm="     << m_sgmEnabled
+             << "f18a="    << m_f18aEnabled
+             << "steer="   << m_ctrlSteering
+             << "roller="  << m_ctrlRoller
+             << "saction=" << m_ctrlSuperAction;
 }
-
 
 void MainWindow::setUpLogWindow()
 {
@@ -208,6 +241,13 @@ void MainWindow::setStatusBar()
                    & ~Qt::WindowMinimizeButtonHint);
 
     this->setFixedWidth(770);
+
+    // --- NIEUWE LABEL: systeemnaam ---
+    m_sysLabel = new QLabel("COLECO", this);
+    m_sysLabel->setObjectName("sysLabel");
+    m_sysLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    m_sysLabel->setMinimumWidth(80);
+    m_sysLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
 
     m_stdLabel = new QLabel(this);
     m_stdLabel->setObjectName("stdLabel");
@@ -239,6 +279,9 @@ void MainWindow::setStatusBar()
     m_sepLabel3 = new QLabel("|", this);
     m_sepLabel4 = new QLabel("|", this);
 
+    // Volgorde in statusbar: systeem | std | fps | run | rom
+    statusBar()->addWidget(m_sysLabel);
+    statusBar()->addWidget(m_sepLabel1);
     statusBar()->addWidget(m_stdLabel);
     statusBar()->addWidget(m_sepLabel2);
     statusBar()->addWidget(m_fpsLabel);
@@ -250,14 +293,17 @@ void MainWindow::setStatusBar()
     QFont statusFont("Roboto", 12);
     statusFont.setBold(false);
 
+    m_sysLabel->setFont(statusFont);
     m_stdLabel->setFont(statusFont);
     m_fpsLabel->setFont(statusFont);
     m_romLabel->setFont(statusFont);
+    m_runLabel->setFont(statusFont);
     m_sepLabel1->setFont(statusFont);
     m_sepLabel2->setFont(statusFont);
     m_sepLabel3->setFont(statusFont);
     m_sepLabel4->setFont(statusFont);
 }
+
 
 void MainWindow::setupUI()
 {
@@ -330,11 +376,6 @@ void MainWindow::setupUI()
 
     // Options
     QMenu* optionsMenu = menuBar()->addMenu(tr("&Options"));
-    m_actToggleSGM = new QAction(tr("Enable Super Game Module"), this);
-    m_actToggleSGM->setCheckable(true);
-    m_actToggleSGM->setChecked(false);
-    optionsMenu->addAction(m_actToggleSGM);
-    optionsMenu->addSeparator();
     QActionGroup* videoGroup = new QActionGroup(this);
     m_actToggleNTSC = new QAction(tr("NTSC (60Hz)"), this);
     m_actToggleNTSC->setCheckable(true);
@@ -345,7 +386,10 @@ void MainWindow::setupUI()
     m_actTogglePAL->setCheckable(true);
     videoGroup->addAction(m_actTogglePAL);
     optionsMenu->addAction(m_actTogglePAL);
-
+    optionsMenu->addSeparator();
+    m_actHardware = new QAction(tr("Hardware..."), this);
+    optionsMenu->addAction(m_actHardware);
+    connect(m_actHardware, &QAction::triggered, this, &MainWindow::onOpenHardware);
 
     // Help
     QMenu* helpMenu = menuBar()->addMenu(tr("&Help"));
@@ -388,6 +432,104 @@ void MainWindow::setupUI()
     connect(m_actAbout, &QAction::triggered, this, &MainWindow::showAboutDialog);
 }
 
+void MainWindow::onOpenHardware()
+{
+    HardwareConfig cur;
+
+    // Machine + Video
+    cur.machine = (m_machineType ? MACHINE_ADAM : MACHINE_COLECO);
+    cur.palette = m_paletteIndex;
+
+    // Additional Hardware (uit settings/members)
+    cur.sgmEnabled  = m_sgmEnabled;
+    cur.f18aEnabled = m_f18aEnabled;
+
+    // Additional Controllers (uit settings/members)
+    cur.steeringWheel = m_ctrlSteering;
+    cur.rollerCtrl    = m_ctrlRoller;
+    cur.superAction   = m_ctrlSuperAction;
+
+    const int prevPalette = m_paletteIndex;
+
+    HardwareWindow dlg(cur, this);
+    if (dlg.exec() == QDialog::Accepted) {
+        HardwareConfig chosen = dlg.config();
+
+        // --- Palette direct toepassen
+        m_paletteIndex = chosen.palette;
+        coleco_setpalette(m_paletteIndex);
+
+        // --- Alles doorgeven aan central apply (machine/hw/controllers)
+        applyHardwareConfig(chosen);
+
+        // --- Bewaren
+        saveSettings();
+    } else {
+        // Cancel → palette preview ongedaan
+        m_paletteIndex = prevPalette;
+        coleco_setpalette(m_paletteIndex);
+    }
+}
+
+void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
+{
+    int newMachineType = (cfg.machine == MACHINE_ADAM ? 1 : 0);
+    if (m_machineType != newMachineType) {
+        m_machineType = newMachineType;
+        QMetaObject::invokeMethod(m_colecoController, [this](){
+            coleco_set_machine_type(m_machineType);
+            coleco_hardreset();
+            coleco_reset_and_restart_bios();
+        }, Qt::QueuedConnection);
+    }
+
+    if (m_machineType == 1) { // ADAM → SGM uitschakelen (zoals je had)
+        m_sgmEnabled = false; // sync intern
+        if (m_actToggleSGM) m_actToggleSGM->setChecked(false);
+        onToggleSGM(false);
+    }
+
+    // --- Palette (reeds aanwezig) ---
+    if (m_paletteIndex != cfg.palette) {
+        m_paletteIndex = cfg.palette;
+        if (m_colecoController) {
+            QMetaObject::invokeMethod(
+                m_colecoController,
+                [this]() { coleco_setpalette(m_paletteIndex); },
+                Qt::QueuedConnection);
+        }
+    }
+
+    // --- Additional Hardware ---
+    m_sgmEnabled  = (m_machineType == 0) ? cfg.sgmEnabled : false; // SGM uit bij ADAM
+    m_f18aEnabled = cfg.f18aEnabled;
+
+    // (optioneel: core-calls als je slots hebt:)
+    // QMetaObject::invokeMethod(m_colecoController, "setSGMEnabled",
+    //                           Qt::QueuedConnection, Q_ARG(bool, m_sgmEnabled));
+    // QMetaObject::invokeMethod(m_colecoController, "setF18AEnabled",
+    //                           Qt::QueuedConnection, Q_ARG(bool, m_f18aEnabled));
+
+    // --- Additional Controllers ---
+    m_ctrlSteering     = cfg.steeringWheel;
+    m_ctrlRoller       = cfg.rollerCtrl;
+    m_ctrlSuperAction  = cfg.superAction;
+
+    // (optioneel: core-calls als je slots hebt:)
+    // QMetaObject::invokeMethod(m_colecoController, "setSteeringWheelEnabled",
+    //                           Qt::QueuedConnection, Q_ARG(bool, m_ctrlSteering));
+    // QMetaObject::invokeMethod(m_colecoController, "setRollerControllerEnabled",
+    //                           Qt::QueuedConnection, Q_ARG(bool, m_ctrlRoller));
+    // QMetaObject::invokeMethod(m_colecoController, "setSuperActionEnabled",
+    //                           Qt::QueuedConnection, Q_ARG(bool, m_ctrlSuperAction));
+
+    // --- Statuslabel bijwerken ---
+    if (m_sysLabel) m_sysLabel->setText(m_machineType ? "ADAM" : "COLECO");
+
+    // --- Bewaar direct ---
+    saveSettings();
+}
+
 void MainWindow::showAboutDialog()
 {
     QDialog aboutDialog(this);
@@ -399,7 +541,7 @@ void MainWindow::showAboutDialog()
 
     // Logo
     QLabel *logoLabel = new QLabel(&aboutDialog);
-    QPixmap logo(":/images/ADAMP.png");
+    QPixmap logo(":/images/images/ADAMP.png");
     logoLabel->setPixmap(logo.scaled(160, 160, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     logoLabel->setAlignment(Qt::AlignCenter);
     layout->addWidget(logoLabel);
@@ -410,12 +552,19 @@ void MainWindow::showAboutDialog()
         "Version 0.1.1025<br>"
         "©2025 DannyVdH<br>"
         "<a href='https://github.com/dvdh1961/ADAMP'>VDH Productions</a><br><br>"
-        "This program is released under the GNU GPL.<br>"
-        "Please see the attached <i>readme.txt</i> file that should be included with this distribution.<br><br>"
-        "Z80 core taken from FUSE, the free UNIX emulator.<br>"
-        "AY8910 code from Z81 ©1995–2001 Russell Marks.<br><br>"
+        "This program is released under the GNU GPL-3.0 license.<br>"
+        "Please see the attached <i>readme.md</i> and <i>license</i> file that should be included with this distribution.<br><br>"
+        "The goal is to go even deeper into my ADAM+ hardware project<br>"
+        " — this emulator — <br>"
+        "will go much further in integrating specific hardware components.<br><br>"
+        "Credits goes to.<br>"
         "A lot of interfacing and parts of code based on the EmulTwo project.<br>"
-        "Parts of ADAM emulation code from Marat Fayzullin’s ColEm project."
+        "Parts of ADAM emulation code from Marat Fayzullin’s ColEm project.<br>"
+        "Wavemotion-dave, for improving compatibility issues.<br>"
+        "Parts of EightyOne created by Michael D Wynne.<br>"
+        "Z80 core taken from FUSE, the free UNIX emulator.<br>"
+        "AY8910 code from Z81 ©1995–2001 Russell Marks.<br>"
+        "And all the ones that were involved and that I forgot to mention.<br><br>"
         );
     textLabel->setOpenExternalLinks(true);
     textLabel->setWordWrap(true);
@@ -557,6 +706,10 @@ void MainWindow::setupEmulatorThread()
             this, &MainWindow::onFpsUpdated,
             Qt::QueuedConnection);
 
+    connect(m_colecoController, &ColecoController::emuPausedChanged,
+            this, &MainWindow::onEmuPausedChanged,
+            Qt::QueuedConnection);
+
     // start emulatie als thread start
     connect(m_emulatorThread, &QThread::started,
             m_colecoController, &ColecoController::startEmulation);
@@ -570,8 +723,28 @@ void MainWindow::setupEmulatorThread()
     connect(m_emulatorThread, &QThread::finished,
             m_colecoController, &QObject::deleteLater);
 
+
+    coleco_set_machine_type(m_machineType);
+
     m_emulatorThread->start();
+
+    // Palette éénmalig toepassen zodra het 1e frame binnen is (VDP is init)
+    connect(
+        m_colecoController, &ColecoController::frameReady,
+        this,
+        [this](const QImage &) {
+            //qDebug() << "frameReady → applying saved palette:" << m_paletteIndex;
+            // Zet de call in de emulatorthread (voorkomt cross-thread issues)
+            QMetaObject::invokeMethod(
+                m_colecoController,
+                [this]() { coleco_setpalette(m_paletteIndex); },
+                Qt::QueuedConnection);
+        },
+        Qt::QueuedConnection
+        );
+
     qDebug() << "Thread setup: Thread is gestart.";
+
 }
 
 // --- Slots ---
@@ -601,7 +774,12 @@ void MainWindow::onOpenRom()
     qDebug() << "Nieuw relatief ROM pad opgeslagen:" << m_romPath;
 
     m_currentRomName = fileInfo.fileName();
-    m_romLabel->setText(QString("%1").arg(m_currentRomName));
+
+    if (m_currentRomName.contains("ddp", Qt::CaseInsensitive) ||
+        m_currentRomName.contains("dsk", Qt::CaseInsensitive))
+        m_sysLabel->setText("ADAM");
+    else
+        m_sysLabel->setText("COLECO");
 
     QMetaObject::invokeMethod(m_colecoController, "loadRom",
                               Qt::QueuedConnection,
@@ -654,11 +832,6 @@ void MainWindow::onFpsUpdated(int fps)
 {
     m_fpsLabel->setText(QString("%1fps").arg(fps));
 
-    // Deze logica stond voorheen in onFpsTick
-    if (m_isPaused)
-        m_runLabel->setText("STOP");
-    else
-        m_runLabel->setText("RUN");
 }
 
 
@@ -790,7 +963,9 @@ void MainWindow::onEmuPausedChanged(bool paused)
     if (m_startAction) {
         if (paused) {
             m_startAction->setText(tr("Run (F9)"));
+            m_runLabel->setText("STOP");
         } else {
+            m_runLabel->setText("RUN");
             m_startAction->setText(tr("Stop (F9)"));
         }
     }
@@ -802,12 +977,14 @@ void MainWindow::onStartActionTriggered()
         return;
 
     if (m_isPaused) {
+        m_runLabel->setText("STOP");
         QMetaObject::invokeMethod(
             m_colecoController,
             "resumeEmulation",
             Qt::QueuedConnection
             );
     } else {
+        m_runLabel->setText("RUN");
         QMetaObject::invokeMethod(
             m_colecoController,
             "pauseEmulation",

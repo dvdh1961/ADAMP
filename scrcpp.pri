@@ -3,6 +3,7 @@
 # Bronbestanden
 # C++ bronnen voor de Qt-interface
 SOURCES += \
+           $$PWD/scrcpp/hardwarewindow.cpp \
            $$PWD/scrcpp/main.cpp \
            $$PWD/scrcpp/cartridgeinfowindow.cpp \
            $$PWD/scrcpp/colecocontroller.cpp \
@@ -19,6 +20,7 @@ SOURCES += \
 
 # Headers voor de Qt-interface
 HEADERS += \
+           $$PWD/scrcpp/hardwarewindow.h \
            $$PWD/scrcpp/mainwindow.h \
            $$PWD/scrcpp/cartridgeinfowindow.h \
            $$PWD/scrcpp/colecocontroller.h \

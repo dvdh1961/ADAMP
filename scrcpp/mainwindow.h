@@ -5,6 +5,7 @@
 #include <QTimer> // QTimer wordt niet meer gebruikt, maar mag blijven staan
 #include <QThread>
 #include <QMoveEvent>
+#include <QSettings>
 
 // Geen SoundManager meer
 // #include "soundmanager.h"
@@ -21,6 +22,9 @@ class NTableWindow;
 class PatternWindow;
 class SpriteWindow;
 class SettingsWindow;
+class HardwareWindow;
+
+struct HardwareConfig;
 
 class MainWindow : public QMainWindow
 {
@@ -63,6 +67,7 @@ public slots:
     // run/stop integratie
     void onEmuPausedChanged(bool paused);
     void onStartActionTriggered();
+    void onOpenHardware();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -79,6 +84,7 @@ private:
     void saveSettings();
     void loadSettings();
     void showAboutDialog();
+    void applyHardwareConfig(const HardwareConfig& cfg);
 
 private:
     // emulator thread en controller
@@ -104,6 +110,7 @@ private:
     QLabel *m_sepLabel2 = nullptr;
     QLabel *m_sepLabel3 = nullptr;
     QLabel *m_sepLabel4 = nullptr;
+    QLabel *m_sysLabel  = nullptr;   // COLECO / ADAM
 
     QString m_currentStd;
     QString m_currentRomName;
@@ -133,7 +140,8 @@ private:
     QAction *m_actChat            = nullptr;
     QAction *m_actDonate          = nullptr;
     QAction *m_actAbout           = nullptr;
-    QAction *m_settingsAction = nullptr;
+    QAction *m_settingsAction     = nullptr;
+    QAction *m_actHardware        = nullptr;
 
     // debugger venster
     DebuggerWindow *m_debugWin = nullptr;
@@ -142,6 +150,13 @@ private:
     // huidige pauze-state van de emulator
     bool m_isPaused = false;
     QString m_romPath;
+    int m_paletteIndex = 0;
+    int m_machineType = 0; // 0=Coleco/Phoenix, 1=ADAM
+    bool m_sgmEnabled       = false;
+    bool m_f18aEnabled      = false;
+    bool m_ctrlSteering     = false;
+    bool m_ctrlRoller       = false;
+    bool m_ctrlSuperAction  = false;
 };
 
 #endif // MAINWINDOW_H

@@ -38,6 +38,7 @@ public slots:
     void resethMachine();
     void setSGMEnabled(bool enabled);
     void setVideoStandard(bool isNTSC);
+    void setMachineType(int machineType); // 0=Coleco/Phoenix, 1=ADAM
 
     // ===== Debugger control =====
     void pauseEmulation();

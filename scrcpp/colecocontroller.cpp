@@ -54,6 +54,20 @@ ColecoController::~ColecoController()
     delete[] m_stereoBuf;
 }
 
+void ColecoController::setMachineType(int machineType)
+{
+    // Map Phoenix/ADAMP (2) naar Coleco (0) op core-niveau
+    const int isAdam = (machineType == 1) ? 1 : 0;
+
+    // 1) Zet core-type
+    coleco_set_machine_type(isAdam);
+
+    // 2) Hard reset + BIOS herstart (jij hebt al resethMachine())
+    resethMachine();
+
+    qDebug() << "[Controller] Machine switched to" << (isAdam ? "ADAM" : "COLECO") << "and hard-reset";
+}
+
 // --- De video-standaard slot ---
 void ColecoController::setVideoStandard(bool isNTSC)
 {

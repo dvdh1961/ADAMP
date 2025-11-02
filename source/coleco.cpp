@@ -99,7 +99,34 @@ static BYTE lastMemoryReadValueLo = 0, lastMemoryReadValueHi = 0;
 static BYTE lastMemoryWriteValueLo = 0, lastMemoryWriteValueHi = 0;
 
 
-const unsigned char TMS9918A_palette[6*16*3] = { /* ... (palette data blijft hetzelfde) ... */ };
+//const unsigned char TMS9918A_palette[6*16*3] = { /* ... (palette data blijft hetzelfde) ... */ };
+// 6 banken × 16 kleuren × RGB
+const unsigned char TMS9918A_palette[6*16*3] = {
+    // Coleco palette
+    24,24,24, 0,0,0, 33,200,66, 94,220,120, 84,85,237, 125,118,252, 212,82,77, 66,235,245,
+    252,85,84, 255,121,120, 212,193,84, 230,206,128, 33,176,59, 201,91,186, 204,204,204, 255,255,255,
+
+    // Adam palette
+    0,  0,  0,    0,  0,  0,   71,183, 59,  124,207,111,   93, 78,255,  128,114,255,  182, 98, 71,   93,200,237,
+    215,107, 72,  251,143,108,  195,205, 65,  211,218,118, 62,159, 47,  182,100,199,  204,204,204,  255,255,255,
+
+    // TMS9918 Palette
+    24,24,24, 0,8,0, 0,241,1, 50,251,65, 67,76,255, 112,110,255, 238,75,28, 9,255,255,
+    255,78,31, 255,112,65, 211,213,0, 228,221,52, 0,209,0, 219,79,211, 193,212,190, 244,255,241,
+
+    // black and white
+    0,  0,  0,    0,  0,  0,  136,136,136,  172,172,172, 102,102,102,  134,134,134,  120,120,120,  172,172,172,
+    136,136,136,  172,172,172,  187,187,187,  205,205,205, 118,118,118,  135,135,135,  204,204,204,  255,255,255,
+
+    // Green scales
+    0,  0,  0,    0,  0,  0,    0,118,  0,   43,153, 43, 0, 81,  0,    0,118,  0,   43, 81, 43,   43,153, 43,
+    43, 81, 43,   43,118, 43,   43,153, 43,   43,187, 43, 43, 81, 43,   43,118, 43,   43,221, 43,    0,255,  0,
+
+    // Ambre scale
+    0,  0,  0,    0,  0,  0,  118, 81, 43,  153,118,  0, 81, 43,  0,  118, 81,  0,   81, 43,  0,  187,118, 43,
+    118, 81,  0,  153,118, 43,  187,118, 43,  221,153,  0, 118, 81,  0,  153,118, 43,  221,153,  0,  255,187,  0
+};
+
 //---------------------------------------------------------------------------
 #define DBG_PRINTF(fmt, ...) qDebug().noquote().nospace() << QString().asprintf(fmt, __VA_ARGS__)
 
@@ -399,6 +426,22 @@ void coleco_setpalette(int palette) {
         RenderCalcPalette(cv_palette,16);
     }
 }
+
+// 0 = Coleco/Phoenix, 1 = ADAM
+void coleco_set_machine_type(int isAdam)
+{
+    // EmulTwo gebruikt emul2->currentMachineType en checkt overal tegen MACHINEADAM.
+    // Elke waarde ≠ MACHINEADAM wordt als "Coleco" behandeld.
+    // We zetten expliciet naar MACHINEADAM of naar 0 (Coleco).
+    if (isAdam) {
+        emul2->currentMachineType = MACHINEADAM;
+    } else {
+        emul2->currentMachineType = 0; // Coleco (elke niet-MACHINEADAM is Coleco)
+    }
+    // Let op: géén reset hier — bij opstart wil je dit vóór coleco_initialise() zetten.
+    // Bij runtime switch doen we hard reset via de controller (zie hieronder).
+}
+
 //---------------------------------------------------------------------------
 // Calculate the 32-bit palette from the 8-bit RGB values
 // (Deze functie ontbrak in de originele broncode)
@@ -622,36 +665,37 @@ void coleco_reset(void)
 
 void coleco_reset_and_restart_bios()
 {
-    // BIOS (her)laden zoals je al deed…
+    // 1) Defaults per machine
+    if (emul2->currentMachineType == MACHINEADAM) {
+        // ADAM: geen SGM; memory wordt door 0x60 bits gestuurd
+        emul2->SGM = false;
+        coleco_port53 = 0x00;
+        coleco_writeport(0x53, coleco_port53, nullptr);
 
-    // 1) Forceer Coleco standaard memory control (BIOS+Cart)
-    coleco_port60 = 0x0F;                // intern bijhouden
-    coleco_writeport(0x60, 0x0F, nullptr);
+        // ADAM default memorycontrol: WRITER/EOS + cart in hoge 32K
+        // (pas aan indien jouw setadammemory iets anders verwacht)
+        coleco_port60 = 0x00;
+        coleco_writeport(0x60, coleco_port60, nullptr);
 
-    // 2) SGM enable/disable volgens emul2->SGM
-    coleco_port53 = emul2->SGM ? 0x01 : 0x00;
-    coleco_writeport(0x53, coleco_port53, nullptr);
+        // 2) Bouw ADAM-mapping op
+        coleco_setadammemory(/*resetAdamNet=*/true);
+    } else {
+        // Coleco/Phoenix: standaard BIOS+cart en SGM volgens emul2->SGM
+        coleco_port60 = 0x0F;
+        coleco_writeport(0x60, coleco_port60, nullptr);
 
-    // 3) Herbouw mapping o.b.v. huidige poorten (laat 0x0000 BIOS!)
-    coleco_setupsgm();
+        coleco_port53 = emul2->SGM ? 0x01 : 0x00;
+        coleco_writeport(0x53, coleco_port53, nullptr);
 
-    // 4) Cartridge pages opnieuw (voor de zekerheid)
+        // 2) Bouw Coleco-mapping op
+        coleco_setupsgm();
+    }
+
+    // 3) Cartridge pages voor de zekerheid opnieuw
     MemoryMap[4] = ROM_Memory + 0x0000;
     MemoryMap[5] = ROM_Memory + 0x2000;
     MemoryMap[6] = ROM_Memory + 0x4000;
     MemoryMap[7] = ROM_Memory + 0x6000;
-
-    // 5) Reset VDP en init audio via bridge
-    if (emul2->F18A) f18a_reset(); else tms9918_reset();
-    coleco_audio_init();
-
-    // 6) CPU reset
-    z80_reset();
-
-    // 7) Debug sanity check (heel handig!)
-    DBG_PRINTF("[BOOT] P60=%02X P53=%02X SGM=%u M0=%p (BIOS=%p)",
-               coleco_port60, coleco_port53, (unsigned)emul2->SGM,
-               (void*)MemoryMap[0], (void*)(BIOS_Memory));
 }
 //---------------------------------------------------------------------------
 // coleco.h:  extern void coleco_hardreset(void);
