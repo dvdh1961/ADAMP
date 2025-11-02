@@ -43,10 +43,12 @@ It serves as a central platform for integrating a wide range of hardware-related
 ## Credits
 
 Thanks to everyone who shared their knowledge and inspiration — without them, this project would never have come to life.
-- wavemotion-dave  (https://github.com/wavemotion-dave/ColecoDS)
+- E.mul T.wo       (https://github.com/alekmaul/emultwo)
 - Marat Fayzullin  (https://fms.komkon.org/ColEm/)
+- wavemotion-dave  (https://github.com/wavemotion-dave/ColecoDS)
+- Fuse             (https://fuse-emulator.sourceforge.net/)
 - EightyOne        (https://sourceforge.net/projects/eightyone-sinclair-emulator/)
-- E.mul T.wo       (https://github.com/alekmaul/emultwo)  
+- Russell Marks    (https://sz81.sourceforge.net/)
 
 ## Support ADAM+
 
