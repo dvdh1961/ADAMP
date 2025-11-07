@@ -23,6 +23,8 @@ It serves as a central platform for integrating a wide range of hardware-related
   - Tile, Sprite, VRAM, RAM, and Disassembly viewers  
   - Perfect for tracking bugs in homebrew or development builds
 - 🔊 **Super Game Module** support (inclusief AY-soundchip)
+- 🧠 **Megacart Bankswitching** up to 512 KB
+- 🎯 **Full Controller Button Mapping**
 
 ## 💡Info
 - You need the free community QT Creator to build the project.
@@ -30,9 +32,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 ## 🚧 ToDo
 
 - 💾 **Coleco ADAM** game support (`.ddp`, `.dsk`)
-- 🧠 **Megacart Bankswitching** up to 512 KB
 - 💾 **Save / Load Game State**
-- 🎯 **Full Controller Button Mapping**
 
 ## ADAM+ The Emulated Computer Entertainment System
 
