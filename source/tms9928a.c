@@ -26,8 +26,9 @@
 
 #include "tms9928a.h"
 #include "f18a.h"         // bevat TVW_TMS/TVH_TMS
-#include "z80.h"
 #include "video_bridge.h"
+#include "coleco.h"
+#include "z80.h"
 
 // Externen uit de core
 extern unsigned char cv_display[];   // schermbuffer met palette-indexen
@@ -53,23 +54,6 @@ tTMS9981A tms;
 
 // ----------------------------------------------------------------------------------------
 // Qt video-bridge helpers
-
-static inline void _push_bg_scanline(int y, unsigned char bgIndex)
-{
-    static uint32_t line[VB_WIDTH];
-    // cv_pal32 is 0x00RRGGBB → zet alpha op FF
-    uint32_t rgb  = (uint32_t)cv_pal32[bgIndex & 0x3F]; // defensief mask
-    uint32_t argb = 0xFF000000u | (rgb & 0x00FFFFFFu);
-    for (int x = 0; x < VB_WIDTH; ++x) line[x] = argb;
-    vb_present_scanline(y, line);
-}
-// static inline void _push_bg_scanline(int y, unsigned char /*bgIndex*/)
-// {
-//     static uint32_t line[VB_WIDTH];
-//     uint32_t argb = 0x00; //0xFF1E56FF; // fel blauw (hardcoded, tijdelijk)
-//     for (int x = 0; x < VB_WIDTH; ++x) line[x] = argb;
-//     vb_present_scanline(y, line);
-// }
 
 static inline void _push_cv_scanline(int y_core)
 {
@@ -127,78 +111,62 @@ void tms9918_reset(void) {
 }
 
 // ----------------------------------------------------------------------------------------
-// Writing a data to a tms.VR register
-unsigned char Write9918(int iReg,unsigned char value) {
+unsigned char Write9918(int iReg, unsigned char value)
+{
     unsigned char J;
     unsigned int VRAMMask;
     unsigned char bIRQ;
+    unsigned char old = tms.VR[1];   // <-- NIEUW (oude Reg1 bijhouden)
 
-    // Enabling IRQs may cause an IRQ here
-    bIRQ  = (iReg==1) && ((tms.VR[1]^value)&value&TMS9918_REG1_IRQ) && (tms.SR&TMS9918_STAT_VBLANK) ? 1 : 0;
+    // IRQEN 0->1 terwijl VBlank al 1 is?
+    bIRQ = (iReg==1)
+        && ((old ^ value) & value & TMS9918_REG1_IRQ)
+        && (tms.SR & TMS9918_STAT_VBLANK);
 
-    // VRAM can either be 4kB or 16kB
-    VRAMMask = (iReg==1) && ( (tms.VR[1]^value) & TMS9918_REG1_RAM16K ) ? 0 : TMS9918_VRAMMask;
+    // VRAM 4k/16k mask update check
+    VRAMMask = (iReg==1) && ((old ^ value) & TMS9918_REG1_RAM16K) ? 0 : TMS9918_VRAMMask;
 
-    // Store value into the register
-    tms.VR[iReg]=value;
+    // Register schrijven
+    tms.VR[iReg] = value;
 
-    // Depending on the register, do...
-    switch (iReg)
-    {
-    case 0: // Mode register 0
-    case 1: // Mode register 1
-        // Figure out new screen mode number
-        switch(TMS9918_Mode)
-        {
-        case 0x00: J=1;break;
-        case 0x01: J=2;break;
-        case 0x02: J=3;break; // ALEK20140906: 0 before — fix for homebrew
-        case 0x04: J=0;break;
-        default:   J=tms.Mode;break;
-        }
+    switch (iReg) {
+        case 0:
+        case 1:
+            switch (TMS9918_Mode) {
+                case 0x00: J=1; break;
+                case 0x01: J=2; break;
+                case 0x02: J=3; break;
+                case 0x04: J=0; break;
+                default:   J=tms.Mode; break;
+            }
+            if ((J!=tms.Mode) || !VRAMMask) {
+                VRAMMask    = TMS9918_VRAMMask;
+                tms.ChrTab  = VDP_Memory+(((int)(tms.VR[2]&SCR[J].R2)<<10)&VRAMMask);
+                tms.ColTab  = VDP_Memory+(((int)(tms.VR[3]&SCR[J].R3)<<6)&VRAMMask);
+                tms.ChrGen  = VDP_Memory+(((int)(tms.VR[4]&SCR[J].R4)<<11)&VRAMMask);
+                tms.SprTab  = VDP_Memory+(((int)(tms.VR[5]&SCR[J].R5)<<7)&VRAMMask);
+                tms.SprGen  = VDP_Memory+(((int)(tms.VR[6]&SCR[J].R6)<<11)&VRAMMask);
+                tms.ColTabM = ((int)(tms.VR[3]|~SCR[J].M3)<<6)|0x1C03F;
+                tms.ChrGenM = ((int)(tms.VR[4]|~SCR[J].M4)<<11)|0x007FF;
+                tms.Mode    = J;
+            }
+            break;
 
-        // If mode changed, recompute table addresses
-        if ((J!=tms.Mode) || !VRAMMask)
-        {
-            VRAMMask    = TMS9918_VRAMMask;
-            tms.ChrTab  = VDP_Memory+(((int)(tms.VR[2]&SCR[J].R2)<<10)&VRAMMask);
-            tms.ColTab  = VDP_Memory+(((int)(tms.VR[3]&SCR[J].R3)<<6)&VRAMMask);
-            tms.ChrGen  = VDP_Memory+(((int)(tms.VR[4]&SCR[J].R4)<<11)&VRAMMask);
-            tms.SprTab  = VDP_Memory+(((int)(tms.VR[5]&SCR[J].R5)<<7)&VRAMMask);
-            tms.SprGen  = VDP_Memory+(((int)(tms.VR[6]&SCR[J].R6)<<11)&VRAMMask);
-            tms.ColTabM = ((int)(tms.VR[3]|~SCR[J].M3)<<6)|0x1C03F;
-            tms.ChrGenM = ((int)(tms.VR[4]|~SCR[J].M4)<<11)|0x007FF;
-            tms.Mode    = J;
-        }
-        break;
-
-    case  2: // Name Table
-        tms.ChrTab=VDP_Memory+(((int)(value&SCR[tms.Mode].R2)<<10)&VRAMMask);
-        break;
-    case  3: // Color Table
-        tms.ColTab=VDP_Memory+(((int)(value&SCR[tms.Mode].R3)<<6)&VRAMMask);
-        tms.ColTabM = ((int)(value|~SCR[tms.Mode].M3)<<6)|0x1C03F;
-        break;
-    case  4: // Pattern Table
-        tms.ChrGen=VDP_Memory+(((int)(value&SCR[tms.Mode].R4)<<11)&VRAMMask);
-        tms.ChrGenM = ((int)(value|~SCR[tms.Mode].M4)<<11)|0x007FF;
-        break;
-    case  5: // Sprite Attributes
-        tms.SprTab=VDP_Memory+(((int)(value&SCR[tms.Mode].R5)<<7)&VRAMMask);
-        break;
-    case  6: // Sprite Patterns
-        tms.SprGen=VDP_Memory+(((int)(value&SCR[tms.Mode].R6)<<11)&VRAMMask);
-        break;
-    case  7:  // Foreground and background colors
-        tms.FGColor=tms.IdxPal[value>>4];
-        value &= 0x0F;
-        tms.IdxPal[0] = tms.IdxPal[ value ? value : 1];
-        tms.BGColor   = tms.IdxPal[value];
-        break;
+        case 2:  tms.ChrTab = VDP_Memory+(((int)(value&SCR[tms.Mode].R2)<<10)&VRAMMask); break;
+        case 3:  tms.ColTab = VDP_Memory+(((int)(value&SCR[tms.Mode].R3)<<6)&VRAMMask);
+                 tms.ColTabM = ((int)(value|~SCR[tms.Mode].M3)<<6)|0x1C03F; break;
+        case 4:  tms.ChrGen = VDP_Memory+(((int)(value&SCR[tms.Mode].R4)<<11)&VRAMMask);
+                 tms.ChrGenM = ((int)(value|~SCR[tms.Mode].M4)<<11)|0x007FF; break;
+        case 5:  tms.SprTab = VDP_Memory+(((int)(value&SCR[tms.Mode].R5)<<7)&VRAMMask); break;
+        case 6:  tms.SprGen = VDP_Memory+(((int)(value&SCR[tms.Mode].R6)<<11)&VRAMMask); break;
+        case 7:  tms.FGColor = tms.IdxPal[value>>4];
+                 value &= 0x0F;
+                 tms.IdxPal[0] = tms.IdxPal[value ? value : 1];
+                 tms.BGColor   = tms.IdxPal[value];
+                 break;
     }
 
-    // Return IRQ, if generated
-    return(bIRQ);
+    return bIRQ; // compat
 }
 
 // ----------------------------------------------------------------------------------------
@@ -260,7 +228,7 @@ unsigned char tms9918_readctrl(void) {
     retval = tms.SR;
     tms.SR &= TMS9918_STAT_5THNUM|TMS9918_STAT_5THSPR;
 
-    z80_set_irq_line(machine.interrupt, CLEAR_LINE);
+    //z80_set_irq_line(machine.interrupt, CLEAR_LINE);
 
     return(retval);
 }
@@ -550,7 +518,7 @@ void RefreshSprites(unsigned char Y)
 //---------------------------------------------------------------------------
 // Refresh line Y (0..191) of SCREEN0, including sprites in this line
 void _TMS9928A_mode0(unsigned char uY) {
-    unsigned char X,K,Offset,FC,BC;
+    unsigned char X,K,Offset,FC,BC=0;
     unsigned char *P;
     unsigned char *T;
     unsigned char *PGT;
@@ -786,42 +754,47 @@ unsigned char tms9918_loop(void) {
 
          (SCR[tms.Mode].Refresh)(tms.CurLine - TMS9918_START_LINE);
          _push_cv_scanline((int)(tms.CurLine - TMS9918_START_LINE));
-
-    //if (TMS9918_VBlankON && !(tms.SR & 0x80)) bIRQ = 1; (test)
-    //tms.SR |= 0x80;
-
        }
 
     // ======= EINDE HOOK =======
 
-    // Check if VBlank
-    if(tms.CurLine==TMS9918_END_LINE)
-    {
-        if(tms.UCount>=100)
-        {
-            // coleco_paint() (oude VCL draw) niet gebruiken in Qt.
-            tms.UCount-=100;
-        }
+// einde van frame
+if (tms.CurLine == TMS9918_END_LINE) {
+    if (tms.UCount >= 100) tms.UCount -= 100;
+    tms.UCount += TMS9918_DRAWFRAMES;
 
-        tms.UCount+=TMS9918_DRAWFRAMES;
-
-        // Generate IRQ when enabled and when VBlank flag goes up
-        if (TMS9918_VBlankON && !(tms.SR&TMS9918_STAT_VBLANK) )
-        {
-            bIRQ = 1;
-        }
-
-        // Set VBlank status flag
-        tms.SR|=TMS9918_STAT_VBLANK;
-
-        // Set Sprite Collision status flag
-        if(!(tms.SR&TMS9918_STAT_OVRLAP))
-            if(CheckSprites()) tms.SR|=TMS9918_STAT_OVRLAP;
-
-        // Qt: markeer frame klaar
-        vb_present_frame();
+    // IRQ bij 0->1 transitie van VBlank én IRQ enabled
+    if (TMS9918_VBlankON && !(tms.SR & TMS9918_STAT_VBLANK)) {
+        bIRQ = 1;
     }
+
+    // sprite overlap vlaggen (ok)
+    if (!(tms.SR & TMS9918_STAT_OVRLAP))
+        if (CheckSprites()) tms.SR |= TMS9918_STAT_OVRLAP;
+
+    // VBlank flag zetten
+    tms.SR |= TMS9918_STAT_VBLANK;
+
+    vb_present_frame(); // jouw frame klaar signaal
+}
+
 
     // Return IRQ (1) of niet (0)
     return(bIRQ);
+}
+
+// tms9928a.c
+BYTE ReadStatus9918(void)
+{
+    BYTE s = tms.SR;
+
+    // statusbits wissen bij read
+    tms.SR &= ~(TMS9918_STAT_VBLANK | TMS9918_STAT_5THSPR | TMS9918_STAT_OVRLAP);
+
+    // IRQ-lijn laag na status-read (NMI-lijn de-asserten)
+    z80_set_irq_line(INPUT_LINE_NMI, CLEAR_LINE);
+
+    // control latch terug naar "first byte"
+    tms.VKey = 1;
+    return s;
 }

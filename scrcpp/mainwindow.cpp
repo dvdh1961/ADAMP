@@ -11,6 +11,9 @@
 #include "settingswindow.h"
 #include "hardwarewindow.h"
 #include "coleco.h"
+#include "joypadwindow.h"
+#include "kbwidget.h"
+#include "printwindow.h"
 
 // Qt includes
 #include <QMenuBar>
@@ -45,6 +48,7 @@
 #include <QPushButton>
 #include <QPixmap>
 #include <QFont>
+#include <QMap>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -57,6 +61,20 @@ MainWindow::MainWindow(QWidget *parent)
     m_screenWidget(nullptr),
     m_inputWidget(nullptr),
     m_logView(nullptr),
+    m_kbWidget(nullptr),
+    m_diskMenuA(nullptr),
+    m_diskMenuB(nullptr),
+    m_tapeMenu(nullptr),
+    m_isDiskLoadedA(false),
+    m_isDiskLoadedB(false),
+    m_isTapeLoaded(false),
+
+    m_adamInputGroup(nullptr),
+    m_adamInputMenu(nullptr),
+    m_actAdamKeyboard(nullptr),
+    m_actAdamJoystick(nullptr),
+    m_adamInputModeJoystick(false),
+
     m_debugWin(nullptr),
     m_cartInfoDialog(nullptr)
 {
@@ -94,14 +112,13 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 5. Stel de container in als de central widget
     setCentralWidget(centralContainer);
-    m_inputWidget = new InputWidget(this);
-    m_inputWidget->attachTo(m_screenWidget);
-
-    //setCentralWidget(m_screenWidget);
 
     m_inputWidget = new InputWidget(this);
     m_inputWidget->attachTo(m_screenWidget);
-    m_inputWidget->hide();
+    m_inputWidget->setFocusPolicy(Qt::NoFocus);
+    m_inputWidget->setOverlayVisible(false); // Verberg de overlay...
+    m_inputWidget->show();                   // ...maar toon de (transparante) widget
+    m_inputWidget->raise();
 
     setUpLogWindow();
 
@@ -113,6 +130,23 @@ MainWindow::MainWindow(QWidget *parent)
     // Menu's/acties
     setupUI();
     loadSettings();
+
+    if (m_sysLabel) {
+        m_sysLabel->setText(m_machineType ? "ADAM" : "COLECO");
+    }
+
+    // Pas de geladen instellingen toe op de UI bij het opstarten ---
+    HardwareConfig initialConfig;
+    initialConfig.machine = (m_machineType ? MACHINE_ADAM : MACHINE_COLECO);
+    initialConfig.palette = m_paletteIndex;
+    initialConfig.sgmEnabled = m_sgmEnabled;
+    initialConfig.f18aEnabled = m_f18aEnabled;
+    initialConfig.steeringWheel = m_ctrlSteering;
+    initialConfig.rollerCtrl = m_ctrlRoller;
+    initialConfig.superAction = m_ctrlSuperAction;
+
+    // Deze functie zal nu de menu-items correct instellen (enabled/disabled)
+    applyHardwareConfig(initialConfig);
 
     connect(m_actShowLog, &QAction::toggled, this, [this](bool on){
         if (!m_logView) return;
@@ -129,6 +163,18 @@ MainWindow::MainWindow(QWidget *parent)
     // 1. controller + thread klaarzetten
     setupEmulatorThread();
 
+    // (Moet NA setupEmulatorThread() komen)
+    m_kbWidget = new KbWidget(this);
+    m_kbWidget->setController(m_colecoController); // m_colecoController is nu geldig
+
+    // --- Connecteer de nieuwe media-signalen ---
+    connect(m_colecoController, &ColecoController::diskStatusChanged,
+            this, &MainWindow::onDiskStatusChanged,
+            Qt::QueuedConnection);
+    connect(m_colecoController, &ColecoController::tapeStatusChanged,
+            this, &MainWindow::onTapeStatusChanged,
+            Qt::QueuedConnection);
+
     // 2. debugger
     m_debugWin = new DebuggerWindow(this);
     connect(m_debugWin, &DebuggerWindow::requestStepCPU,
@@ -143,6 +189,12 @@ MainWindow::MainWindow(QWidget *parent)
     // 3. Cart Info Dialoog (maken we hier al aan)
     m_cartInfoDialog = new CartridgeInfoDialog(this);
     m_cartInfoDialog->hide(); // Standaard verborgen
+
+    QTimer::singleShot(0, this, [this]() {
+        if (m_screenWidget) {
+            m_screenWidget->setFocus(Qt::OtherFocusReason);
+        }
+    });
 }
 
 MainWindow::~MainWindow()
@@ -153,15 +205,20 @@ MainWindow::~MainWindow()
     }
 }
 
+
 void MainWindow::onOpenSettings()
 {
     // 1. Laad de huidige instellingen in het dialoogvenster
-    m_settingsWindow->setRomPath(m_romPath); // <--- AANGEPAST
+    m_settingsWindow->setRomPath(m_romPath);
+    m_settingsWindow->setDiskPath(m_diskPath);
+    m_settingsWindow->setTapePath(m_tapePath);
 
     // 2. Toon het dialoogvenster modaal
-    if (m_settingsWindow->exec() == QDialog::Accepted) { // <--- AANGEPAST
+    if (m_settingsWindow->exec() == QDialog::Accepted) {
         // 3. Als de gebruiker op OK klikt, haal de waarden op...
-        m_romPath = m_settingsWindow->romPath(); // <--- AANGEPAST
+        m_romPath = m_settingsWindow->romPath();
+        m_diskPath = m_settingsWindow->diskPath();
+        m_tapePath = m_settingsWindow->tapePath();
         // 4. ...en sla ze direct op.
         saveSettings();
     }
@@ -172,6 +229,8 @@ void MainWindow::loadSettings()
 {
     QSettings settings;
     m_romPath      = settings.value("romPath", ".").toString();
+    m_diskPath     = settings.value("diskPath", ".").toString();
+    m_tapePath     = settings.value("tapePath", ".").toString();
     m_paletteIndex = settings.value("video/palette", 0).toInt();
     m_machineType  = settings.value("machine/type", 0).toInt();
 
@@ -199,6 +258,8 @@ void MainWindow::saveSettings()
 {
     QSettings settings;
     settings.setValue("romPath",        m_romPath);
+    settings.setValue("diskPath",       m_diskPath);
+    settings.setValue("tapePath",       m_tapePath);
     settings.setValue("video/palette",  m_paletteIndex);
     settings.setValue("machine/type",   m_machineType);
 
@@ -249,6 +310,17 @@ void MainWindow::setStatusBar()
     m_sysLabel->setMinimumWidth(80);
     m_sysLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
 
+    // --- NIEUWE LABELS: SGM ---
+    m_sepLabelSGM = new QLabel("|", this);
+    m_sgmLabel = new QLabel("SGM", this);
+    m_sgmLabel->setObjectName("sgmLabel");
+    m_sgmLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    m_sgmLabel->setMinimumWidth(40);
+    m_sgmLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+    m_sgmLabel->hide(); // Standaard verborgen
+    m_sepLabelSGM->hide(); // Standaard verborgen
+    // --- EINDE NIEUW ---
+
     m_stdLabel = new QLabel(this);
     m_stdLabel->setObjectName("stdLabel");
     m_stdLabel->setText(QString("%1").arg(m_currentStd));
@@ -268,11 +340,35 @@ void MainWindow::setStatusBar()
     m_runLabel->setMinimumWidth(50);
     m_runLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
 
+    m_sepLabelMedia1a = new QLabel("|", this);
+    m_diskLabelA = new QLabel("D0: -", this);
+    m_diskLabelA->setObjectName("diskLabel");
+    m_diskLabelA->setMinimumWidth(240); // Geef het wat ruimte
+
+    m_sepLabelMedia1b = new QLabel("|", this);
+    m_diskLabelB = new QLabel("D1: -", this);
+    m_diskLabelB->setObjectName("diskLabel");
+    m_diskLabelB->setMinimumWidth(240); // Geef het wat ruimte
+
+    m_sepLabelMedia2 = new QLabel("|", this);
+    m_tapeLabel = new QLabel("T0: -", this);
+    m_tapeLabel->setObjectName("tapeLabel");
+    m_tapeLabel->setMinimumWidth(240);
+
+    // Verberg ze standaard (worden getoond in ADAM-modus)
+    m_sepLabelMedia1a->hide();
+    m_diskLabelA->hide();
+    m_sepLabelMedia1b->hide();
+    m_diskLabelB->hide();
+    m_sepLabelMedia2->hide();
+    m_tapeLabel->hide();
+
+    m_stdLabel = new QLabel(this);
+
     m_romLabel = new QLabel("No cart", this);
     m_romLabel->setObjectName("romLabel");
     m_romLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    m_romLabel->setMinimumWidth(260);
-    m_romLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_romLabel->setFixedWidth(480);
 
     m_sepLabel1 = new QLabel("|", this);
     m_sepLabel2 = new QLabel("|", this);
@@ -281,6 +377,16 @@ void MainWindow::setStatusBar()
 
     // Volgorde in statusbar: systeem | std | fps | run | rom
     statusBar()->addWidget(m_sysLabel);
+    statusBar()->addWidget(m_sepLabelSGM);
+    statusBar()->addWidget(m_sgmLabel);
+    statusBar()->addWidget(m_sepLabelMedia1a);
+    statusBar()->addWidget(m_diskLabelA);
+    statusBar()->addWidget(m_sepLabelMedia1b);
+    statusBar()->addWidget(m_diskLabelB);
+    statusBar()->addWidget(m_sepLabelMedia2);
+    statusBar()->addWidget(m_tapeLabel);
+    statusBar()->addWidget(m_sepLabel1);
+    statusBar()->addWidget(m_stdLabel);
     statusBar()->addWidget(m_sepLabel1);
     statusBar()->addWidget(m_stdLabel);
     statusBar()->addWidget(m_sepLabel2);
@@ -290,10 +396,18 @@ void MainWindow::setStatusBar()
     statusBar()->addWidget(m_sepLabel4);
     statusBar()->addWidget(m_romLabel);
 
-    QFont statusFont("Roboto", 12);
+    QFont statusFont("Roboto", 9);
     statusFont.setBold(false);
 
     m_sysLabel->setFont(statusFont);
+    m_sgmLabel->setFont(statusFont);
+    m_sepLabelSGM->setFont(statusFont);
+    m_diskLabelA->setFont(statusFont);
+    m_diskLabelB->setFont(statusFont);
+    m_tapeLabel->setFont(statusFont);
+    m_sepLabelMedia1a->setFont(statusFont);
+    m_sepLabelMedia1b->setFont(statusFont);
+    m_sepLabelMedia2->setFont(statusFont);
     m_stdLabel->setFont(statusFont);
     m_fpsLabel->setFont(statusFont);
     m_romLabel->setFont(statusFont);
@@ -308,11 +422,53 @@ void MainWindow::setStatusBar()
 void MainWindow::setupUI()
 {
     // File
-    QMenu* fileMenu = menuBar()->addMenu(tr("&File"));
-    m_openRomAction = new QAction(tr("&Open ROM..."), this);
+    QMenu* fileMenu = menuBar()->addMenu(tr("File"));
+    m_openRomAction = new QAction(tr("Cartridge"), this);
     m_openRomAction->setShortcut(QKeySequence::Open);
     connect(m_openRomAction, &QAction::triggered, this, &MainWindow::onOpenRom);
     fileMenu->addAction(m_openRomAction);
+
+    // --- ADAM MEDIA SECTIE TOEVOEGEN ---
+    fileMenu->addSeparator();
+
+    // 1a. Maak Disk A Submenu
+    m_diskMenuA = new QMenu(tr("Disk A"), this);
+    m_loadDiskActionA = new QAction(tr("Load"), this);
+    connect(m_loadDiskActionA, &QAction::triggered, this, &MainWindow::onLoadDiskA);
+    m_diskMenuA->addAction(m_loadDiskActionA);
+
+    m_ejectDiskActionA = new QAction(tr("Eject/Save"), this);
+    connect(m_ejectDiskActionA, &QAction::triggered, this, &MainWindow::onEjectDiskA);
+    m_diskMenuA->addAction(m_ejectDiskActionA);
+    fileMenu->addMenu(m_diskMenuA); // Voeg het submenu toe aan File
+
+    // 1b. Maak Disk B Submenu
+    m_diskMenuB = new QMenu(tr("Disk B"), this);
+    m_loadDiskActionB = new QAction(tr("Load"), this);
+    connect(m_loadDiskActionB, &QAction::triggered, this, &MainWindow::onLoadDiskB);
+    m_diskMenuB->addAction(m_loadDiskActionB);
+
+    m_ejectDiskActionB = new QAction(tr("Eject/Save"), this);
+    connect(m_ejectDiskActionB, &QAction::triggered, this, &MainWindow::onEjectDiskB);
+    m_diskMenuB->addAction(m_ejectDiskActionB);
+    fileMenu->addMenu(m_diskMenuB); // Voeg het submenu toe aan File
+
+    // 2. Maak Tape Submenu
+    m_tapeMenu = new QMenu(tr("Tape A"), this);
+    m_loadTapeAction = new QAction(tr("Load"), this);
+    connect(m_loadTapeAction, &QAction::triggered, this, &MainWindow::onLoadTape);
+    m_tapeMenu->addAction(m_loadTapeAction);
+
+    m_ejectTapeAction = new QAction(tr("Eject/Save"), this);
+    connect(m_ejectTapeAction, &QAction::triggered, this, &MainWindow::onEjectTape);
+    m_tapeMenu->addAction(m_ejectTapeAction);
+    fileMenu->addMenu(m_tapeMenu); // Voeg het submenu toe aan File
+
+    // Standaard uitgeschakeld
+    m_diskMenuA->setEnabled(false);
+    m_diskMenuB->setEnabled(false);
+    m_tapeMenu->setEnabled(false);
+
     fileMenu->addSeparator();
     m_settingsAction = new QAction(tr("Settings..."), this);
     connect(m_settingsAction, &QAction::triggered, this, &MainWindow::onOpenSettings);
@@ -324,9 +480,9 @@ void MainWindow::setupUI()
     fileMenu->addAction(m_quitAction);
 
     // Debug
-    QMenu* debugMenu = menuBar()->addMenu(tr("&Debug"));
+    QMenu* debugMenu = menuBar()->addMenu(tr("Debug"));
     m_startAction = new QAction(tr("Run/Stop"), this);
-    m_startAction->setShortcut(Qt::Key_F9);
+    //m_startAction->setShortcut(Qt::Key_F9);
     connect(m_startAction, &QAction::triggered, this, &MainWindow::onRunStop);
     debugMenu->addAction(m_startAction);
     debugMenu->addSeparator();
@@ -343,19 +499,32 @@ void MainWindow::setupUI()
     m_actShowLog->setCheckable(true);
     m_actShowLog->setChecked(false);
     debugMenu->addAction(m_actShowLog);
+
+    QAction* actClearLog = new QAction(tr("Clear Logger"), this);
+
+    // 2. Verbind de actie met de clear() functie van de log editor
+    connect(actClearLog, &QAction::triggered, this, [this]() {
+        if (m_logView && m_logView->editor()) {
+            m_logView->editor()->clear();
+        }
+    });
+    debugMenu->addAction(actClearLog);
+
     debugMenu->addSeparator();
-    m_debuggerAction = new QAction(tr("&Debugger"), this);
-    m_debuggerAction->setShortcut(Qt::Key_F8);
+    m_debuggerAction = new QAction(tr("Debugger"), this);
+    //m_debuggerAction->setShortcut(Qt::Key_F10);
     debugMenu->addAction(m_debuggerAction);
 
 
     // Tools
-    QMenu* toolsMenu = menuBar()->addMenu(tr("&Tools"));
+    QMenu* toolsMenu = menuBar()->addMenu(tr("Tools"));
     m_actToggleKeyboard = new QAction(tr("Keypad"), this);
     m_actToggleKeyboard->setCheckable(true);
     m_actToggleKeyboard->setChecked(false);
-    m_actToggleKeyboard->setShortcut(Qt::Key_F10);
+    //m_actToggleKeyboard->setShortcut(Qt::Key_F10);
     toolsMenu->addAction(m_actToggleKeyboard);
+    m_actJoypadMapper = new QAction(tr("Keypad mapper"), this);
+    toolsMenu->addAction(m_actJoypadMapper);
     toolsMenu->addSeparator();
     m_actShowNameTable = new QAction(tr("Name Table Viewer"), this);
     m_actShowNameTable->setCheckable(true);
@@ -372,10 +541,19 @@ void MainWindow::setupUI()
     toolsMenu->addSeparator();
     m_cartInfoAction = new QAction(tr("Cart profile"), this);
     toolsMenu->addAction(m_cartInfoAction);
+    // Probeer bestaande "Tools" te vinden
+    for (auto* m : menuBar()->findChildren<QMenu*>()) {
+        if (m->title().contains("Tools", Qt::CaseInsensitive)) { toolsMenu = m; break; }
+    }
+    // Of maak er één aan
+    if (!toolsMenu) toolsMenu = menuBar()->addMenu("&Tools");
 
+    // Actie toevoegen
+    m_actPrinterOutput = toolsMenu->addAction("Printer Output...", this, &MainWindow::onShowPrinterWindow);
+    m_actPrinterOutput->setShortcut(QKeySequence("Ctrl+Shift+P"));
 
     // Options
-    QMenu* optionsMenu = menuBar()->addMenu(tr("&Options"));
+    QMenu* optionsMenu = menuBar()->addMenu(tr("Options"));
     QActionGroup* videoGroup = new QActionGroup(this);
     m_actToggleNTSC = new QAction(tr("NTSC (60Hz)"), this);
     m_actToggleNTSC->setCheckable(true);
@@ -391,8 +569,32 @@ void MainWindow::setupUI()
     optionsMenu->addAction(m_actHardware);
     connect(m_actHardware, &QAction::triggered, this, &MainWindow::onOpenHardware);
 
+    optionsMenu->addSeparator();
+
+    m_adamInputMenu = optionsMenu->addMenu(tr("ADAM Input Mode"));
+    m_adamInputGroup = new QActionGroup(this);
+    m_adamInputGroup->setExclusive(true);
+
+    m_actAdamKeyboard = new QAction(tr("ADAM Keyboard (Typing)"), this);
+    m_actAdamKeyboard->setCheckable(true);
+    m_actAdamKeyboard->setChecked(true); // Standaard
+    m_adamInputGroup->addAction(m_actAdamKeyboard);
+    m_adamInputMenu->addAction(m_actAdamKeyboard);
+
+    m_actAdamJoystick = new QAction(tr("Coleco Joystick (Games)"), this);
+    m_actAdamJoystick->setCheckable(true);
+    m_actAdamJoystick->setChecked(false);
+    m_adamInputGroup->addAction(m_actAdamJoystick);
+    m_adamInputMenu->addAction(m_actAdamJoystick);
+
+    // Schakel standaard uit (wordt ingeschakeld in ADAM-modus)
+    m_adamInputMenu->setEnabled(false);
+
+    connect(m_actAdamKeyboard, &QAction::triggered, this, &MainWindow::onAdamInputModeChanged);
+    connect(m_actAdamJoystick, &QAction::triggered, this, &MainWindow::onAdamInputModeChanged);
+
     // Help
-    QMenu* helpMenu = menuBar()->addMenu(tr("&Help"));
+    QMenu* helpMenu = menuBar()->addMenu(tr("Help"));
     m_actWiki = new QAction(tr("Online Wiki"), this);
     helpMenu->addAction(m_actWiki);
     m_actReport = new QAction(tr("Report a bug"), this);
@@ -408,6 +610,8 @@ void MainWindow::setupUI()
 
 
     // Connects
+    connect(m_actJoypadMapper, &QAction::triggered, this, &MainWindow::onOpenJoypadMapper);
+
     connect(m_actToggleSGM, &QAction::toggled, this, &MainWindow::onToggleSGM);
     connect(m_actToggleKeyboard, &QAction::toggled, this, &MainWindow::onToggleKeyboard);
 
@@ -430,6 +634,14 @@ void MainWindow::setupUI()
     });
 
     connect(m_actAbout, &QAction::triggered, this, &MainWindow::showAboutDialog);
+}
+
+void MainWindow::onOpenJoypadMapper()
+{
+    JoypadWindow dlg(this);
+    if (dlg.exec() == QDialog::Accepted) {
+        if (m_inputWidget) m_inputWidget->reloadMappings(); // ⟵ hier updaten
+    }
 }
 
 void MainWindow::onOpenHardware()
@@ -473,61 +685,96 @@ void MainWindow::onOpenHardware()
 
 void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
 {
-    int newMachineType = (cfg.machine == MACHINE_ADAM ? 1 : 0);
+    // 1) Machine type (0=Coleco, 1=ADAM)
+    const int newMachineType = (cfg.machine == MACHINE_ADAM ? 1 : 0);
     if (m_machineType != newMachineType) {
         m_machineType = newMachineType;
-        QMetaObject::invokeMethod(m_colecoController, [this](){
-            coleco_set_machine_type(m_machineType);
-            coleco_hardreset();
-            coleco_reset_and_restart_bios();
-        }, Qt::QueuedConnection);
+
+        // Alleen via de controller; die roept coleco_initialise() (zie patch 1)
+        QMetaObject::invokeMethod(
+            m_colecoController, "setMachineType",
+            Qt::QueuedConnection, Q_ARG(int, m_machineType)
+            );
     }
 
-    if (m_machineType == 1) { // ADAM → SGM uitschakelen (zoals je had)
-        m_sgmEnabled = false; // sync intern
-        if (m_actToggleSGM) m_actToggleSGM->setChecked(false);
-        onToggleSGM(false);
-    }
-
-    // --- Palette (reeds aanwezig) ---
+    // 2) Palette doorzetten
     if (m_paletteIndex != cfg.palette) {
         m_paletteIndex = cfg.palette;
         if (m_colecoController) {
             QMetaObject::invokeMethod(
                 m_colecoController,
                 [this]() { coleco_setpalette(m_paletteIndex); },
-                Qt::QueuedConnection);
+                Qt::QueuedConnection
+                );
         }
     }
 
-    // --- Additional Hardware ---
-    m_sgmEnabled  = (m_machineType == 0) ? cfg.sgmEnabled : false; // SGM uit bij ADAM
+    // 3) Additional Hardware
+    //    SGM bestaat niet op ADAM → altijd uit & NIET togglen naar core
+    const bool desiredSgm = (m_machineType == 0) ? cfg.sgmEnabled : false;
     m_f18aEnabled = cfg.f18aEnabled;
 
-    // (optioneel: core-calls als je slots hebt:)
-    // QMetaObject::invokeMethod(m_colecoController, "setSGMEnabled",
-    //                           Qt::QueuedConnection, Q_ARG(bool, m_sgmEnabled));
-    // QMetaObject::invokeMethod(m_colecoController, "setF18AEnabled",
-    //                           Qt::QueuedConnection, Q_ARG(bool, m_f18aEnabled));
+    if (m_machineType == 1) { // ADAM
+        m_sgmEnabled = false;
+        if (m_actToggleSGM) m_actToggleSGM->setChecked(false);
 
-    // --- Additional Controllers ---
-    m_ctrlSteering     = cfg.steeringWheel;
-    m_ctrlRoller       = cfg.rollerCtrl;
-    m_ctrlSuperAction  = cfg.superAction;
+        // BUGFIX: We MOETEN de core vertellen SGM uit te zetten,
+        // zodat de poorten correct gereset worden.
+        QMetaObject::invokeMethod(
+            m_colecoController, "setSGMEnabled",
+            Qt::QueuedConnection, Q_ARG(bool, false) // Altijd 'false' voor ADAM
+            );
+    } else { // Coleco
+        if (desiredSgm != m_sgmEnabled) {
+            m_sgmEnabled = desiredSgm;
+            if (m_actToggleSGM) m_actToggleSGM->setChecked(m_sgmEnabled);
+            QMetaObject::invokeMethod(
+                m_colecoController, "setSGMEnabled",
+                Qt::QueuedConnection, Q_ARG(bool, m_sgmEnabled)
+                );
+        }
+    }
 
-    // (optioneel: core-calls als je slots hebt:)
-    // QMetaObject::invokeMethod(m_colecoController, "setSteeringWheelEnabled",
-    //                           Qt::QueuedConnection, Q_ARG(bool, m_ctrlSteering));
-    // QMetaObject::invokeMethod(m_colecoController, "setRollerControllerEnabled",
-    //                           Qt::QueuedConnection, Q_ARG(bool, m_ctrlRoller));
-    // QMetaObject::invokeMethod(m_colecoController, "setSuperActionEnabled",
-    //                           Qt::QueuedConnection, Q_ARG(bool, m_ctrlSuperAction));
+    // 4) Controllers (UI state; core-calls optioneel)
+    m_ctrlSteering    = cfg.steeringWheel;
+    m_ctrlRoller      = cfg.rollerCtrl;
+    m_ctrlSuperAction = cfg.superAction;
 
-    // --- Statuslabel bijwerken ---
+    // 5) Status + bewaren
     if (m_sysLabel) m_sysLabel->setText(m_machineType ? "ADAM" : "COLECO");
-
-    // --- Bewaar direct ---
     saveSettings();
+
+    // --- UI UPDATE VOOR MEDIA ---
+    bool isAdam = (m_machineType == 1);
+
+    if (m_adamInputMenu) m_adamInputMenu->setEnabled(isAdam);
+
+    // Schakel "Open ROM..." uit in ADAM-modus
+    if (m_openRomAction) m_openRomAction->setEnabled(!isAdam);
+
+    // Hide ROM label and its separator in ADAM mode
+    if (m_romLabel) m_romLabel->setVisible(!isAdam);
+    if (m_sepLabel4) m_sepLabel4->setVisible(!isAdam);
+
+    // Update de media labels (regelt ADAM-modus EN media lock)
+    updateMediaStatusLabels();
+
+    // Als we naar Coleco wisselen, eject alle media
+    if (!isAdam) {
+        onEjectDiskA(); // Roep de lokale eject-functies aan
+        onEjectDiskB(); // Roep de lokale eject-functies aan
+        onEjectTape();
+
+        m_adamInputModeJoystick = false;
+        if (m_actAdamKeyboard) m_actAdamKeyboard->setChecked(true);
+    }
+
+    updateMediaMenuState();
+
+    // Hide ROM label and its separator in ADAM mode
+    if (m_romLabel) m_romLabel->setVisible(!isAdam);
+    if (m_sepLabel4) m_sepLabel4->setVisible(!isAdam);
+
 }
 
 void MainWindow::showAboutDialog()
@@ -666,20 +913,14 @@ void MainWindow::onToggleSGM(bool checked)
 void MainWindow::onToggleKeyboard(bool on)
 {
     if (on) {
-        if (!m_inputWidget) {
-            m_inputWidget = new InputWidget(this);
-            m_inputWidget->attachTo(m_screenWidget);
-        }
+        // De widget bestaat al, toon alleen de overlay
         m_inputWidget->setOverlayVisible(true);
-        m_inputWidget->show();
         m_inputWidget->raise();
-        m_inputWidget->setFocus(Qt::OtherFocusReason);
+        //m_inputWidget->setFocus(Qt::OtherFocusReason); // Geef focus aan de overlay
     } else {
-        if (m_inputWidget) {
-            m_inputWidget->setOverlayVisible(false);
-            m_inputWidget->hide();
-        }
-        if (m_screenWidget) m_screenWidget->setFocus(Qt::OtherFocusReason);
+        // De widget blijft actief, verberg alleen de overlay
+        m_inputWidget->setOverlayVisible(false);
+        if (m_screenWidget) m_screenWidget->setFocus(Qt::OtherFocusReason); // Geef focus terug
     }
 }
 
@@ -706,6 +947,11 @@ void MainWindow::setupEmulatorThread()
             this, &MainWindow::onFpsUpdated,
             Qt::QueuedConnection);
 
+    // --- NIEUWE CONNECTIE VOOR SGM STATUS ---
+    connect(m_colecoController, &ColecoController::sgmStatusChanged,
+            this, &MainWindow::onSgmStatusChanged,
+            Qt::QueuedConnection);
+
     connect(m_colecoController, &ColecoController::emuPausedChanged,
             this, &MainWindow::onEmuPausedChanged,
             Qt::QueuedConnection);
@@ -727,6 +973,12 @@ void MainWindow::setupEmulatorThread()
     coleco_set_machine_type(m_machineType);
 
     m_emulatorThread->start();
+
+    // --- NIEUW: Stuur initiele hardware settings ---
+    // Stuur de SGM-status (geladen uit settings) door naar de core
+    QMetaObject::invokeMethod(m_colecoController, "setSGMEnabled",
+                              Qt::QueuedConnection,
+                              Q_ARG(bool, m_sgmEnabled));
 
     // Palette éénmalig toepassen zodra het 1e frame binnen is (VDP is init)
     connect(
@@ -775,17 +1027,38 @@ void MainWindow::onOpenRom()
 
     m_currentRomName = fileInfo.fileName();
 
+    // --- NIEUW: Update en elide de ROM naam ---
+    QFontMetrics metrics(m_romLabel->font());
+    QString elidedText = metrics.elidedText(m_currentRomName, Qt::ElideRight, m_romLabel->width()); // width() is nu de 450px
+    m_romLabel->setText(elidedText);
+    // --- EINDE NIEUW ---
+
     if (m_currentRomName.contains("ddp", Qt::CaseInsensitive) ||
         m_currentRomName.contains("dsk", Qt::CaseInsensitive))
         m_sysLabel->setText("ADAM");
     else
         m_sysLabel->setText("COLECO");
 
+    QMetaObject::invokeMethod(m_colecoController, "resethMachine",
+                              Qt::QueuedConnection);
+
     QMetaObject::invokeMethod(m_colecoController, "loadRom",
                               Qt::QueuedConnection,
                               Q_ARG(QString, filePath));
-    QMetaObject::invokeMethod(m_colecoController, "resetMachine",
-                              Qt::QueuedConnection);
+}
+
+void MainWindow::onSgmStatusChanged(bool enabled)
+{
+    if (!m_sgmLabel || !m_sepLabelSGM) return;
+
+    if (enabled) {
+        m_sgmLabel->setText("SGM");
+        m_sgmLabel->show();
+        m_sepLabelSGM->show();
+    } else {
+        m_sgmLabel->hide();
+        m_sepLabelSGM->hide();
+    }
 }
 
 void MainWindow::onReset()
@@ -884,6 +1157,8 @@ void MainWindow::moveEvent(QMoveEvent *event)
 
     // Roep onze helper aan om de debugger mee te schuiven
     positionDebugger();
+    positionPrinter();
+
 }
 
 void MainWindow::onDebuggerStepCPU()
@@ -955,6 +1230,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         qDebug() << "Geen thread actief, direct sluiten.";
         event->accept();
     }
+
 }
 
 void MainWindow::onEmuPausedChanged(bool paused)
@@ -962,11 +1238,11 @@ void MainWindow::onEmuPausedChanged(bool paused)
     m_isPaused = paused;
     if (m_startAction) {
         if (paused) {
-            m_startAction->setText(tr("Run (F9)"));
+            m_startAction->setText(tr("Run emulation"));
             m_runLabel->setText("STOP");
         } else {
             m_runLabel->setText("RUN");
-            m_startAction->setText(tr("Stop (F9)"));
+            m_startAction->setText(tr("Stop emulation"));
         }
     }
 }
@@ -991,4 +1267,434 @@ void MainWindow::onStartActionTriggered()
             Qt::QueuedConnection
             );
     }
+}
+
+// mainwindow.cpp
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
+    const int key = event->key();
+
+    // --- F1..F6: naar AdamNet als "function group" (MAKE) ---
+    if (key >= Qt::Key_F1 && key <= Qt::Key_F10) {
+        if (!event->isAutoRepeat()) {
+            static const uint8_t fg[10] = { 0x54,0x55,0x56,0x57,0x58,0x59,0x5A,0x5B,0x5C,0x5D };
+            const int idx = key - Qt::Key_F1;
+            const int marked = 0x100 | fg[idx]; // MAKE
+            QMetaObject::invokeMethod(
+                m_colecoController, "onAdamKeyEvent",
+                Qt::QueuedConnection, Q_ARG(int, marked)
+                );
+        }
+        event->accept();
+        return; // Nooit via ASCII sturen
+    }
+
+    // --- Coleco of joystick-modus: ALLES via mapper ---
+    if ((m_machineType != 1) || m_adamInputModeJoystick) {
+        bool handled = (m_inputWidget && m_inputWidget->handleKey(event, true));
+        if (handled) event->accept(); else event->ignore();
+        return;
+    }
+
+    // ===== ADAM keyboard mode =====
+
+    // --- KEYpad overlay actief? Eerst overlay proberen; zo niet: val door naar alfabet ---
+    const bool keypadOn = (m_actToggleKeyboard && m_actToggleKeyboard->isChecked());
+    if (keypadOn) {
+        bool handled = (m_inputWidget && m_inputWidget->handleKey(event, true));
+        if (handled) { event->accept(); return; }
+        // niet herkend door overlay → verder met normale typ-route
+    }
+
+    if (event->isAutoRepeat()) { event->ignore(); return; }
+
+    // Cijfers 0..9 → ASCII
+    if (key >= Qt::Key_0 && key <= Qt::Key_9) {
+        const uint8_t code = uint8_t('0' + (key - Qt::Key_0));
+        QMetaObject::invokeMethod(
+            m_colecoController, "onAdamKeyEvent",
+            Qt::QueuedConnection, Q_ARG(int, int(code))
+            );
+        m_pressedKeyMap.insert(key, code);
+        event->accept();
+        return;
+    }
+
+    // Tab → AdamNet (geen ASCII)
+    if (key == Qt::Key_Tab) {
+        const int marked = 0x100 | 0x09;
+        QMetaObject::invokeMethod(
+            m_colecoController, "onAdamKeyEvent",
+            Qt::QueuedConnection, Q_ARG(int, marked)
+            );
+        event->accept();
+        return;
+    }
+
+    // ASCII-branch, F1..F6 uitgesloten
+    const QString text = event->text();
+    if (!text.isEmpty() &&
+        key != Qt::Key_Return && key != Qt::Key_Enter &&
+        key != Qt::Key_Backspace && key != Qt::Key_Space &&
+        key != Qt::Key_Tab &&
+        !(key >= Qt::Key_F1 && key <= Qt::Key_F10))
+    {
+        const uint8_t code = uint8_t(text.at(0).toLatin1());
+        if (code > 0 && code < 0x80) {
+            QMetaObject::invokeMethod(
+                m_colecoController, "onAdamKeyEvent",
+                Qt::QueuedConnection, Q_ARG(int, int(code))
+                );
+            m_pressedKeyMap.insert(key, code);
+        }
+        event->accept();
+        return;
+    }
+
+    // Overige specials → widget
+    if (m_kbWidget) m_kbWidget->handleKey(event, true);
+    event->accept();
+}
+
+
+
+void MainWindow::keyReleaseEvent(QKeyEvent *event)
+{
+    const int key = event->key();
+
+    if (key >= Qt::Key_F11 && key <= Qt::Key_F12) {
+        QMainWindow::keyReleaseEvent(event);
+        return;
+    }
+
+    if ((m_machineType != 1) || m_adamInputModeJoystick) {
+        bool handled = false;
+        if (m_inputWidget) handled = m_inputWidget->handleKey(event, false);
+        if (handled) event->accept(); else event->ignore();
+        return;
+    }
+
+    // ===== ADAM keyboard mode =====
+
+    // F1..F6 → AdamNet (break) + F7..F10
+    if (key >= Qt::Key_F1 && key <= Qt::Key_F10) {
+        if (!event->isAutoRepeat()) {
+            static const uint8_t fg[10] = { 0x54,0x55,0x56,0x57,0x58,0x59,0x5A,0X5B,0x5C,0x5D };
+            const int idx = key - Qt::Key_F1;
+            const int marked = 0x100 | (uint8_t)(fg[idx] | 0x80);
+            QMetaObject::invokeMethod(
+                m_colecoController,"onAdamKeyEvent",
+                Qt::QueuedConnection, Q_ARG(int, marked)
+                );
+        }
+        event->accept();
+        return;
+    }
+
+    if (event->isAutoRepeat()) { event->ignore(); return; }
+
+    // Tab break → AdamNet
+    if (key == Qt::Key_Tab) {
+        const int marked = 0x100 | (0x09 | 0x80);
+        QMetaObject::invokeMethod(
+            m_colecoController,"onAdamKeyEvent",
+            Qt::QueuedConnection, Q_ARG(int, marked)
+            );
+        event->accept();
+        return;
+    }
+
+    // ASCII release
+    auto it = m_pressedKeyMap.find(key);
+    if (it != m_pressedKeyMap.end()) {
+        const uint8_t brk = uint8_t(it.value() | 0x80);
+        QMetaObject::invokeMethod(
+            m_colecoController,"onAdamKeyEvent",
+            Qt::QueuedConnection, Q_ARG(int, int(brk))
+            );
+        m_pressedKeyMap.erase(it);
+        event->accept();
+        return;
+    }
+
+    if (m_kbWidget) m_kbWidget->handleKey(event, false);
+    event->accept();
+}
+
+// --- NIEUWE SLOTS VOOR MEDIA ---
+
+void MainWindow::onLoadDiskA()
+{
+    if (m_machineType != 1) return;
+
+    QString absoluteDiskPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_diskPath);
+
+    const QString filePath = QFileDialog::getOpenFileName(
+        this,
+        tr("Open ADAM Disk Image"),
+        absoluteDiskPath, // Start in de Disk-map
+        tr("ADAM Disk (*.dsk *.img);;All Files (*.*)")
+        );
+
+    if (filePath.isEmpty()) return;
+
+    // Update m_diskPath naar de map van het zojuist geopende bestand
+    QFileInfo fileInfo(filePath);
+    QDir appDir(QCoreApplication::applicationDirPath());
+    m_diskPath = appDir.relativeFilePath(fileInfo.absolutePath());
+
+    // Stuur naar controller-thread
+    QMetaObject::invokeMethod(m_colecoController, "loadDisk",
+                              Qt::QueuedConnection,
+                              Q_ARG(int, 0), // Drive 0
+                              Q_ARG(QString, filePath));
+}
+
+void MainWindow::onLoadDiskB()
+{
+    if (m_machineType != 1) return;
+
+    QString absoluteDiskPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_diskPath);
+
+    const QString filePath = QFileDialog::getOpenFileName(
+        this,
+        tr("Open ADAM Disk Image"),
+        absoluteDiskPath, // Start in de Disk-map
+        tr("ADAM Disk (*.dsk *.img);;All Files (*.*)")
+        );
+
+    if (filePath.isEmpty()) return;
+
+    // Update m_diskPath naar de map van het zojuist geopende bestand
+    QFileInfo fileInfo(filePath);
+    QDir appDir(QCoreApplication::applicationDirPath());
+    m_diskPath = appDir.relativeFilePath(fileInfo.absolutePath());
+
+    // Stuur naar controller-thread
+    QMetaObject::invokeMethod(m_colecoController, "loadDisk",
+                              Qt::QueuedConnection,
+                              Q_ARG(int, 1), // Drive 1
+                              Q_ARG(QString, filePath));
+}
+
+void MainWindow::onLoadTape()
+{
+    if (m_machineType != 1) return;
+
+    QString absoluteTapePath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_tapePath);
+
+    const QString filePath = QFileDialog::getOpenFileName(
+        this,
+        tr("Open ADAM Tape Image"),
+        absoluteTapePath, // Start in de Tape-map
+        tr("ADAM Tape (*.ddp);;All Files (*.*)")
+        );
+
+    if (filePath.isEmpty()) return;
+
+    // Update m_tapePath naar de map van het zojuist geopende bestand
+    QFileInfo fileInfo(filePath);
+    QDir appDir(QCoreApplication::applicationDirPath());
+    m_tapePath = appDir.relativeFilePath(fileInfo.absolutePath());
+
+    QMetaObject::invokeMethod(m_colecoController, "loadTape",
+                              Qt::QueuedConnection,
+                              Q_ARG(int, 0), // Drive 0
+                              Q_ARG(QString, filePath));
+}
+
+void MainWindow::onEjectDiskA()
+{
+    // Ejecten mag altijd (ook als de knop verborgen is)
+    // om de save-logica te triggeren
+    qDebug() << "UI: Eject/Save Disk 0";
+    QMetaObject::invokeMethod(m_colecoController, "ejectDisk",
+                              Qt::QueuedConnection,
+                              Q_ARG(int, 0)); // Drive 0
+}
+
+void MainWindow::onEjectDiskB()
+{
+    // Ejecten mag altijd (ook als de knop verborgen is)
+    // om de save-logica te triggeren
+    qDebug() << "UI: Eject/Save Disk 1";
+    QMetaObject::invokeMethod(m_colecoController, "ejectDisk",
+                              Qt::QueuedConnection,
+                              Q_ARG(int, 1)); // Drive 1
+}
+
+
+void MainWindow::onEjectTape()
+{
+    qDebug() << "UI: Eject/Save Tape 0";
+    QMetaObject::invokeMethod(m_colecoController, "ejectTape",
+                              Qt::QueuedConnection,
+                              Q_ARG(int, 0)); // Drive 0
+}
+
+void MainWindow::onDiskStatusChanged(int drive, const QString& fileName)
+{
+    if (drive == 0) {
+        m_isDiskLoadedA = !fileName.isEmpty();
+        if (m_diskLabelA) {
+            const QString label = "D0: " + (fileName.isEmpty() ? "-" : fileName);
+            QFontMetrics fm(m_diskLabelA->font());
+            m_diskLabelA->setText(fm.elidedText(label, Qt::ElideRight, m_diskLabelA->width()));
+        }
+    } else if (drive == 1) {
+        m_isDiskLoadedB = !fileName.isEmpty();
+        if (m_diskLabelB) {
+            const QString label = "D1: " + (fileName.isEmpty() ? "-" : fileName);
+            QFontMetrics fm(m_diskLabelB->font());
+            m_diskLabelB->setText(fm.elidedText(label, Qt::ElideRight, m_diskLabelB->width()));
+        }
+    }
+
+    updateMediaStatusLabels();
+    updateMediaMenuState();
+}
+
+void MainWindow::onTapeStatusChanged(int drive, const QString& fileName)
+{
+    if (drive == 0) {
+        m_isTapeLoaded = !fileName.isEmpty();
+        updateMediaMenuState();
+        if (m_tapeLabel) {
+        QString label = "T0: " + (fileName.isEmpty() ? "-" : fileName);
+        QFontMetrics metrics(m_tapeLabel->font());
+        QString elidedText = metrics.elidedText(label, Qt::ElideRight, m_tapeLabel->width());
+        m_tapeLabel->setText(elidedText);
+        updateMediaStatusLabels();
+        }
+    }
+}
+
+void MainWindow::updateMediaStatusLabels()
+{
+    const bool isAdam = (m_machineType == 1);
+
+    bool showDisk = false;
+    bool showTape = false;
+
+    if (isAdam) {
+        if (m_isDiskLoadedA || m_isDiskLoadedB) {
+            showDisk = true;
+            showTape = false;
+        } else if (m_isTapeLoaded) {
+            showDisk = false;
+            showTape = true;
+        }
+    }
+
+    if (m_diskLabelA)      m_diskLabelA->setVisible(showDisk);
+    if (m_sepLabelMedia1a) m_sepLabelMedia1a->setVisible(showDisk);
+    if (m_diskLabelB)      m_diskLabelB->setVisible(showDisk);
+    if (m_sepLabelMedia1b) m_sepLabelMedia1b->setVisible(showDisk);
+
+    if (m_tapeLabel)       m_tapeLabel->setVisible(showTape);
+    if (m_sepLabelMedia2)  m_sepLabelMedia2->setVisible(showTape);
+}
+
+void MainWindow::updateMediaMenuState()
+{
+    const bool isAdam = (m_machineType == 1);
+
+    if (!isAdam) {
+        if (m_diskMenuA) m_diskMenuA->setEnabled(false);
+        if (m_diskMenuB) m_diskMenuB->setEnabled(false);
+        if (m_tapeMenu)  m_tapeMenu->setEnabled(false);
+
+        if (m_loadDiskActionA)  m_loadDiskActionA->setEnabled(false);
+        if (m_ejectDiskActionA) m_ejectDiskActionA->setEnabled(false);
+        if (m_loadDiskActionB)  m_loadDiskActionB->setEnabled(false);
+        if (m_ejectDiskActionB) m_ejectDiskActionB->setEnabled(false);
+        if (m_loadTapeAction)   m_loadTapeAction->setEnabled(false);
+        if (m_ejectTapeAction)  m_ejectTapeAction->setEnabled(false);
+        return;
+    }
+
+    // Tape ↔ Disk exclusie
+    const bool canUseDisk = !m_isTapeLoaded;
+    const bool canUseTape = !m_isDiskLoadedA && !m_isDiskLoadedB;
+
+    // Disks
+    if (m_diskMenuA) m_diskMenuA->setEnabled(canUseDisk);
+    if (m_diskMenuB) m_diskMenuB->setEnabled(canUseDisk);
+
+    if (canUseDisk) {
+        if (m_loadDiskActionA)  m_loadDiskActionA->setEnabled(!m_isDiskLoadedA);
+        if (m_ejectDiskActionA) m_ejectDiskActionA->setEnabled(m_isDiskLoadedA);
+
+        if (m_loadDiskActionB)  m_loadDiskActionB->setEnabled(!m_isDiskLoadedB);
+        if (m_ejectDiskActionB) m_ejectDiskActionB->setEnabled(m_isDiskLoadedB);
+    } else {
+        if (m_loadDiskActionA)  m_loadDiskActionA->setEnabled(false);
+        if (m_ejectDiskActionA) m_ejectDiskActionA->setEnabled(false);
+        if (m_loadDiskActionB)  m_loadDiskActionB->setEnabled(false);
+        if (m_ejectDiskActionB) m_ejectDiskActionB->setEnabled(false);
+    }
+
+    // Tape
+    if (m_tapeMenu) m_tapeMenu->setEnabled(canUseTape);
+    if (canUseTape) {
+        if (m_loadTapeAction)  m_loadTapeAction->setEnabled(!m_isTapeLoaded);
+        if (m_ejectTapeAction) m_ejectTapeAction->setEnabled(m_isTapeLoaded);
+    } else {
+        if (m_loadTapeAction)  m_loadTapeAction->setEnabled(false);
+        if (m_ejectTapeAction) m_ejectTapeAction->setEnabled(false);
+    }
+}
+
+void MainWindow::onAdamInputModeChanged()
+{
+    m_adamInputModeJoystick = m_actAdamJoystick->isChecked();
+    qDebug() << "ADAM Input Mode set to:" << (m_adamInputModeJoystick ? "Joystick" : "Keyboard");
+
+    // Geef focus terug aan het scherm
+    if (m_screenWidget) {
+        m_screenWidget->setFocus(Qt::OtherFocusReason);
+    }
+}
+
+
+// menu/actie “Open Printer Window”
+void MainWindow::onShowPrinterWindow()
+{
+    PrintWindow* w = PrintWindow::instance();
+
+    // 1) Toon & focus
+    if (!w->isVisible()) {
+        w->show();
+    }
+    w->raise();
+    w->activateWindow();
+
+    // 2) Positioneer rechts naast het hoofdvenster (zoals debugger)
+    //    Houd 10px marge aan en voorkom dat we buiten het scherm vallen.
+    const QRect mainGeom = this->frameGeometry();           // inclusief vensterrand
+    const QRect avail    = screen()->availableGeometry();   // werkbare schermruimte
+
+    QPoint pos(mainGeom.right() + 10, mainGeom.top());
+    QSize  sz  = w->size();
+
+    // Als we buiten het scherm dreigen te gaan, schuif naar links of onder
+    if (pos.x() + sz.width() > avail.right())
+        pos.setX(qMax(avail.left(), mainGeom.left() - 10 - sz.width()));
+    if (pos.y() + sz.height() > avail.bottom())
+        pos.setY(qMax(avail.top(), avail.bottom() - sz.height()));
+
+    w->move(pos);
+
+    // 3) Abonneer (idempotent) op AdamNet-printer
+}
+
+void MainWindow::positionPrinter()
+{
+    PrintWindow* w = PrintWindow::instance();
+    if (!w->isVisible()) return;
+
+    const QRect mainGeom = this->frameGeometry();
+    QPoint pos(mainGeom.right() + 10, mainGeom.top());
+    // Eenvoudig: alleen X bijwerken (rechts blijven “plakken”)
+    w->move(pos);
 }

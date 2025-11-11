@@ -761,7 +761,7 @@ unsigned char f18a_loop(void) {
         }
 
 		// Set VBlank status flag
-		tms.SR|=F18A_STAT_VBLANK;
+        //tms.SR|=F18A_STAT_VBLANK;
 
 		// Set Sprite Collision status flag (done in each line)
 		//if(!(tms.SR&TMS9918_STAT_OVRLAP))

@@ -24,8 +24,13 @@
 #ifndef ADAMNET_H
 #define ADAMNET_H
 
+#include <stdint.h> // Nodig voor uint8_t
+#include "fdidisk.h"
+
 #ifdef __cplusplus
 extern "C" {
+byte ChangeDisk(byte N, const char *FileName);
+byte ChangeTape(byte N, const char *FileName);
 #endif
 
 /** Adam Key Codes *******************************************/
@@ -114,7 +119,9 @@ extern byte PCBTable[];
 extern byte HoldingBuf[];
 extern byte  io_busy, KBDStatus, LastKey, DiskID;
 extern word savedBUF, savedLEN, PCBAddr;
+extern "C" void adamnet_force_writer(uint8_t sc);
 
+void adamnet_queue_key(uint8_t key_code);
 
 /** ReadPCB() ************************************************/
 /** Read value from a given PCB or DCB address.             **/
@@ -135,7 +142,6 @@ void ResetPCB(void);
 /** Add a new key to the keyboard buffer.                   **/
 /*************************************************************/
 void PutKBD(unsigned int Key);
-
 
 void AdamCheckFlushCache(void);
 

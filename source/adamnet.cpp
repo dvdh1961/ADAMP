@@ -21,11 +21,9 @@
  * Based on   PCB emulation (C) Marat Fayzullin 1994-2021
  *
 */
-#include <vcl.h>
-#include <mem.h>
+#include <QDebug>
 
 #include "adamnet.h"
-
 #include "coleco.h"
 
 byte HoldingBuf[4096];
@@ -34,6 +32,8 @@ word savedBUF = 0;
 word savedLEN = 0;
 byte last_command_read=false;
 byte io_show_status=0;
+
+static bool gLogAdamNet = true;
 
 #define DELAY_IO 10
 
@@ -99,54 +99,55 @@ byte io_show_status=0;
 /** Key Codes with SHIFT and CTRL ****************************/
 /** Shifted Key Codes ****************************************/
 static const byte ShiftKey[256] =
-{
-  /* 0x00 */
-  0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0xB8,0xB9,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
-  0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x1F,
-  0x20,0x21,0x22,0x23,0x24,0x25,0x26,0x22,0x28,0x29,0x2A,0x2B,0x3C,0x5F,0x3E,0x3F,
-  0x29,0x21,0x40,0x23,0x24,0x25,0x5E,0x26,0x2A,0x28,0x3A,0x3A,0x3C,0x2B,0x3E,0x3F,
-  /* 0x40 */
-  0x40,0x61,0x62,0x63,0x64,0x65,0x66,0x67,0x68,0x69,0x6A,0x6B,0x6C,0x6D,0x6E,0x6F,
-  0x70,0x71,0x72,0x73,0x74,0x75,0x76,0x77,0x78,0x79,0x7A,0x7B,0x7C,0x7D,0x5E,0x5F,
-  0x7E,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0x4A,0x4B,0x4C,0x4D,0x4E,0x4F,
-  0x50,0x51,0x52,0x53,0x54,0x55,0x56,0x57,0x58,0x59,0x5A,0x7B,0x7C,0x7D,0x7E,0x7F,
-  /* 0x80 */
-  0x80,0x89,0x8A,0x8B,0x8C,0x8D,0x8E,0x87,0x88,0x89,0x8A,0x8B,0x8C,0x8D,0x8E,0x8F,
-  0x98,0x99,0x9A,0x9B,0x9C,0x9D,0x9E,0x9F,0x98,0x99,0x9A,0x9B,0x9C,0x9D,0x9E,0x9F,
-  0xA0,0xA1,0xA2,0xA3,0xA4,0xA5,0xA6,0xA7,0xA8,0xA9,0xAA,0xAB,0xAC,0xAD,0xAE,0xAF,
-  0xB0,0xB1,0xB2,0xB3,0xB4,0xB5,0xB6,0xB7,0xB8,0xB9,0xBA,0xBB,0xBC,0xBD,0xBE,0xBF,
-  /* 0xC0 */
-  0xC0,0xC1,0xC2,0xC3,0xC4,0xC5,0xC6,0xC7,0xC8,0xC9,0xCA,0xCB,0xCC,0xCD,0xCE,0xCF,
-  0xD0,0xD1,0xD2,0xD3,0xD4,0xD5,0xD6,0xD7,0xD8,0xD9,0xDA,0xDB,0xDC,0xDD,0xDE,0xDF,
-  0xE0,0xE1,0xE2,0xE3,0xE4,0xE5,0xE6,0xE7,0xE8,0xE9,0xEA,0xEB,0xEC,0xED,0xEE,0xEF,
-  0xF0,0xF1,0xF2,0xF3,0xF4,0xF5,0xF6,0xF7,0xF8,0xF9,0xFA,0xFB,0xFC,0xFD,0xFE,0xFF
+    {
+        /* 0x00 */
+        0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0xB8,0xB9,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
+        0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x1F,
+        0x20,0x21,0x22,0x23,0x24,0x25,0x26,0x22,0x28,0x29,0x2A,0x2B,0x3C,0x5F,0x3E,0x3F,
+        0x29,0x21,0x40,0x23,0x24,0x25,0x5E,0x26,0x2A,0x28,0x3A,0x3A,0x3C,0x2B,0x3E,0x3F,
+        /* 0x40 */
+        0x40,0x61,0x62,0x63,0x64,0x65,0x66,0x67,0x68,0x69,0x6A,0x6B,0x6C,0x6D,0x6E,0x6F,
+        0x70,0x71,0x72,0x73,0x74,0x75,0x76,0x77,0x78,0x79,0x7A,0x7B,0x7C,0x7D,0x5E,0x5F,
+        0x7E,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0x4A,0x4B,0x4C,0x4D,0x4E,0x4F,
+        0x50,0x51,0x52,0x53,0x54,0x55,0x56,0x57,0x58,0x59,0x5A,0x7B,0x7C,0x7D,0x7E,0x7F,
+        /* 0x80 */
+        0x80,0x89,0x8A,0x8B,0x8C,0x8D,0x8E,0x87,0x88,0x89,0x8A,0x8B,0x8C,0x8D,0x8E,0x8F,
+        0x98,0x99,0x9A,0x9B,0x9C,0x9D,0x9E,0x9F,0x98,0x99,0x9A,0x9B,0x9C,0x9D,0x9E,0x9F,
+        0xA0,0xA1,0xA2,0xA3,0xA4,0xA5,0xA6,0xA7,0xA8,0xA9,0xAA,0xAB,0xAC,0xAD,0xAE,0xAF,
+        0xB0,0xB1,0xB2,0xB3,0xB4,0xB5,0xB6,0xB7,0xB8,0xB9,0xBA,0xBB,0xBC,0xBD,0xBE,0xBF,
+        /* 0xC0 */
+        0xC0,0xC1,0xC2,0xC3,0xC4,0xC5,0xC6,0xC7,0xC8,0xC9,0xCA,0xCB,0xCC,0xCD,0xCE,0xCF,
+        0xD0,0xD1,0xD2,0xD3,0xD4,0xD5,0xD6,0xD7,0xD8,0xD9,0xDA,0xDB,0xDC,0xDD,0xDE,0xDF,
+        0xE0,0xE1,0xE2,0xE3,0xE4,0xE5,0xE6,0xE7,0xE8,0xE9,0xEA,0xEB,0xEC,0xED,0xEE,0xEF,
+        0xF0,0xF1,0xF2,0xF3,0xF4,0xF5,0xF6,0xF7,0xF8,0xF9,0xFA,0xFB,0xFC,0xFD,0xFE,0xFF
 };
 
 static const byte CtrlKey[256] =
-{
-  /* 0x00 */
-  0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
-  0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x1F,
-  0x20,0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x29,0x2A,0x2B,0x2C,0x2D,0x2E,0x2F,
-  0x30,0x31,0x00,0x33,0x34,0x35,0x1F,0x37,0x38,0x39,0x3A,0x3B,0x3C,0x3D,0x3E,0x3F,
-  /* 0x40 */
-  0x40,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
-  0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x5F,
-  0x60,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
-  0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x7F,
-  /* 0x80 */
-  0x80,0x81,0x82,0x83,0x84,0x85,0x86,0x87,0x88,0x89,0x8A,0x8B,0x8C,0x8D,0x8E,0x8F,
-  0x90,0x91,0x92,0x93,0x94,0x95,0x96,0x7F,0x98,0x99,0x9A,0x9B,0x9C,0x9D,0x9E,0x9F,
-  0xA4,0xA5,0xA6,0xA7,0xA4,0xA5,0xA6,0xA7,0xA8,0xA9,0xAA,0xAB,0xAC,0xAD,0xAE,0xAF,
-  0xB0,0xB1,0xB2,0xB3,0xB4,0xB5,0xB6,0xB7,0xB8,0xB9,0xBA,0xBB,0xBC,0xBD,0xBE,0xBF,
-  /* 0xC0 */
-  0xC0,0xC1,0xC2,0xC3,0xC4,0xC5,0xC6,0xC7,0xC8,0xC9,0xCA,0xCB,0xCC,0xCD,0xCE,0xCF,
-  0xD0,0xD1,0xD2,0xD3,0xD4,0xD5,0xD6,0xD7,0xD8,0xD9,0xDA,0xDB,0xDC,0xDD,0xDE,0xDF,
-  0xE0,0xE1,0xE2,0xE3,0xE4,0xE5,0xE6,0xE7,0xE8,0xE9,0xEA,0xEB,0xEC,0xED,0xEE,0xEF,
-  0xF0,0xF1,0xF2,0xF3,0xF4,0xF5,0xF6,0xF7,0xF8,0xF9,0xFA,0xFB,0xFC,0xFD,0xFE,0xFF
+    {
+        /* 0x00 */
+        0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
+        0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x1F,
+        0x20,0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x29,0x2A,0x2B,0x2C,0x2D,0x2E,0x2F,
+        0x30,0x31,0x00,0x33,0x34,0x35,0x1F,0x37,0x38,0x39,0x3A,0x3B,0x3C,0x3D,0x3E,0x3F,
+        /* 0x40 */
+        0x40,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
+        0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x5F,
+        0x60,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
+        0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x7F,
+        /* 0x80 */
+        0x80,0x81,0x82,0x83,0x84,0x85,0x86,0x87,0x88,0x89,0x8A,0x8B,0x8C,0x8D,0x8E,0x8F,
+        0x90,0x91,0x92,0x93,0x94,0x95,0x96,0x7F,0x98,0x99,0x9A,0x9B,0x9C,0x9D,0x9E,0x9F,
+        0xA4,0xA5,0xA6,0xA7,0xA4,0xA5,0xA6,0xA7,0xA8,0xA9,0xAA,0xAB,0xAC,0xAD,0xAE,0xAF,
+        0xB0,0xB1,0xB2,0xB3,0xB4,0xB5,0xB6,0xB7,0xB8,0xB9,0xBA,0xBB,0xBC,0xBD,0xBE,0xBF,
+        /* 0xC0 */
+        0xC0,0xC1,0xC2,0xC3,0xC4,0xC5,0xC6,0xC7,0xC8,0xC9,0xCA,0xCB,0xCC,0xCD,0xCE,0xCF,
+        0xD0,0xD1,0xD2,0xD3,0xD4,0xD5,0xD6,0xD7,0xD8,0xD9,0xDA,0xDB,0xDC,0xDD,0xDE,0xDF,
+        0xE0,0xE1,0xE2,0xE3,0xE4,0xE5,0xE6,0xE7,0xE8,0xE9,0xEA,0xEB,0xEC,0xED,0xEE,0xEF,
+        0xF0,0xF1,0xF2,0xF3,0xF4,0xF5,0xF6,0xF7,0xF8,0xF9,0xFA,0xFB,0xFC,0xFD,0xFE,0xFF
 };
 
 extern byte coleco_port60;
+static byte g_KbdDev = 0x00;   // wordt automatisch ingevuld
 
 byte PCBTable[0x10000];
 
@@ -157,34 +158,172 @@ byte LastKey;
 
 extern byte RAM_Memory[];
 
+// Een ring-buffer voor 8 toetsaanslagen (press/release events)
+#define KEY_BUFFER_SIZE 8
+static volatile uint8_t g_key_buffer[KEY_BUFFER_SIZE];
+static volatile uint8_t g_key_buffer_head = 0;
+static volatile uint8_t g_key_buffer_tail = 0;
+
+// Status van het AdamNet keyboard device
+enum AdamKeyboardStatus {
+    KBD_IDLE = 0x00,       // Wacht op commando
+    KBD_SCANNING = 0x01,   // BIOS heeft scan gevraagd, wacht op toets
+    KBD_DATA_READY = 0x80  // Data is beschikbaar in de buffer
+};
+static volatile uint8_t g_kbd_status = KBD_IDLE;
+
+#include <stdint.h>
+
+static int g_block_ascii_fkeys = 0;  // countdown tegen T..Y die nog via PutKBD zouden lekken
+
+#ifdef __cplusplus
+extern "C" {
+void adam_printer_chunk(const uint8_t* data, int len);
+}
+#endif
+
+extern "C" void adamnet_block_ascii_fkeys(int count)
+{
+    if (count < 0) count = 0;
+    g_block_ascii_fkeys = count;
+}
+
+extern "C" void adamnet_host_prn_write_ascii(const char* s)
+{
+    if (!s) return;
+
+    // Simuleer een PRN "write" blok zoals AdamNet dat zou leveren:
+    // We sturen de bytes meteen door via jouw bestaande bridge.
+    // (Het is AdamNet-PRN pad qua flow, alleen zonder SmartWriter als bron.)
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(s);
+
+    // Stuur in hapklare blokken zodat de UI soepel blijft
+    while (*p) {
+        // snijd tot max ~512 bytes per 'blok' (vergelijkbaar met sector)
+        int n = 0;
+        const uint8_t* start = p;
+        while (p[n] && n < 512) ++n;
+        adam_printer_chunk(start, n);
+        p += n;
+    }
+
+    // paginaeinde simuleren kan (optioneel):
+    // static const uint8_t ff = 0x0C;
+    // adam_printer_chunk(&ff, 1);
+}
+
+// --- AdamNet printer sink: UI kan zich hierop abonneren ---
+extern "C" {typedef void (*AdamPrinterSink)(const char* data, int len);
+static AdamPrinterSink g_printer_sink = nullptr;
+void adam_printer_set_sink(AdamPrinterSink sink) { g_printer_sink = sink; }
+}
+
+// Injecteer een ADAM scancode rechtstreeks voor de Writer (EmulTwo-stijl via LastKey)
+extern "C" void adamnet_inject_scancode(uint8_t sc)
+{
+    // Stuur de scancode (bv. 0xB4 of 0x34) naar de queue
+    adamnet_queue_key(sc);
+}
+
+void adamnet_queue_key(uint8_t key_code)
+ {
+    uint8_t mapped = 0;
+    // FG1..FG6 remap + F7..F10
+    if ((key_code & 0x7F) >= 0x54 && (key_code & 0x7F) <= 0x5D) {
+
+        uint8_t idx = (key_code & 0x7F) - 0x54;    // 0..7
+        if (idx<6)
+            mapped = 0x81 + idx;               // MAKE = 0xB4..0xB9
+        else
+            if (idx==6) mapped = 0X93; // F7
+        else
+            if (idx==7) mapped = 0x95; // F8
+        else
+            if (idx==8) mapped = 0x96; // F9
+        else
+            if (idx==9) mapped = 0x97; // F10
+
+        if (key_code & 0x80){
+             mapped = mapped ^ 0x80;
+        }
+        key_code = mapped;
+        qDebug() << "[AdamNet] ENQUEUE (na remap):" << Qt::hex << key_code;
+    }
+        // Bereken de volgende 'head' positie
+        uint8_t next_head = (g_key_buffer_head + 1) % KEY_BUFFER_SIZE;
+
+        // Als de buffer niet vol is...
+        if (next_head != g_key_buffer_tail)
+        {
+            g_key_buffer[g_key_buffer_head] = key_code;
+            g_key_buffer_head = next_head;
+            KBDStatus = (byte)(RSP_STATUS | 0x0C);
+        }
+        // (Optioneel: anders, negeer de toetsaanslag - buffer is vol)
+}
+
+
+// --- Interne Helper Functies ---
+
+/**
+ * @brief Haalt een key-event op uit de buffer.
+ * @return De key-code, of 0 als de buffer leeg is.
+ */
+static uint8_t adamnet_dequeue_key(void)
+{
+    // Als de buffer leeg is...
+    if (g_key_buffer_head == g_key_buffer_tail)
+    {
+        return 0; // 0 = Geen toets
+    }
+
+    uint8_t key_code = g_key_buffer[g_key_buffer_tail];
+    // Verplaats de 'tail'
+    g_key_buffer_tail = (g_key_buffer_tail + 1) % KEY_BUFFER_SIZE;
+qDebug() << "[AdamNet] DEQUEUE (naar BIOS):" << Qt::hex << key_code;
+    return key_code;
+}
+
+/**
+ * @brief Controleert of de key buffer data bevat.
+ * @return 1 als niet leeg, 0 als leeg.
+ */
+static int adamnet_is_key_available(void)
+{
+    return (g_key_buffer_head != g_key_buffer_tail);
+}
+
+
+// --- AdamNet Hooks (aangeroepen door coleco.cpp) ---
+
 
 /** GetDCB() *************************************************/
 /** Get DCB byte at given offset.                           **/
 /*************************************************************/
 static byte GetDCB(byte Dev,byte Offset)
 {
-  word A = (PCBAddr+PCB_SIZE+Dev*DCB_SIZE+Offset)&0xFFFF;
-  return(RAM_Memory[A]);
+    word A = (PCBAddr+PCB_SIZE+Dev*DCB_SIZE+Offset)&0xFFFF;
+    return(RAM_Memory[A]);
 }
 
 static word GetDCBBase(byte Dev)
 {
-  return(GetDCB(Dev,DCB_BA_LO)+((word)GetDCB(Dev,DCB_BA_HI)<<8));
+    return(GetDCB(Dev,DCB_BA_LO)+((word)GetDCB(Dev,DCB_BA_HI)<<8));
 }
 
 static word GetDCBLen(byte Dev)
 {
-  return(GetDCB(Dev,DCB_BUF_LEN_LO)+((word)GetDCB(Dev,DCB_BUF_LEN_HI)<<8));
+    return(GetDCB(Dev,DCB_BUF_LEN_LO)+((word)GetDCB(Dev,DCB_BUF_LEN_HI)<<8));
 }
 
 static unsigned int GetDCBSector(byte Dev)
 {
-  return(
-    GetDCB(Dev,DCB_SEC_NUM_0)
-  + ((unsigned int)GetDCB(Dev,DCB_SEC_NUM_1)<<8)
-  + ((unsigned int)GetDCB(Dev,DCB_SEC_NUM_2)<<16)
-  + ((unsigned int)GetDCB(Dev,DCB_SEC_NUM_3)<<24)
-  );
+    return(
+        GetDCB(Dev,DCB_SEC_NUM_0)
+        + ((unsigned int)GetDCB(Dev,DCB_SEC_NUM_1)<<8)
+        + ((unsigned int)GetDCB(Dev,DCB_SEC_NUM_2)<<16)
+        + ((unsigned int)GetDCB(Dev,DCB_SEC_NUM_3)<<24)
+        );
 }
 
 /** GetPCB() *************************************************/
@@ -192,18 +331,18 @@ static unsigned int GetDCBSector(byte Dev)
 /*************************************************************/
 static byte GetPCB(word Offset)
 {
-  word A = (PCBAddr+Offset)&0xFFFF;
-  return(RAM_Memory[A]);
+    word A = (PCBAddr+Offset)&0xFFFF;
+    return(RAM_Memory[A]);
 }
 
 static word GetPCBBase(void)
 {
-  return(GetPCB(PCB_BA_LO)+((word)GetPCB(PCB_BA_HI)<<8));
+    return(GetPCB(PCB_BA_LO)+((word)GetPCB(PCB_BA_HI)<<8));
 }
 
 static word GetMaxDCB(void)
 {
-  return(GetPCB(PCB_MAX_DCB));
+    return(GetPCB(PCB_MAX_DCB));
 }
 
 /** SetDCB() *************************************************/
@@ -211,9 +350,9 @@ static word GetMaxDCB(void)
 /*************************************************************/
 static void SetDCB(byte Dev,byte Offset,byte Value)
 {
-  word A = (PCBAddr+PCB_SIZE+Dev*DCB_SIZE+Offset)&0xFFFF;
-    
-  RAM_Memory[A] = Value;
+    word A = (PCBAddr+PCB_SIZE+Dev*DCB_SIZE+Offset)&0xFFFF;
+
+    RAM_Memory[A] = Value;
 }
 
 /** SetPCB() *************************************************/
@@ -221,8 +360,8 @@ static void SetDCB(byte Dev,byte Offset,byte Value)
 /*************************************************************/
 static void SetPCB(word Offset,byte Value)
 {
-  word A = (PCBAddr+Offset)&0xFFFF;
-  RAM_Memory[A] = Value;
+    word A = (PCBAddr+Offset)&0xFFFF;
+    RAM_Memory[A] = Value;
 }
 
 /** IsPCB() **************************************************/
@@ -230,18 +369,18 @@ static void SetPCB(word Offset,byte Value)
 /*************************************************************/
 static int IsPCB(word A)
 {
-  /* Quick check for PCB presence */
-  if(!PCBTable[A]) return(0);
-  /* Check if PCB is mapped in */
-  if((A<0x2000) && ((coleco_port60&0x03)!=1)) return(0);
-  if((A<0x8000) && ((coleco_port60&0x03)!=1) && ((coleco_port60&0x03)!=3)) return(0);
-  if((A>=0x8000) && (coleco_port60&0x0C)) return(0);
+    /* Quick check for PCB presence */
+    if(!PCBTable[A]) return(0);
+    /* Check if PCB is mapped in */
+    if((A<0x2000) && ((coleco_port60&0x03)!=1)) return(0);
+    if((A<0x8000) && ((coleco_port60&0x03)!=1) && ((coleco_port60&0x03)!=3)) return(0);
+    if((A>=0x8000) && (coleco_port60&0x0C)) return(0);
 
-  /* Check number of active devices */
-  if(A>=PCBAddr+PCB_SIZE+GetMaxDCB()*DCB_SIZE) return(0);
+    /* Check number of active devices */
+    if(A>=PCBAddr+PCB_SIZE+GetMaxDCB()*DCB_SIZE) return(0);
 
-  /* This address belongs to AdamNet */
-  return(1);
+    /* This address belongs to AdamNet */
+    return(1);
 }
 
 /** MovePCB() ************************************************/
@@ -249,26 +388,26 @@ static int IsPCB(word A)
 /*************************************************************/
 static void MovePCB(word NewAddr,byte MaxDCB)
 {
-  int J;
+    int J;
 
-  PCBTable[PCBAddr] = 0;
-  for(J=0;J<15*DCB_SIZE;J+=DCB_SIZE)
-    PCBTable[(PCBAddr+PCB_SIZE+J)&0xFFFF] = 0;
+    PCBTable[PCBAddr] = 0;
+    for(J=0;J<15*DCB_SIZE;J+=DCB_SIZE)
+        PCBTable[(PCBAddr+PCB_SIZE+J)&0xFFFF] = 0;
 
-  PCBTable[NewAddr] = 1;
-  for(J=0;J<15*DCB_SIZE;J+=DCB_SIZE)
-    PCBTable[(NewAddr+PCB_SIZE+J)&0xFFFF] = 1;
+    PCBTable[NewAddr] = 1;
+    for(J=0;J<15*DCB_SIZE;J+=DCB_SIZE)
+        PCBTable[(NewAddr+PCB_SIZE+J)&0xFFFF] = 1;
 
-  PCBAddr = NewAddr;
-  SetPCB(PCB_BA_LO,   NewAddr&0xFF);
-  SetPCB(PCB_BA_HI,   NewAddr>>8);
-  SetPCB(PCB_MAX_DCB, MaxDCB);
+    PCBAddr = NewAddr;
+    SetPCB(PCB_BA_LO,   NewAddr&0xFF);
+    SetPCB(PCB_BA_HI,   NewAddr>>8);
+    SetPCB(PCB_MAX_DCB, MaxDCB);
 
-  for(J=0;J<=MaxDCB;++J)
-  {
-    SetDCB(J,DCB_DEV_NUM,0);
-    SetDCB(J,DCB_ADD_CODE,J);
-  }
+    for(J=0;J<=MaxDCB;++J)
+    {
+        SetDCB(J,DCB_DEV_NUM,0);
+        SetDCB(J,DCB_ADD_CODE,J);
+    }
 }
 
 /** ReportDevice() *******************************************/
@@ -276,331 +415,393 @@ static void MovePCB(word NewAddr,byte MaxDCB)
 /*************************************************************/
 static void ReportDevice(byte Dev,word MsgSize,byte IsBlock)
 {
-  SetDCB(Dev,DCB_CMD_STAT, RSP_STATUS);
-  SetDCB(Dev,DCB_MAXL_LO,  MsgSize&0xFF);
-  SetDCB(Dev,DCB_MAXL_HI,  MsgSize>>8);
-  SetDCB(Dev,DCB_DEV_TYPE, IsBlock? 0x01:0x00);
+    SetDCB(Dev,DCB_CMD_STAT, RSP_STATUS);
+    SetDCB(Dev,DCB_MAXL_LO,  MsgSize&0xFF);
+    SetDCB(Dev,DCB_MAXL_HI,  MsgSize>>8);
+    SetDCB(Dev,DCB_DEV_TYPE, IsBlock? 0x01:0x00);
 }
 
+// --- adamnet.cpp ---
+
 /** PutKBD() *************************************************/
-/** Add a new key to the keyboard buffer.                   **/
+/** Voeg ASCII-toets toe aan de (oude) KBD-buffer.          **/
 /*************************************************************/
 void PutKBD(unsigned int Key)
 {
-  unsigned int Mode;
+    if (Key & 0x80) {
+        // release: 0xC1 voor 'A' → basis = 0x41
+        byte baseKey = (byte)(Key & 0x7F);
+        if (baseKey == LastKey) LastKey = 0x00;
+        return;
+    }
+    LastKey = (byte)Key;    // press
+KBDStatus = (byte)(RSP_STATUS | 0x0C);
 
-  Mode = Key & ~0xFF;
-  Key  = Key & 0xFF;
-  Key  = (Key>='A')&&(Key<='Z')? Key+'a'-'A':Key;
-//  Key  = (Mode&ADAM_KEY_CONTROL || key_ctrl) && (CtrlKey[Key]!=Key)?  CtrlKey[Key]
-//       : (Mode&ADAM_KEY_SHIFT || key_shift)  && (ShiftKey[Key]!=Key)? ShiftKey[Key]
-  Key  = (Mode&KEY_CONTROL) && (CtrlKey[Key]!=Key)?  CtrlKey[Key]
-       : (Mode&KEY_SHIFT )  && (ShiftKey[Key]!=Key)? ShiftKey[Key]
-       : Key;
-  Key  = (Mode&KEY_CAPS)&&(Key>='a')&&(Key<='z')? Key+'A'-'a':Key;
+    // // We sturen alles, press en release, naar de queue
+    // adamnet_queue_key((uint8_t)Key);
 
-  LastKey = Key;
+    // // Signaleer eventueel data available (optioneel, maar schaadt niet)
+    // KBDStatus = (byte)(RSP_STATUS | 0x0C);
 }
 
+/** GetKBD() *************************************************/
+/** Haal éérst LastKey, anders uit AdamNet ringbuffer.      **/
+/*************************************************************/
 static byte GetKBD()
 {
-  byte Result = LastKey;
-  LastKey = 0x00;
-  return(Result);
+    // // return LastKey;
+    // byte Result = LastKey;
+    // LastKey = 0x00;
+    // return(Result);
+    // 1. Check de Scancode-Queue (voor F-toetsen)
+    if (adamnet_is_key_available())
+    {
+        return adamnet_dequeue_key();
+    }
+
+    // 2. Als die leeg is, check de ASCII LastKey (voor '9', 'A', etc.)
+    byte Result = LastKey;
+    LastKey = 0x00;
+    return(Result);
+
 }
 
+/** UpdateKBD() **********************************************/
 static void UpdateKBD(byte Dev,int V)
 {
-  int J,N;
-  word A;
+    int J,N;
+    word A;
 
-  switch(V)
-  {
+    switch(V)
+    {
     case -1:
-      SetDCB(Dev,DCB_CMD_STAT,KBDStatus);
-      break;
+        SetDCB(Dev,DCB_CMD_STAT,KBDStatus);
+        break;
     case CMD_STATUS:
     case CMD_SOFT_RESET:
-      /* Character-based device, single character buffer */
-      ReportDevice(Dev,0x0001,0);
-      KBDStatus = RSP_STATUS;
-      LastKey   = 0x00;
-      break;
+    {
+        // Is er een key?
+        //const int ready = (LastKey != 0);
+        const int ready = adamnet_is_key_available() || (LastKey != 0); // <-- NIEUWE LIJN
+
+        ReportDevice(Dev,0x0001,0);
+
+        // KBDStatus = status + "data available" indien ready
+        KBDStatus = (byte)(RSP_STATUS | (ready ? 0x0C : 0x00));
+    }
+    break;
     case CMD_WRITE:
-      SetDCB(Dev,DCB_CMD_STAT,RSP_ACK+0x0B);
-      KBDStatus = RSP_STATUS;
-      break;
+        SetDCB(Dev,DCB_CMD_STAT,RSP_ACK+0x0B);
+        KBDStatus = RSP_STATUS;
+        break;
     case CMD_READ:
-      SetDCB(Dev,DCB_CMD_STAT,0x00);
-      A = GetDCBBase(Dev);
-      N = GetDCBLen(Dev);
-      for(J=0 ; (J<N) && (V=GetKBD()) ; ++J, A=(A+1)&0xFFFF)
-      {
-        RAM_Memory[A] = V;
-      }
-      KBDStatus = RSP_STATUS+(J<N? 0x0C:0x00);
-      break;
-  }
+        SetDCB(Dev,DCB_CMD_STAT,0x00);
+        A = GetDCBBase(Dev);
+        N = GetDCBLen(Dev);
+        for(J=0 ; (J<N) && (V=GetKBD()) ; ++J, A=(A+1)&0xFFFF)
+        {
+            RAM_Memory[A] = V;
+        }
+        KBDStatus = RSP_STATUS+(J<N? 0x0C:0x00);
+        break;
+    }
 }
 
 static void UpdatePRN(byte Dev,int V)
 {
-  int N;
-  word A;
 
-  switch(V)
-  {
+    int N;
+    word A;
+
+    switch(V)
+    {
     case CMD_STATUS:
     case CMD_SOFT_RESET:
-      /* Character-based device, single character buffer */
-      ReportDevice(Dev,0x0001,0);
-      break;
+        /* Character-based device, single character buffer */
+        ReportDevice(Dev,0x0001,0);
+        break;
     case CMD_READ:
-      SetDCB(Dev,DCB_CMD_STAT,RSP_ACK+0x0B);
-      break;
+        SetDCB(Dev,DCB_CMD_STAT,RSP_ACK+0x0B);
+        break;
     case CMD_WRITE:
-      SetDCB(Dev,DCB_CMD_STAT,0x00);
-      A = GetDCBBase(Dev);
-      N = GetDCBLen(Dev);
-      (void)A;
-      (void)N;
-      //for(J=0 ; J<N ; ++J, A=(A+1)&0xFFFF)
-        //Printer(RAM(A));
-      break;
+    {
+        SetDCB(Dev,DCB_CMD_STAT,0x00);
+        A = GetDCBBase(Dev);
+        N = GetDCBLen(Dev);
+
+        if (N > 0) {
+            // Kopieer in een tijdelijke buffer en stuur door
+            // (klein en veilig; kan ook in stukken als je wil)
+            static uint8_t s_buf[1024];
+            while (N > 0) {
+                int chunk = N > (int)sizeof(s_buf) ? (int)sizeof(s_buf) : N;
+                for (int j = 0; j < chunk; ++j, A=(A+1)&0xFFFF)
+                    s_buf[j] = RAM_Memory[A];
+                adam_printer_chunk(s_buf, chunk);
+                N -= chunk;
+            }
+        }
+
+        // (void)A;
+        // (void)N;
+        // //for(J=0 ; J<N ; ++J, A=(A+1)&0xFFFF)
+        // //Printer(RAM(A));
+        // // 1) Stuur de bytes naar de UI (indien een sink is geïnstalleerd)
+        // if (g_printer_sink && N > 0) {
+        //     g_printer_sink(reinterpret_cast<const char*>(&RAM_Memory[A]), N);
+        //}
+
+        // 2) (optioneel) bestaand gedrag zoals file-capture laten staan
+        // prn_write_bytes(&RAM_Memory[A], N);
+
+        // Klaar
+        SetDCB(Dev, DCB_CMD_STAT, 0x00);  // ACK
+    }
+        break;
     default:
-      SetDCB(Dev,DCB_CMD_STAT,RSP_STATUS);
-      break;
-  }
+        SetDCB(Dev,DCB_CMD_STAT,RSP_STATUS);
+        break;
+    }
 }
 
 static void AdamFlushCache(void)
 {
-  for (word i=0; i<savedLEN; i++)
-  {
-      // Copy data from holding buffer...
-      RAM_Memory[savedBUF] = HoldingBuf[i];
-      savedBUF++;
-  }
+    for (word i=0; i<savedLEN; i++)
+    {
+        // Copy data from holding buffer...
+        RAM_Memory[savedBUF] = HoldingBuf[i];
+        savedBUF++;
+    }
 }
 
 static void UpdateDSK(byte N,byte Dev,int V)
 {
-  static const byte InterleaveTable[8]= { 0,5,2,7,4,1,6,3 };
-  int I,J,K,LEN,SEC;
-  word BUF;
-  byte *Data;
+    static const byte InterleaveTable[8]= { 0,5,2,7,4,1,6,3 };
+    int I,J,K,LEN,SEC;
+    word BUF;
+    byte *Data;
 
-  /* We have limited number of disks */
-  if(N>=MAX_DISKS) return;
+    /* We have limited number of disks */
+    if(N>=MAX_DISKS) return;
 
-  /* If reading DCB status, stop here */
-  if(V<0)
-  {
-      if (io_busy)
-      {
-          io_busy--;
-          SetDCB(Dev,DCB_CMD_STAT,0x00);
-          
-          if (io_busy == 0 && last_command_read)
-          {
-              last_command_read=0;
-              AdamFlushCache();
-          }
-      }
-      else
-      {
-         SetDCB(Dev,DCB_CMD_STAT,RSP_STATUS);
-      }
-    return;
-  }
-
-  /* Reset errors, report missing disks */
-  SetDCB(Dev,DCB_NODE_TYPE,(GetDCB(Dev,DCB_NODE_TYPE)&0xF0) | (Disks[N].Data? 0x00:0x03));
-
-  /* Depending on the command... */
-  switch(V)
-  {
-    case CMD_STATUS:
-      /* Block-based device, 1kB buffer */
-      ReportDevice(Dev,0x0400,1);
-      break;
-
-    case CMD_SOFT_RESET:
-      SetDCB(Dev,DCB_CMD_STAT,RSP_STATUS);
-      break;
-
-    case CMD_WRITE:
-    case CMD_READ:
-      io_show_status = (V==CMD_READ) ? 1:2;
-      //TODO if (io_show_status == 2) adam_unsaved_data = 1;
-      /* Busy status by default */
-      SetDCB(Dev,DCB_CMD_STAT,0x00);
-      io_busy = DELAY_IO;
-      /* If no disk, stop here */
-      if(!Disks[N].Data) break;
-      /* Determine buffer address, length, block number */
-      BUF = GetDCBBase(Dev);
-      LEN = GetDCBLen(Dev);
-      LEN = LEN<0x0400? LEN:0x0400;
-      SEC = GetDCBSector(Dev);
-      savedBUF = BUF;
-      savedLEN = LEN;
-      /* For each 512-byte sector... */
-      for(I=0, SEC<<=1 ; I<LEN ; ++SEC, I+=0x200)
-      {
-        /* Remap sector number via interleave table */
-        K = (SEC&~7) | InterleaveTable[SEC&7];
-        /* Get pointer to sector data on disk */
-        Data = LinearFDI(&Disks[N],K);
-        /* If wrong sector number, stop here */
-        if(!Data)
+    /* If reading DCB status, stop here */
+    if(V<0)
+    {
+        if (io_busy)
         {
-          SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x02);
-          LEN = 0;
-          break;
-        }
-        /* Read or write sectors */
-        K = I+0x200>LEN? LEN-I:0x200;
-        if(V==CMD_READ)
-        {
-            last_command_read = true;
-            for(J=0;J<K;++J,++BUF) 
+            io_busy--;
+            SetDCB(Dev,DCB_CMD_STAT,0x00);
+
+            if (io_busy == 0 && last_command_read)
             {
-                HoldingBuf[I+J] = Data[J];
+                last_command_read=0;
+                AdamFlushCache();
             }
         }
         else
         {
-          last_command_read = false;
-          for(J=0;J<K;++J,++BUF) 
-          {
-              Data[J] = RAM_Memory[BUF];
-          }
+            SetDCB(Dev,DCB_CMD_STAT,RSP_STATUS);
         }
-        /* If disk access failed, stop here */
-        if(J<K)
+        return;
+    }
+
+    /* Reset errors, report missing disks */
+    SetDCB(Dev,DCB_NODE_TYPE,(GetDCB(Dev,DCB_NODE_TYPE)&0xF0) | (Disks[N].Data? 0x00:0x03));
+
+    /* Depending on the command... */
+    switch(V)
+    {
+    case CMD_STATUS:
+        /* Block-based device, 1kB buffer */
+        ReportDevice(Dev,0x0400,1);
+        break;
+
+    case CMD_SOFT_RESET:
+        SetDCB(Dev,DCB_CMD_STAT,RSP_STATUS);
+        break;
+
+    case CMD_WRITE:
+    case CMD_READ:
+        io_show_status = (V==CMD_READ) ? 1:2;
+        //TODO if (io_show_status == 2) adam_unsaved_data = 1;
+        /* Busy status by default */
+        SetDCB(Dev,DCB_CMD_STAT,0x00);
+        io_busy = DELAY_IO;
+        /* If no disk, stop here */
+        if(!Disks[N].Data) break;
+        /* Determine buffer address, length, block number */
+        BUF = GetDCBBase(Dev);
+        LEN = GetDCBLen(Dev);
+        LEN = LEN<0x0400? LEN:0x0400;
+        SEC = GetDCBSector(Dev);
+        savedBUF = BUF;
+        savedLEN = LEN;
+        /* For each 512-byte sector... */
+        for(I=0, SEC<<=1 ; I<LEN ; ++SEC, I+=0x200)
         {
-          SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x06);
-          LEN = 0;
-          break;
+            /* Remap sector number via interleave table */
+            K = (SEC&~7) | InterleaveTable[SEC&7];
+            /* Get pointer to sector data on disk */
+            Data = LinearFDI(&Disks[N],K);
+            /* If wrong sector number, stop here */
+            if(!Data)
+            {
+                SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x02);
+                LEN = 0;
+                break;
+            }
+            /* Read or write sectors */
+            K = I+0x200>LEN? LEN-I:0x200;
+            if(V==CMD_READ)
+            {
+                last_command_read = true;
+                for(J=0;J<K;++J,++BUF)
+                {
+                    HoldingBuf[I+J] = Data[J];
+                }
+            }
+            else
+            {
+                last_command_read = false;
+                for(J=0;J<K;++J,++BUF)
+                {
+                    Data[J] = RAM_Memory[BUF];
+                }
+            }
+            /* If disk access failed, stop here */
+            if(J<K)
+            {
+                SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x06);
+                LEN = 0;
+                break;
+            }
         }
-      }
-      /* Done */
-      break;
-  }
+        /* Done */
+        break;
+    }
 }
 
 static void UpdateTAP(byte N,byte Dev,int V)
 {
-  int I,J,K,LEN,SEC;
-  word BUF;
-  byte *Data;
+    int I,J,K,LEN,SEC;
+    word BUF;
+    byte *Data;
 
-  /* If reading DCB status, stop here */
-  if(V<0)
-  {
-      if (io_busy)
-      {
-          io_busy--;
-          SetDCB(Dev,DCB_CMD_STAT,0x00);
-          if (io_busy == 0 && last_command_read)
-          {
-              last_command_read = 0;
-              AdamFlushCache();
-          }
-      }
-      else
-      {
-        SetDCB(Dev,DCB_CMD_STAT,RSP_STATUS);
-      }
-    return;
-  }
-
-  /* Reset errors, report missing tapes */
-  SetDCB(Dev,DCB_NODE_TYPE,(Tapes[N&2].Data? 0x00:0x03)|(Tapes[(N&2)+1].Data? 0x00:0x30));
-
-  /* Depending on the command... */
-  switch(V)
-  {
-    case CMD_STATUS:
-      /* Block-based device, 1kB buffer */
-      ReportDevice(Dev,0x0400,1);
-      break;
- 
-    case CMD_SOFT_RESET:
-      SetDCB(Dev,DCB_CMD_STAT,RSP_STATUS);
-      break;
-
-    case CMD_WRITE:
-    case CMD_READ:
-      io_show_status = (V==CMD_READ) ? 1:2;
-      // TODO if (io_show_status == 2) adam_unsaved_data = 1;
-      /* Busy status by default */
-      SetDCB(Dev,DCB_CMD_STAT,0x00);
-      io_busy = DELAY_IO;
-      /* If no tape, stop here */
-      if(!Tapes[N].Data) break;
-      /* Determine buffer address, length, block number */
-      BUF = GetDCBBase(Dev);
-      LEN = GetDCBLen(Dev);
-      LEN = LEN<0x0400? LEN:0x0400;
-      SEC = GetDCBSector(Dev);
-      savedBUF = BUF;
-      savedLEN = LEN;
-      
-      /* For each 512-byte sector... */
-      for(I=0, SEC<<=1 ; I<LEN ; ++SEC, I+=0x200)
-      {
-        /* Get pointer to sector data on tape */
-        Data = LinearFDI(&Tapes[N],SEC);
-        /* If wrong sector number, stop here */
-        if(!Data)
+    /* If reading DCB status, stop here */
+    if (V < 0)
+    {
+        if (io_busy > 0)
         {
-          SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x02);
-          LEN = 0;
-          break;
-        }
-        /* Read or write sectors */
-        K = I+0x200>LEN? LEN-I:0x200;
-        if(V==CMD_READ)
-        {
-          last_command_read = true;
-          for(J=0;J<K;++J,++BUF) 
-          {
-              HoldingBuf[I+J] = Data[J];
-          }
+            io_busy--;
+            if (io_busy == 0)
+            {
+                // Net klaar: flush (indien READ) en direct READY zetten
+                if (last_command_read) {
+                    last_command_read = 0;
+                    AdamFlushCache();
+                }
+                SetDCB(Dev, DCB_CMD_STAT, RSP_STATUS);
+            }
+            else
+            {
+                // Nog bezig
+                SetDCB(Dev, DCB_CMD_STAT, 0x00);
+            }
         }
         else
         {
-          last_command_read = false;
-          for(J=0;J<K;++J,++BUF) Data[J] = RAM(BUF);
+            // Veiligheid: al klaar
+            SetDCB(Dev, DCB_CMD_STAT, RSP_STATUS);
         }
-        /* If disk access failed, stop here */
-        if(J<K)
+        return;
+    }
+
+    /* Reset errors, report missing tapes */
+    SetDCB(Dev,DCB_NODE_TYPE,(Tapes[N&2].Data? 0x00:0x03)|(Tapes[(N&2)+1].Data? 0x00:0x30));
+
+    /* Depending on the command... */
+    switch(V)
+    {
+    case CMD_STATUS:
+        /* Block-based device, 1kB buffer */
+        ReportDevice(Dev,0x0400,1);
+        break;
+
+    case CMD_SOFT_RESET:
+        SetDCB(Dev,DCB_CMD_STAT,RSP_STATUS);
+        break;
+
+    case CMD_WRITE:
+    case CMD_READ:
+        qDebug() << "TAPE CMD_READ buffer filled";
+        io_show_status = (V==CMD_READ) ? 1:2;
+        // TODO if (io_show_status == 2) adam_unsaved_data = 1;
+        /* Busy status by default */
+        SetDCB(Dev,DCB_CMD_STAT,0x00);
+        io_busy = DELAY_IO;
+        /* If no tape, stop here */
+        if(!Tapes[N].Data) break;
+        /* Determine buffer address, length, block number */
+        BUF = GetDCBBase(Dev);
+        LEN = GetDCBLen(Dev);
+        LEN = LEN<0x0400? LEN:0x0400;
+        SEC = GetDCBSector(Dev);
+        savedBUF = BUF;
+        savedLEN = LEN;
+
+        /* For each 512-byte sector... */
+        for(I=0, SEC<<=1 ; I<LEN ; ++SEC, I+=0x200)
         {
-          SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x06);
-          LEN = 0;
-          break;
+            /* Get pointer to sector data on tape */
+            Data = LinearFDI(&Tapes[N],SEC);
+            /* If wrong sector number, stop here */
+            if(!Data)
+            {
+                SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x02);
+                LEN = 0;
+                break;
+            }
+            /* Read or write sectors */
+            K = I+0x200>LEN? LEN-I:0x200;
+            if(V==CMD_READ)
+            {
+                last_command_read = true;
+                for(J=0;J<K;++J,++BUF)
+                {
+                    HoldingBuf[I+J] = Data[J];
+                }
+            }
+            else
+            {
+                last_command_read = false;
+                for(J=0;J<K;++J,++BUF) Data[J] = RAM(BUF);
+            }
+            /* If disk access failed, stop here */
+            if(J<K)
+            {
+                SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x06);
+                LEN = 0;
+                break;
+            }
         }
-      }
-      /* Done */
-      break;
-  }
+        /* Done */
+        break;
+    }
 }
 
 static void UpdateDCB(byte Dev,int V)
 {
-  byte DevID;
+    byte DevID;
 
-  /* When writing, ignore invalid commands */
-  if(!V || (V>=0x80)) return;
+    /* When writing, ignore invalid commands */
+    if(!V || (V>=0x80)) return;
 
-  /* Compute device ID */
-  DevID = (GetDCB(Dev,DCB_DEV_NUM)<<4) + (GetDCB(Dev,DCB_ADD_CODE)&0x0F);
+    /* Compute device ID */
+    DevID = (GetDCB(Dev,DCB_DEV_NUM)<<4) + (GetDCB(Dev,DCB_ADD_CODE)&0x0F);
 
-  /* Depending on the device ID... */
-  switch(DevID)
-  {
+    /* Depending on the device ID... */
+    switch(DevID)
+    {
     case 0x01: UpdateKBD(Dev,V);break;
     case 0x02: UpdatePRN(Dev,V);break;
     case 0x04:
@@ -614,9 +815,9 @@ static void UpdateDCB(byte Dev,int V)
     case 0x52: UpdateDSK(DiskID,Dev,-2);break;
 
     default:
-      SetDCB(Dev,DCB_CMD_STAT,RSP_ACK+0x0B);
-      break;
-  }
+        SetDCB(Dev,DCB_CMD_STAT,RSP_ACK+0x0B);
+        break;
+    }
 }
 
 /** ReadPCB() ************************************************/
@@ -624,22 +825,35 @@ static void UpdateDCB(byte Dev,int V)
 /*************************************************************/
 void ReadPCB(word A)
 {
-  if(!IsPCB(A)) return;
+    // FIX 1: Retourneer 0x00 als het geen PCB-adres is.
+    if (!IsPCB(A)) return;
 
-  /* Compute offset within PCB/DCB */
-  A -= PCBAddr;
+    // Bereken offset binnen PCB/DCB
+    A -= PCBAddr;
 
-  /* If reading a PCB status... */
-  if(A==PCB_CMD_STAT)
-  {
-    /* Do nothing */
-  }
-  /* If reading status from a device... */
-  else if(!((A-PCB_SIZE)%DCB_SIZE))
-  {
-    byte Dev = (A-PCB_SIZE)/DCB_SIZE;
-    if(Dev<=GetMaxDCB()) UpdateDCB(Dev,-1);
-  }
+    // FIX 2: Als de BIOS de PCB-status leest...
+    if (A == PCB_CMD_STAT)
+    {
+        // Retourneer de PCB-status die in het RAM staat
+        //return RAM_Memory[PCBAddr + PCB_CMD_STAT];
+    }
+    // FIX 3: Als de BIOS de status van een *apparaat* leest...
+    else if (!((A - PCB_SIZE) % DCB_SIZE))
+    {
+        byte Dev = (A - PCB_SIZE) / DCB_SIZE;
+        if (Dev <= GetMaxDCB())
+        {
+            UpdateDCB(Dev, -1); // Deze functie update de status in RAM
+
+            // Retourneer de zojuist geüpdatete DCB-status
+            //return GetDCB(Dev, DCB_CMD_STAT);
+        }
+    }
+
+    // Fallback: Als het geen status-read was, retourneer de
+    // onbewerkte byte uit het PCB-geheugen (bv. BA_LO, BA_HI).
+    //return RAM_Memory[PCBAddr + A];
+    //qDebug() << "ReadPCB at" << Qt::hex << A;
 }
 
 /** WritePCB() ***********************************************/
@@ -647,43 +861,43 @@ void ReadPCB(word A)
 /*************************************************************/
 void WritePCB(word A,byte V)
 {
-  if(!IsPCB(A)) return;
+    if(!IsPCB(A)) return;
 
-  /* Compute offset within PCB/DCB */
-  A -= PCBAddr;
+    /* Compute offset within PCB/DCB */
+    A -= PCBAddr;
 
-  /* If writing a PCB command... */
-  if(A==PCB_CMD_STAT)
-  {
-    switch(V)
+    /* If writing a PCB command... */
+    if(A==PCB_CMD_STAT)
     {
-      case CMD_PCB_SYNC1: /* Sync Z80 */
-        SetPCB(PCB_CMD_STAT,RSP_STATUS|V);
-        break;
-      case CMD_PCB_SYNC2: /* Sync master 6801 */
-        SetPCB(PCB_CMD_STAT,RSP_STATUS|V);
-        break;
-      case CMD_PCB_SNA: /* Rellocate PCB */
-        MovePCB(GetPCBBase(),GetMaxDCB());
-        SetPCB(PCB_CMD_STAT,RSP_STATUS|V);
-        break;
-      case CMD_PCB_IDLE:
-      case CMD_PCB_WAIT:
-        break;
-      case CMD_PCB_RESET:
-        memset(PCBTable,0,sizeof(PCBTable));
-        break;
-      default:
-        memset(PCBTable,0,sizeof(PCBTable));
-        break;
+        switch(V)
+        {
+        case CMD_PCB_SYNC1: /* Sync Z80 */
+            SetPCB(PCB_CMD_STAT,RSP_STATUS|V);
+            break;
+        case CMD_PCB_SYNC2: /* Sync master 6801 */
+            SetPCB(PCB_CMD_STAT,RSP_STATUS|V);
+            break;
+        case CMD_PCB_SNA: /* Rellocate PCB */
+            MovePCB(GetPCBBase(),GetMaxDCB());
+            SetPCB(PCB_CMD_STAT,RSP_STATUS|V);
+            break;
+        case CMD_PCB_IDLE:
+        case CMD_PCB_WAIT:
+            break;
+        case CMD_PCB_RESET:
+            memset(PCBTable,0,sizeof(PCBTable));
+            break;
+        default:
+            memset(PCBTable,0,sizeof(PCBTable));
+            break;
+        }
     }
-  }
-  /* If writing a DCB command... */
-  else if(!((A-PCB_SIZE)%DCB_SIZE))
-  {
-    byte Dev = (A-PCB_SIZE)/DCB_SIZE;
-    if(Dev<=GetMaxDCB()) UpdateDCB(Dev,V);
-  }
+    /* If writing a DCB command... */
+    else if(!((A-PCB_SIZE)%DCB_SIZE))
+    {
+        byte Dev = (A-PCB_SIZE)/DCB_SIZE;
+        if(Dev<=GetMaxDCB()) UpdateDCB(Dev,V);
+    }
 }
 
 /** ResetPCB() ***********************************************/
@@ -691,16 +905,20 @@ void WritePCB(word A,byte V)
 /*************************************************************/
 void ResetPCB(void)
 {
-  /* PCB/DCB not mapped yet */
-  memset(PCBTable,0,sizeof(PCBTable));
+    /* PCB/DCB not mapped yet */
+    memset(PCBTable,0,sizeof(PCBTable));
 
-  /* Set starting PCB address */
-  PCBAddr = 0x0000;
-  MovePCB(0xFEC0,15);
+    /* Set starting PCB address */
+    PCBAddr = 0x0000;
+    MovePCB(0xFEC0,15);
 
-  /* @@@ Reset tape and disk here */
-  KBDStatus = RSP_STATUS;
-  LastKey   = 0x00;
+    /* Reset keyboard state */
+    KBDStatus = RSP_STATUS;
+    LastKey   = 0x00; // Reset oude buffer
+
+    // Reset de *nieuwe* buffer
+    g_key_buffer_head = 0;
+    g_key_buffer_tail = 0;
 }
 
 /** ChangeTape() *********************************************/
@@ -710,24 +928,24 @@ void ResetPCB(void)
 /*************************************************************/
 byte ChangeTape(byte N,const char *FileName)
 {
-  byte *P;
+    byte *P;
 
-  /* We only have MAX_TAPES drives */
-  if(N>=MAX_TAPES) return(0);
+    /* We only have MAX_TAPES drives */
+    if(N>=MAX_TAPES) return(0);
 
-  /* Eject disk if requested */
-  if(!FileName) { EjectFDI(&Tapes[N]);return(1); }
+    /* Eject disk if requested */
+    if(!FileName) { EjectFDI(&Tapes[N]);return(1); }
 
-  /* If FileName not empty, try loading tape image */
-  if(*FileName && LoadFDI(&Tapes[N],FileName,FMT_DDP))
-  {
-    /* Done */
-    return(1);
-  }
+    /* If FileName not empty, try loading tape image */
+    if(*FileName && LoadFDI(&Tapes[N],FileName,FMT_DDP))
+    {
+        /* Done */
+        return(1);
+    }
 
-  /* If no existing file, create a new 256kB tape image */
-  P = FormatFDI(&Tapes[N],FMT_DDP);
-  return(!!P);
+    /* If no existing file, create a new 256kB tape image */
+    P = FormatFDI(&Tapes[N],FMT_DDP);
+    return(!!P);
 }
 
 /** ChangeDisk() *********************************************/
@@ -737,23 +955,22 @@ byte ChangeTape(byte N,const char *FileName)
 /*************************************************************/
 byte ChangeDisk(byte N,const char *FileName)
 {
-  byte *P;
+    byte *P;
 
-  /* We only have MAX_DISKS drives */
-  if(N>=MAX_DISKS) return(0);
+    /* We only have MAX_DISKS drives */
+    if(N>=MAX_DISKS) return(0);
 
-  /* Eject disk if requested */
-  if(!FileName) { EjectFDI(&Disks[N]);return(1); }
+    /* Eject disk if requested */
+    if(!FileName) { EjectFDI(&Disks[N]);return(1); }
 
-  /* If FileName not empty, try loading disk image */
-  if(*FileName && LoadFDI(&Disks[N],FileName,FMT_ADMDSK))
-  {
-    /* Done */
-    return(1);
-  }
+    /* If FileName not empty, try loading disk image */
+    if(*FileName && LoadFDI(&Disks[N],FileName,FMT_ADMDSK))
+    {
+        /* Done */
+        return(1);
+    }
 
-  /* If no existing file, create a new 160kB disk image */
-  P = FormatFDI(&Disks[N],FMT_ADMDSK);
-  return(!!P);
+    /* If no existing file, create a new 160kB disk image */
+    P = FormatFDI(&Disks[N],FMT_ADMDSK);
+    return(!!P);
 }
-

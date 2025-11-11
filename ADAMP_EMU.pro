@@ -1,8 +1,8 @@
 # Qt6 basisconfiguratie
-QT       += core gui widgets multimedia
+QT       += core gui widgets multimedia printsupport
 CONFIG   += c++17
 
-CONFIG += console
+CONFIG -= console
 
 
 # Projectnaam
@@ -11,6 +11,7 @@ TEMPLATE = app
 
 # Externe bibliotheken linken
 LIBS += -lz
+LIBS += -ldsound
 
 # Includepaden
 # We voegen de 'source' map toe zodat de C-bestanden elkaar kunnen vinden

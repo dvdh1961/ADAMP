@@ -135,6 +135,7 @@ extern void cpu_writeport16(unsigned int port, unsigned int value);
 //static __inline__
 
 int z80_cycle_count = 0;        /* running total of cycles executed */
+int z80_irq_line = 0;
 
 #define cpu_readop(a) cpu_readmem16(a)
 #define cpu_readop_arg(a) cpu_readmem16(a)
@@ -3542,6 +3543,7 @@ void z80_set_irq_line(int irqline, int state)
 
     /* the main execute loop will take the interrupt */
   }
+
 }
 
 /****************************************************************************

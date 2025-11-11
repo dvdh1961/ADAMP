@@ -6,9 +6,7 @@
 #include <QThread>
 #include <QMoveEvent>
 #include <QSettings>
-
-// Geen SoundManager meer
-// #include "soundmanager.h"
+#include <QMap>
 
 class ColecoController;
 class ScreenWidget;
@@ -23,6 +21,8 @@ class PatternWindow;
 class SpriteWindow;
 class SettingsWindow;
 class HardwareWindow;
+class JoypadWindow;
+class KbWidget;
 
 struct HardwareConfig;
 
@@ -49,12 +49,14 @@ public slots:
     void onShowNameTable(bool checked);
     void onShowPatternTable(bool checked);
     void onShowSpriteTable(bool checked);
+    void onShowPrinterWindow();
 
     // callbacks van emulator / thread
     void onThreadFinished();
     void onFramePresented();
     // VERWIJDERD: void onFpsTick();
     void onFpsUpdated(int fps); // <-- NIEUWE SLOT
+    void onSgmStatusChanged(bool enabled); // <-- NIEUWE SLOT
     void setVideoStandard(const QString& standard);
 
     // debugger-acties
@@ -69,10 +71,24 @@ public slots:
     void onStartActionTriggered();
     void onOpenHardware();
 
+private slots:
+    void onLoadDiskA();
+    void onLoadDiskB();
+    void onLoadTape();
+    void onEjectDiskA();
+    void onEjectDiskB();
+    void onEjectTape();
+    // --- MEDIA STATUS UPDATE SLOTS ---
+    void onDiskStatusChanged(int drive, const QString& fileName);
+    void onTapeStatusChanged(int drive, const QString& fileName);
+    void onAdamInputModeChanged();
+
 protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *obj, QEvent *event) override;
     void moveEvent(QMoveEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
 
 private:
     // helpers
@@ -81,10 +97,12 @@ private:
     void setStatusBar();
     void setUpLogWindow();
     void positionDebugger();
+    void positionPrinter();
     void saveSettings();
     void loadSettings();
     void showAboutDialog();
     void applyHardwareConfig(const HardwareConfig& cfg);
+    void onOpenJoypadMapper();
 
 private:
     // emulator thread en controller
@@ -100,6 +118,7 @@ private:
     InputWidget  *m_inputWidget  = nullptr;
     LogWidget    *m_logView      = nullptr;
     QLabel       *m_logoLabel    = nullptr;
+    KbWidget     *m_kbWidget     = nullptr;
 
     // statusbar dingen
     QLabel *m_stdLabel  = nullptr;
@@ -111,13 +130,10 @@ private:
     QLabel *m_sepLabel3 = nullptr;
     QLabel *m_sepLabel4 = nullptr;
     QLabel *m_sysLabel  = nullptr;   // COLECO / ADAM
-
+    QLabel *m_sepLabelSGM = nullptr;
+    QLabel *m_sgmLabel    = nullptr;
     QString m_currentStd;
     QString m_currentRomName;
-
-    // fps tracking
-    // VERWIJDERD: QTimer m_fpsTimer;
-    // VERWIJDERD: int    m_frameCounter = 0;
 
     // acties / menu
     QAction *m_openRomAction      = nullptr;
@@ -142,14 +158,53 @@ private:
     QAction *m_actAbout           = nullptr;
     QAction *m_settingsAction     = nullptr;
     QAction *m_actHardware        = nullptr;
+    QAction *m_actJoypadMapper    = nullptr;
+
+    // --- MEDIA ACTIES ---
+    QAction *m_loadDiskActionA    = nullptr;
+    QAction *m_loadDiskActionB    = nullptr;
+    QAction *m_loadTapeAction     = nullptr;
+    QAction *m_ejectDiskActionA   = nullptr;
+    QAction *m_ejectDiskActionB   = nullptr;
+    QAction *m_ejectTapeAction    = nullptr;
+
+    QAction* m_actPrinterOutput   = nullptr;
+
+    // --- MEDIA STATUSBALK LABELS ---
+    QLabel *m_diskLabelA          = nullptr;
+    QLabel *m_diskLabelB          = nullptr;
+    QLabel *m_tapeLabel           = nullptr;
+    QLabel *m_sepLabelMedia1a     = nullptr;
+    QLabel *m_sepLabelMedia1b     = nullptr;
+    QLabel *m_sepLabelMedia2      = nullptr;
+
+    QMenu *m_diskMenuA            = nullptr;
+    QMenu *m_diskMenuB            = nullptr;
+    QMenu *m_tapeMenu             = nullptr;
+
+    bool m_isDiskLoadedA;
+    bool m_isDiskLoadedB;
+    bool m_isTapeLoaded;
+
+    QActionGroup* m_adamInputGroup;
+    QMenu* m_adamInputMenu;
+    QAction* m_actAdamKeyboard;
+    QAction* m_actAdamJoystick;
+    bool          m_adamInputModeJoystick; // false = KB, true = Joystick
+
+    void updateMediaMenuState();
+    void updateMediaStatusLabels();
+
+    QMap<int, uint8_t> m_pressedKeyMap;
 
     // debugger venster
     DebuggerWindow *m_debugWin = nullptr;
     CartridgeInfoDialog *m_cartInfoDialog = nullptr;
 
-    // huidige pauze-state van de emulator
     bool m_isPaused = false;
     QString m_romPath;
+    QString m_diskPath;
+    QString m_tapePath;
     int m_paletteIndex = 0;
     int m_machineType = 0; // 0=Coleco/Phoenix, 1=ADAM
     bool m_sgmEnabled       = false;

@@ -1,7 +1,6 @@
 <RCC>
     <qresource prefix="/images">
         <file>images/ADAMP.png</file>
-        <file>images/adamp_logo.png</file>
         <file>images/ctrl_roller.png</file>
         <file>images/ctrl_sterring.png</file>
         <file>images/ctrl_superaction.png</file>
@@ -10,5 +9,8 @@
         <file>images/machine_adam.png</file>
         <file>images/machine_adamp.png</file>
         <file>images/machine_coleco.png</file>
+        <file>images/joypad.png</file>
+        <file>images/Adam_PrinterBG.png</file>
+        <file>images/adamp_logo.png</file>
     </qresource>
 </RCC>

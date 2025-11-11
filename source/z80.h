@@ -141,6 +141,7 @@ extern int z80_execute(int cycles);
 extern void z80_burn(int cycles);
 extern void z80_get_context (void *dst);
 extern void z80_set_context (void *src);
+extern int z80_irq_line;
 extern void z80_set_irq_line(int irqline, int state);
 extern void z80_reset_cycle_count(void);
 extern int z80_get_elapsed_cycles(void);

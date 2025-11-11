@@ -5,31 +5,71 @@
 #include <QFont>
 #include <QDebug>
 #include <QApplication>
-
-
+#include <QSettings>
+extern "C" {
+#include "input_bridge.h"
+}
 // Nieuwe state voor speler 1
 ColecoControllerState m_pad0;
 // Houdt bij welke keypad-toets (0..11) ingedrukt is; -1 = geen
 int m_keypadHeld = -1;
 
-// Helpers (lokaal in cpp)
-static inline int keyToColecoIndex(int qtKey) {
-    switch (qtKey) {
-    case Qt::Key_0: return 0;
-    case Qt::Key_1: return 1;
-    case Qt::Key_2: return 2;
-    case Qt::Key_3: return 3;
-    case Qt::Key_4: return 4;
-    case Qt::Key_5: return 5;
-    case Qt::Key_6: return 6;
-    case Qt::Key_7: return 7;
-    case Qt::Key_8: return 8;
-    case Qt::Key_9: return 9;
-    // let op: jouw code gebruikte Key codes 95/176 voor * en #
-    case Qt::Key_Asterisk:   return 10; // '*'
-    case Qt::Key_NumberSign: return 11; // '#'
-    default: return -1;
+// Volgorde-indexen:
+// 0 UP,1 DOWN,2 LEFT,3 RIGHT,4 TRIG R,5 TRIG L,6 BUT #,7 BUT *,
+// 8..17 BUT 0..9
+static constexpr int IDX_UP=0, IDX_DOWN=1, IDX_LEFT=2, IDX_RIGHT=3,
+    IDX_TR=4, IDX_TL=5, IDX_HASH=6, IDX_STAR=7,
+    IDX_0=8, IDX_9=17;
+
+// // Helpers (lokaal in cpp)
+// static inline int keyToColecoIndex(int qtKey) {
+//     switch (qtKey) {
+//     case Qt::Key_0: return 0;
+//     case Qt::Key_1: return 1;
+//     case Qt::Key_2: return 2;
+//     case Qt::Key_3: return 3;
+//     case Qt::Key_4: return 4;
+//     case Qt::Key_5: return 5;
+//     case Qt::Key_6: return 6;
+//     case Qt::Key_7: return 7;
+//     case Qt::Key_8: return 8;
+//     case Qt::Key_9: return 9;
+//     // let op: jouw code gebruikte Key codes 95/176 voor * en #
+//     case Qt::Key_Asterisk:   return 10; // '*'
+//     case Qt::Key_NumberSign: return 11; // '#'
+//     default: return -1;
+//     }
+// }
+
+// Standaard keybinding per index
+int InputWidget::defaultKeyForIndex(int i)
+{
+    switch (i) {
+    case IDX_UP:    return Qt::Key_Up;
+    case IDX_DOWN:  return Qt::Key_Down;
+    case IDX_LEFT:  return Qt::Key_Left;
+    case IDX_RIGHT: return Qt::Key_Right;
+    case IDX_TR:    return Qt::Key_X;        // Trig R
+    case IDX_TL:    return Qt::Key_Z;        // Trig L
+    case IDX_HASH:  return Qt::Key_NumberSign; // '#'
+    case IDX_STAR:  return Qt::Key_Asterisk;   // '*'
+    default:
+        // BUT 0..9
+        if (i>=IDX_0 && i<=IDX_9) {
+            int d = i - IDX_0;               // 0..9
+            return Qt::Key_0 + d;
+        }
+        return 0;
     }
+}
+
+// Vind index in map voor deze Qt-key; -1 = niet gevonden
+int InputWidget::findIndexForQtKey(const std::array<int,20>& map, int qtKey) const
+{
+    for (int i=0;i<18;++i) {                 // we gebruiken 0..17
+        if (map[i] == qtKey) return i;
+    }
+    return -1;
 }
 
 InputWidget::InputWidget(QWidget *parent)
@@ -49,6 +89,24 @@ InputWidget::InputWidget(QWidget *parent)
     connect(&m_overlayTick, &QTimer::timeout, this, &InputWidget::stepOverlay);
     m_overlayTick.setTimerType(Qt::PreciseTimer);
     m_overlayTick.start(16);
+    reloadMappings();
+}
+
+void InputWidget::reloadMappings()
+{
+    // Lees QSettings uit JoypadWindow: "input/p1/<idx>"
+    QSettings s;
+    for (int i=0;i<18;++i) {
+        int v = s.value(QString("input/p1/%1").arg(i), 0).toInt();
+        if (v == 0) v = defaultKeyForIndex(i);   // fallback naar standaard
+        m_mapP1[i] = v;
+    }
+    // optioneel P2 alvast klaarzetten
+    for (int i=0;i<18;++i) {
+        int v = s.value(QString("input/p2/%1").arg(i), 0).toInt();
+        if (v == 0) v = defaultKeyForIndex(i);   // voorlopig dezelfde defaults
+        m_mapP2[i] = v;
+    }
 }
 
 void InputWidget::attachTo(QWidget *target)
@@ -75,19 +133,19 @@ void InputWidget::attachTo(QWidget *target)
 
 bool InputWidget::eventFilter(QObject *obj, QEvent *ev)
 {
-    // 0) App-breed key handling (los van zichtbaarheid en focus)
-    if (ev->type() == QEvent::KeyPress || ev->type() == QEvent::KeyRelease) {
-        auto *ke = static_cast<QKeyEvent*>(ev);
-        if (!ke->isAutoRepeat()) {
-            const bool pressed = (ev->type() == QEvent::KeyPress);
-            handleKey(ke, pressed);      // ⟵ gebruikt je bestaande mapping
-            // Laat andere widgets nog steeds hun key krijgen:
-            // return true = event "geconsumeerd", return false = doorlaten.
-            // Voor emulator is "doorlaten" meestal OK (MainWindow shortcuts blijven werken).
-            // Wil je exclusief? Zet hier 'return true;'.
-        }
-        // niet retourneren; we laten 'm door tenzij je exclusief wil
-    }
+    // // 0) App-breed key handling (los van zichtbaarheid en focus)
+    // if (ev->type() == QEvent::KeyPress || ev->type() == QEvent::KeyRelease) {
+    //     auto *ke = static_cast<QKeyEvent*>(ev);
+    //     if (!ke->isAutoRepeat()) {
+    //         const bool pressed = (ev->type() == QEvent::KeyPress);
+    //         handleKey(ke, pressed);      // ⟵ gebruikt je bestaande mapping
+    //         // Laat andere widgets nog steeds hun key krijgen:
+    //         // return true = event "geconsumeerd", return false = doorlaten.
+    //         // Voor emulator is "doorlaten" meestal OK (MainWindow shortcuts blijven werken).
+    //         // Wil je exclusief? Zet hier 'return true;'.
+    //     }
+    //     // niet retourneren; we laten 'm door tenzij je exclusief wil
+    // }
 
     // 1) Bestaande overlay-positie/raise logic
     if (obj == m_target) {
@@ -135,39 +193,46 @@ void InputWidget::keyReleaseEvent(QKeyEvent *e)
     handleKey(e, false);
 }
 
+bool InputWidget::handleKey(QKeyEvent *e, bool pressed)
+{
+    // F1..F6 blokkeren (deze worden al afgehandeld in MainWindow via ADAMNET)
+    if (e->key() >= Qt::Key_F1 && e->key() <= Qt::Key_F6) {
+        // markeer als afgehandeld, maar stuur niets door
+        return true;
+    }
 
-void InputWidget::handleKey(QKeyEvent *e, bool pressed)
-    {
-        switch (e->key()) {
-        // D-pad
-        case Qt::Key_Up:    m_pad0.up    = pressed; break;
-        case Qt::Key_Down:  m_pad0.down  = pressed; break;
-        case Qt::Key_Left:  m_pad0.left  = pressed; break;
-        case Qt::Key_Right: m_pad0.right = pressed; break;
+    const int key = e->key();
+    // Zoek welke *actie-index* bij deze toets hoort
+    const int idx = findIndexForQtKey(m_mapP1, key);
+    if (idx < 0) return false; // niet voor ons
 
-        // Fire-knoppen (Coleco: linker/rechter zijknop)
-        // Kies zelf je toetsen; hieronder: Z = links, X = rechts, Enter = alias links
-        case Qt::Key_Z:     m_pad0.fireL = pressed; break;
-        case Qt::Key_X:     m_pad0.fireR = pressed; break;
-        case Qt::Key_Return:
-        case Qt::Key_Enter: m_pad0.fireL = pressed; break;
+    // Richting / triggers / keypad
+    if      (idx == IDX_UP)    m_pad0.up    = pressed;
+    else if (idx == IDX_DOWN)  m_pad0.down  = pressed;
+    else if (idx == IDX_LEFT)  m_pad0.left  = pressed;
+    else if (idx == IDX_RIGHT) m_pad0.right = pressed;
+    else if (idx == IDX_TL)    m_pad0.fireL = pressed;
+    else if (idx == IDX_TR)    m_pad0.fireR = pressed;
+    else {
+        // Keypad: exact één tegelijk
+        int kp = -1;
+        if (idx == IDX_HASH)      kp = 11;     // '#'
+        else if (idx == IDX_STAR) kp = 10;     // '*'
+        else if (idx >= IDX_0 && idx <= IDX_9) kp = (idx - IDX_0); // 0..9
 
-        // Keypad: exact 1 toets tegelijk (zoals echte Coleco)
-        default: {
-            const int idx = keyToColecoIndex(e->key());
-            if (idx >= 0) {
-                if (pressed) { m_pad0.keypad = idx; m_keypadHeld = idx; }
-                else if (m_keypadHeld == idx) { m_pad0.keypad = -1; m_keypadHeld = -1; }
-            }
-            break;
+        if (kp >= 0) {
+            ib_set_keypad_bit(kp, pressed);
+            if (pressed) { m_pad0.keypad = kp; m_keypadHeld = kp; }
+            else if (m_keypadHeld == kp) { m_pad0.keypad = -1; m_keypadHeld = -1; }
         }
-        }
+    }
 
-        // Push state naar de core (speler 1 = index 0)
-        coleco_setController(0, m_pad0);
+    // Push naar core
+    coleco_setController(0, m_pad0);
 
-        // visuele hint: kleine flash bij toetsaanslag
-        if (pressed) m_flash = 1.0;
+    if (pressed) m_flash = 1.0;  // kleine HUD-flash
+
+    return true;
 }
 
 void InputWidget::stepOverlay()

@@ -5,6 +5,7 @@
 #include <QWidget>
 #include <QKeyEvent>
 #include <QTimer>
+#include <array>
 
 class InputWidget : public QWidget
 {
@@ -20,6 +21,8 @@ public:
     void setAnchor(Anchor a);
     void setOverlayVisible(bool on);
     void setOverlayScale(qreal s);      // 1.0 = standaard
+    void reloadMappings();
+    bool handleKey(QKeyEvent *e, bool pressed);
 
 protected:
     bool eventFilter(QObject *obj, QEvent *ev) override;  // <-- NIEUW
@@ -40,12 +43,19 @@ private:
     qreal    m_scale = 1.0;
     int      m_margin = 12;     // px
 
-    void handleKey(QKeyEvent *e, bool pressed);
     void stepOverlay();
 
     // Hulpfuncties voor tekenen/positioneren
     QRect hudRect() const;                // waar de HUD komt
     void drawHud(QPainter &p, const QRect &r);
+
+    // 0..17: [0]UP,[1]DOWN,[2]LEFT,[3]RIGHT,[4]TRIG R,[5]TRIG L,[6]#,[7]*,[8..17]0..9
+    std::array<int, 20> m_mapP1{};
+    std::array<int, 20> m_mapP2{};  // klaar voor speler 2 (nu nog niet gebruikt)
+
+    // Hulpjes
+    static int defaultKeyForIndex(int idx);
+    int findIndexForQtKey(const std::array<int,20>& map, int qtKey) const;
 };
 
 #endif // INPUTWIDGET_H

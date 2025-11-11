@@ -17,18 +17,30 @@ public:
 
     // Functies om de data in en uit het dialoogvenster te krijgen
     void setRomPath(const QString &path);
+    void setDiskPath(const QString &path);
+    void setTapePath(const QString &path);
     QString romPath() const;
+    QString diskPath() const;
+    QString tapePath() const;
 
 private slots:
     // Slot voor de "Browse..." knop
-    void onBrowseClicked();
+    void onBrowseRomPath();
+    void onBrowseDiskPath();
+    void onBrowseTapePath();
 
 private:
     void setupUI();
 
-    QLineEdit *m_romPathLineEdit;
-    QPushButton *m_browseButton;
+    QLineEdit *m_romPathEdit;
+    QPushButton *m_romPathBtn;
     QDialogButtonBox *m_buttonBox;
+    QLineEdit *m_diskPathEdit;
+    QPushButton *m_diskPathBtn;
+    QLineEdit *m_tapePathEdit;
+    QPushButton *m_tapePathBtn;
+    QPushButton *m_okButton;
+    QPushButton *m_cancelButton;
 };
 
 #endif // SETTINGSWINDOW_H

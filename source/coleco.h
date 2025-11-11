@@ -45,6 +45,7 @@ enum
     CHRMAP=0,CHRGEN,SPRATTR,SPRGEN,CHRCOL,VRAM, SGMRAM, RAM, ROM, EEPROM, SRAM,CHRMAP2,CHRCOL2,
 };
 
+
 //---------------------------------------------------------------------------
 extern const unsigned char TMS9918A_palette[6*16*3];
 
@@ -78,6 +79,8 @@ extern unsigned int coleco_spinstate[2];               // Spinner status
 extern FDIDisk Disks[MAX_DISKS];                        // Adam disk drives
 extern FDIDisk Tapes[MAX_TAPES];                        // Adam tape drives
 
+extern BYTE sgm_enable;
+extern BYTE coleco_port60; // Deze kan ook nuttig zijn
 //---------------------------------------------------------------------------
 extern unsigned short coleco_gettmsaddr(BYTE whichaddr, BYTE mode, BYTE y);
 extern BYTE coleco_gettmsval(BYTE whichaddr, unsigned short addr, BYTE mode, BYTE y);
@@ -115,7 +118,15 @@ extern BYTE coleco_loadstate(char *filename);
 extern void coleco_set_machine_type(int isAdam);
 
 #ifdef __cplusplus
-extern "C" void RenderCalcPalette(BYTE *cv_palette_out, unsigned long nbcolors);
+extern "C" {
+void RenderCalcPalette(BYTE *cv_palette_out, unsigned long nbcolors);
+byte coleco_load_disk(int drive, const char *filename);
+byte coleco_load_tape(int drive, const char *filename);
+int  coleco_save_disk(int drive, const char *filename);
+int  coleco_save_tape(int drive, const char *filename);
+void coleco_eject_disk(int drive);
+void coleco_eject_tape(int drive);
+}
 #else
 extern void RenderCalcPalette(BYTE *cv_palette_out, int nbcolors);
 #endif

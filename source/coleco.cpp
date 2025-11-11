@@ -24,21 +24,15 @@
 
 #include "bios_coleco.h"
 #include "bios_adam.h"
+#include "fdidisk.h"
 
 // BIOS loader prototype
 static int loadBios(const char *filename, BYTE *memory, int sizerm);
 
 static inline uint8_t AL(uint8_t v) { return (uint8_t)~v; } // active-low helper
 
-
-// VCL: #include "printviewer_.h"
-// VCL: #include "soundviewer_.h"
-// VCL: #include "kbstatus_.h"
-
 // BIOS data komt nu uit colecobios.c en adambios.c (gedeclareerd in coleco.h)
 
-// Dummy DebugUpdate functie
-// extern void DebugUpdate(void); // VCL: Afhankelijkheid verwijderd
 void DebugUpdate(void) { /* Doe niets */ }
 
 //---------------------------------------------------------------------------
@@ -87,8 +81,8 @@ int tStatesCount;
 
 int coleco_updatetms=0;
 
-FDIDisk Disks[MAX_DISKS] = { 0 };
-FDIDisk Tapes[MAX_TAPES] = { 0 };
+FDIDisk Disks[MAX_DISKS] = {};
+FDIDisk Tapes[MAX_TAPES] = {};
 
 static BYTE idleDataBus = 0xFF;
 
@@ -133,6 +127,10 @@ const unsigned char TMS9918A_palette[6*16*3] = {
 #define Clock       3579545
 #define SampleRate  44100
 
+//-----------------------------------------------------------------------------------------------------
+
+
+//-----------------------------------------------------------------------------------------------------
 // Get tms vram adress
 unsigned short coleco_gettmsaddr(BYTE whichaddr, BYTE mode, BYTE y)
 {
@@ -287,9 +285,9 @@ void coleco_setval(BYTE whichaddr, unsigned short addr, BYTE y)
     case RAM:
         addr&=0x03FF;
         RAM_Memory[0x6000+addr]=RAM_Memory[0x6400+addr]=
-            RAM_Memory[0x6800+addr]=RAM_Memory[0x6C00+addr]=
-            RAM_Memory[0x7000+addr]=RAM_Memory[0x7400+addr]=
-            RAM_Memory[0x7800+addr]=RAM_Memory[0x7C00+addr]=y;
+        RAM_Memory[0x6800+addr]=RAM_Memory[0x6C00+addr]=
+        RAM_Memory[0x7000+addr]=RAM_Memory[0x7400+addr]=
+        RAM_Memory[0x7800+addr]=RAM_Memory[0x7C00+addr]=y;
         break;
     case ROM:
         // Dit lijkt incorrect, je zou niet naar ROM moeten kunnen schrijven.
@@ -307,15 +305,6 @@ void coleco_setval(BYTE whichaddr, unsigned short addr, BYTE y)
 }
 
 //---------------------------------------------------------------------------
-static inline void coleco_audio_init()
-{
-    // Voor Coleco/ADAM: PSG clock ≈ 3579545 / 16 Hz
-    sn76489_init(Clock, SampleRate);
-    sn76489_reset(Clock, SampleRate);
-}
-
-//---------------------------------------------------------------------------
-// Load a rom file
 BYTE coleco_loadcart(char *filename)
 {
     long size; // Gebruik long voor ftell resultaat
@@ -325,79 +314,86 @@ BYTE coleco_loadcart(char *filename)
     FILE *fRomfile = NULL;
 
     fRomfile = fopen(filename, "rb");
-    if (fRomfile == NULL) return(retf);
+    if (fRomfile == NULL)
+        return(retf);
 
+    // Ensure our rom buffer is clear (0xFF to simulate unused memory on ROM/EE though probably 0x00 would be fine too)
     memset(ROM_Memory, 0xFF, (MAX_CART_SIZE * 1024));
 
     fseek(fRomfile, 0, SEEK_END);
     size = ftell(fRomfile);
-    if (size == -1L) { // Controleer op fout bij ftell
-        fclose(fRomfile);
-        return retf;
-    }
 
+    // validate size
     if (size <= (MAX_CART_SIZE * 1024))
     {
         fseek(fRomfile, 0, SEEK_SET);
-        if (fread((void*) ROM_Memory, 1, size, fRomfile) != (size_t)size) { // Controleer returnwaarde fread
+        if (fread((void*) ROM_Memory, 1, size, fRomfile) != (size_t)size) {
             fclose(fRomfile);
             return retf;
         }
-        // fclose(fRomfile); // Sluit hier al? Nee, pas na controle header
 
+        // Init megacart info
         coleco_megacart = 0x00;
-        coleco_megasize = 2;
+        coleco_megasize = 2; // Standaard 32K
 
-        emul2->cardsize = (DWORD)size; // Cast size naar DWORD
+        // Keep initial cartridge CRC (may change after SRAM writes) and do CRC for special games
+        emul2->cardsize = (DWORD)size;
         emul2->cardcrc = CRC32Block(ROM_Memory, emul2->cardsize);
 
-        p = (ROM_Memory[0]==0x55)&&(ROM_Memory[1]==0xAA)? ROM_Memory // Check ROM_Memory, niet RAM_Memory
+        // --- Verificatie (Header check) ---
+        p = (ROM_Memory[0]==0x55)&&(ROM_Memory[1]==0xAA)? ROM_Memory
             : (ROM_Memory[0]==0xAA)&&(ROM_Memory[1]==0x55)? ROM_Memory
             : (ROM_Memory[0]==0x66)&&(ROM_Memory[1]==0x99)? ROM_Memory
                                                                  : NULL;
 
+        // Check magic header for Magecarts if not yet found at beginning (for 64K eeprom roms)
         adrlastbank = (size&~0x3FFF)-0x4000;
-        if (adrlastbank < 0) adrlastbank = 0; // Voorkom negatieve index
 
-        if (p==NULL && size > 0x4000) // Controleer alleen laatste bank als ROM groot genoeg is
+        //if (adrlastbank < 0) adrlastbank = 0;
+
+        if (p==NULL)
         {
             p = (ROM_Memory[adrlastbank]==0x55)&&(ROM_Memory[adrlastbank+1]==0xAA)? ROM_Memory
                 : (ROM_Memory[adrlastbank]==0xAA)&&(ROM_Memory[adrlastbank+1]==0x55)? ROM_Memory
                                                                                              : NULL;
         }
-
         if (p==NULL) { fclose(fRomfile); return(ROM_VERIFY_FAIL); }
 
-        // Point naar de Z80 memory map locatie voor de cartridge
-        p = RAM_Memory+0x8000; // Dit lijkt nog steeds VCL logica? Waar mapt de Z80 echt?
-        // Aanname: Z80 ziet RAM array direct
+        // Point to ram address
+        p = RAM_Memory+0x8000;
 
+        // Do we fit within the standard 32K Colecovision Cart ROM memory space?
         if (size <= 32*1024)
         {
-            // De data is al geladen in ROM_Memory[0...size]
-            // De pointers in MemoryMap[4-7] zijn al correct ingesteld
-            // door coleco_reset(). We hoeven hier niets te doen.
+            memcpy(p, ROM_Memory, size);
         }
-        else // Mega Cart
+        // No - must be Mega Cart (MC) Bankswitched!!
+        else
         {
-            coleco_megabank = 199; // Forceer bankswitch bij start
-            size = ((size+0x3FFF)&~0x3FFF); // Pad naar 16K grens
-            for(j=2; (j<<14)<size; j<<=1); // Vind power of 2 voor aantal 16K banks
+            // Force load of the first bank when asked to bankswitch
+            coleco_megabank = 199;
+
+            // Pad to the nearest 16kB and find number of 16kB pages
+            size = ((size+0x3FFF)&~0x3FFF)>>14;
+
+            // Round page number up to the nearest power of two
+            for(j=2;j<size;j<<=1);
+
+            // Set new MegaROM size
+            size = j<<14;
             coleco_megasize = j;
 
-            if (coleco_megasize == 4) coleco_megacart = 0x03;      // 64K
-            else if (coleco_megasize == 8) coleco_megacart = 0x07; // 128K
-            else if (coleco_megasize == 16) coleco_megacart = 0x0F;// 256K
-            else coleco_megacart = 0x1F;                           // 512K
+            // Calculate size
+            if (size == (64  * 1024)) coleco_megacart = 0x03;
+            else if (size == (128 * 1024)) coleco_megacart = 0x07;
+            else if (size == (256 * 1024)) coleco_megacart = 0x0F;
+            else /*if (size == (512 * 1024)) */ coleco_megacart = 0x1F; // max 512
 
-            // Map laatste 16K bank (fixed) naar 0xC000-0xFFFF
-            MemoryMap[6] = ROM_Memory + ((coleco_megasize-1)<<14);
-            MemoryMap[7] = MemoryMap[6] + 0x2000;
-            // Map eerste 16K bank (switched) naar 0x8000-0xBFFF initieel
-            MemoryMap[4] = ROM_Memory;
-            MemoryMap[5] = MemoryMap[4] + 0x2000;
-            megacart_bankswitch(0); // Roep bankswitch aan om correct te mappen
+            // For MegaCart, we map highest 16K bank into fixed ROM
+            memcpy(p,ROM_Memory+(coleco_megacart<<14),0x4000);
+            memcpy(p+0x4000,ROM_Memory,0x4000);
         }
+
     }
     else
     {
@@ -406,11 +402,9 @@ BYTE coleco_loadcart(char *filename)
 
     emul2->romCartridgeType = coleco_megacart ? ROMCARTRIDGEMEGA : ROMCARTRIDGESTD;
 
-    fclose(fRomfile); // Sluit het bestand hier
-
-    return ROM_LOAD_PASS; // Gebruik OK of PASS
+    fclose(fRomfile);
+    return ROM_LOAD_PASS;
 }
-
 //---------------------------------------------------------------------------
 // update the 16 colors Coleco
 void coleco_setpalette(int palette) {
@@ -426,7 +420,7 @@ void coleco_setpalette(int palette) {
         RenderCalcPalette(cv_palette,16);
     }
 }
-
+///---------------------------------------------------------------------------
 // 0 = Coleco/Phoenix, 1 = ADAM
 void coleco_set_machine_type(int isAdam)
 {
@@ -477,7 +471,8 @@ void coleco_setadammemory(bool resetAdamNet)
         adam_ram_lo = 0; adam_ram_lo_exp = 0;
         MemoryMap[0] = BIOS_Memory + 0x0000; MemoryMap[1] = BIOS_Memory + 0x2000;
         MemoryMap[2] = BIOS_Memory + 0x4000;
-        MemoryMap[3] = (coleco_port20 & 0x02) ? BIOS_Memory + 0x8000 : BIOS_Memory + 0x6000; // EOS or WRITER
+        MemoryMap[3] = (coleco_port20 & 0x02) ? BIOS_Memory + 0x8000  // Smartwriter
+                                              : BIOS_Memory + 0x6000; // EOS
     }
     else if ((coleco_port60 & 0x03) == 0x01) // Onboard RAM
     {
@@ -499,24 +494,46 @@ void coleco_setadammemory(bool resetAdamNet)
     }
 
     // Configure upper 32K of memory
-    if ((coleco_port60 & 0x0C) == 0x00) // Onboard RAM
+    // -> Onboard RAM
+    if ((coleco_port60 & 0x0C) == 0x00)
     {
-        adam_ram_hi = 1; adam_ram_hi_exp = 0;
-        MemoryMap[4] = RAM_Memory + 0x8000; MemoryMap[5] = RAM_Memory + 0xA000;
-        MemoryMap[6] = RAM_Memory + 0xC000; MemoryMap[7] = RAM_Memory + 0xE000;
+        adam_ram_hi = 1;
+        adam_ram_hi_exp = 0;
+        MemoryMap[4] = RAM_Memory + 0x8000;
+        MemoryMap[5] = RAM_Memory + 0xA000;
+        MemoryMap[6] = RAM_Memory + 0xC000;
+        MemoryMap[7] = RAM_Memory + 0xE000;
     }
-    else if ((coleco_port60 & 0x0C) == 0x08) // Expanded RAM
+    // -> Expanded RAM
+    else if ((coleco_port60 & 0x0C) == 0x08)
     {
-        adam_128k_mode = 1; adam_ram_hi = 0; adam_ram_hi_exp = 1;
-        MemoryMap[4] = RAM_Memory + 0x18000; MemoryMap[5] = RAM_Memory + 0x1A000;
-        MemoryMap[6] = RAM_Memory + 0x1C000; MemoryMap[7] = RAM_Memory + 0x1E000;
+        adam_128k_mode = 1;
+        adam_ram_hi = 0;
+        adam_ram_hi_exp = 1;
+        MemoryMap[4] = RAM_Memory + 0x18000;
+        MemoryMap[5] = RAM_Memory + 0x1A000;
+        MemoryMap[6] = RAM_Memory + 0x1C000;
+        MemoryMap[7] = RAM_Memory + 0x1E000;
     }
-    else // Cartridge or Expansion ROM (niet direct schrijfbaar naar RAM)
+    // Nothing else exists so just return 0xFF
+    else
     {
-        adam_ram_hi = 0; adam_ram_hi_exp = 0;
-        // MemoryMap[4] t/m [7] worden niet aangepast, blijven ROM/Cartridge wijzen
+        adam_ram_hi = 0;
+        adam_ram_hi_exp = 0;
     }
 
+    qDebug() << "[MAP] ADAM port60=0x" << Qt::hex << int(coleco_port60)
+             << " Map0->" << (void*)MemoryMap[0]
+             << " (expect BIOS_Memory+0x0000)";
+
+    qDebug().noquote()
+        << "[BASE] BIOS=" << static_cast<void*>(BIOS_Memory)
+        << " RAM=" << static_cast<void*>(RAM_Memory);
+
+    qDebug().noquote()
+        << "[MAP] port60=" << Qt::hex << int(coleco_port60)
+        << " Map0->" << static_cast<void*>(MemoryMap[0])
+        << " (expect BIOS+0x0000 when port60&3==0)";
 
     if (resetAdamNet)  ResetPCB(); // Nodig #include "adamnet.h"
 }
@@ -524,143 +541,153 @@ void coleco_setadammemory(bool resetAdamNet)
 
 void coleco_setupsgm(void)
 {
+    // Super DK mag nooit SGM hebben
     if (sgm_neverenable) return;
     if (emul2->currentMachineType == MACHINEADAM) return;
 
+    // Port 53 bit 0 bepaalt SGM memory enable
     sgm_enable = (coleco_port53 & 0x01) ? 1:0;
 
+    // Clear SGM RAM bij de eerste keer (alleen 24K, 0x2000-0x7FFF)
     if (sgm_enable && sgm_firstwrite)
     {
-        memset(RAM_Memory+0x2000, 0x00, 0x6000); // 24K RAM clearen
+        memset(RAM_Memory+0x2000, 0x00, 0x6000);
         sgm_firstwrite = 0;
     }
 
-
-    if (coleco_port60 & 0x02) {
-        // BIOS op 0x0000
-        if (sgm_low_addr != 0xFFFF) {
-            sgm_low_addr = 0xFFFF;
-            MemoryMap[0] = BIOS_Memory + 0x0000;
-        }
-    } else {
-        // In Coleco-mode blijft 0x0000 BIOS, ook als bit1=0
-        if (sgm_low_addr != 0xFFFF) {
+    // Port 60 bit 1 (0x02) bepaalt BIOS (1) of 8K SGM RAM (0)
+    if (coleco_port60 & 0x02)
+    {
+        // BIOS is AAN
+        if (sgm_low_addr != 0xFFFF) // 0xFFFF = marker voor BIOS
+        {
             sgm_low_addr = 0xFFFF;
             MemoryMap[0] = BIOS_Memory + 0x0000;
         }
     }
-
-
-    // De rest van het RAM (0x2000-0x7FFF) wordt altijd gemapt naar RAM als SGM enabled is
-    if (sgm_enable) {
-        MemoryMap[1] = RAM_Memory + 0x2000;
-        MemoryMap[2] = RAM_Memory + 0x4000;
-        MemoryMap[3] = RAM_Memory + 0x6000;
-    } else {
-        // Indien SGM niet enabled is, alleen 1K RAM + spiegels
-        MemoryMap[1] = RAM_Memory + 0x6000; // Map 0x2000 naar RAM base
-        MemoryMap[2] = RAM_Memory + 0x6000; // Map 0x4000 naar RAM base
-        MemoryMap[3] = RAM_Memory + 0x6000; // Map 0x6000 naar RAM base
-        // We moeten hier eigenlijk de mirroring van 0x6000-0x63FF regelen via read/write functies
+    else
+    {
+        // BIOS is UIT, map 8K SGM RAM
+        sgm_enable = 1; // Forceren, zoals in emultwo
+        if (sgm_low_addr != 0x0000) // 0x0000 = marker voor RAM
+        {
+            MemoryMap[0] = RAM_Memory + 0x0000;
+            sgm_low_addr = 0x0000;
+        }
     }
 
+    // OPMERKING: We raken 0x2000-0xFFFF (Blok 1-7) NIET AAN.
+    // Dit laat de "copy-to-RAM" mapping van coleco_reset (751)
+    // intact, waardoor de SGM >32K crash wordt voorkomen.
 }
-
 //---------------------------------------------------------------------------
-
 void coleco_reset(void)
 {
     int i;
 
-    // Reset Memory Map naar standaard Coleco (BIOS + 1K RAM + Cart)
-    MemoryMap[0] = BIOS_Memory + 0x0000; // BIOS
-    MemoryMap[1] = RAM_Memory + 0x6000;  // Begin van 1K RAM (gespiegeld)
-    MemoryMap[2] = RAM_Memory + 0x6000;  // Spiegel
-    MemoryMap[3] = RAM_Memory + 0x6000;  // Spiegel
-    MemoryMap[4] = ROM_Memory + 0x0000;
-    MemoryMap[5] = ROM_Memory + 0x2000;
-    MemoryMap[6] = ROM_Memory + 0x4000;
-    MemoryMap[7] = ROM_Memory + 0x6000;
+    // Init memory pages (plat 64K RAM)
+    MemoryMap[0] = RAM_Memory + 0x0000;
+    MemoryMap[1] = RAM_Memory + 0x2000;
+    MemoryMap[2] = RAM_Memory + 0x4000;
+    MemoryMap[3] = RAM_Memory + 0x6000;
+    MemoryMap[4] = RAM_Memory + 0x8000;
+    MemoryMap[5] = RAM_Memory + 0xA000;
+    MemoryMap[6] = RAM_Memory + 0xC000;
+    MemoryMap[7] = RAM_Memory + 0xE000;
 
-    // BIOS laden is verplaatst naar coleco_initialise
+    // Coleco: zorg dat BIOS in RAM staat voor hacks (CPU fetcht straks uit BIOS_Memory)
+    if (emul2->currentMachineType != MACHINEADAM)
+    {
+        // ⬇️ Gebruik de BIOS die je eerder al in BIOS_Memory hebt geladen
+        memcpy(RAM_Memory, BIOS_Memory, 0x2000);                  // CHANGED
 
-    // Clear RAM (1K standaard, 32K SGM, 64/128K ADAM)
-    if (emul2->currentMachineType == MACHINEADAM) {
-        memset(RAM_Memory, 0, (adam_128k_mode ? 128 : 64) * 1024);
-    } else if (emul2->SGM) { // Gebruik bool direct
-        memset(RAM_Memory, 0, 32 * 1024);
-    } else {
-        // Alleen de 1K RAM clearen
-        for(i=0; i<0x400; ++i) RAM_Memory[0x6000+i] = rand()%256;
+        // Hacks (50/60Hz + nodelay)
+        RAM_Memory[0x0069] = emul2->hackbiospal ? 50 : 60;
+        if (emul2->biosnodelay) {
+            RAM_Memory[159*32+17] = 0x00; // NOP
+            RAM_Memory[159*32+18] = 0x00; // NOP
+            RAM_Memory[159*32+19] = 0x00; // NOP
+        }
     }
 
-    // SGM/ADAM specifieke reset
-    sgm_enable = 0;
+    // Randomize 0x6000-0x7FFF (NetPlay-consistentie); ok om te laten
+    if (emul2->currentMachineType != MACHINEADAM) {
+        for (i=0;i<0x2000;i++)
+            RAM_Memory[i+0x6000] = rand() % 256;
+    }
+
+    sgm_enable     = 0;
     sgm_firstwrite = 1;
-    sgm_low_addr = 0xFFFF; // Markeer als BIOS initieel
-    sgm_neverenable = 0;
+    sgm_low_addr   = 0xFFFF;   // CHANGED: 0xFFFF = “BIOS actief” marker i.p.v. 0x2000
+    sgm_neverenable= 0;
+
+    // Init SGM/ADAM-poorten
     coleco_port53 = 0x00;
-    coleco_port60 = ((emul2->currentMachineType == MACHINEADAM) ? 0x00 : 0x0F); // Adam start met ROM, Coleco met BIOS+RAM
+    coleco_port60 = (emul2->currentMachineType == MACHINEADAM) ? 0x00 : 0x0F;
     coleco_port20 = 0x00;
 
+    // ADAM memory init
     if (emul2->currentMachineType == MACHINEADAM)
     {
-        adam_ram_lo=adam_ram_hi=adam_ram_lo_exp=adam_ram_hi_exp=0;
-        adam_128k_mode=0;
-        coleco_setadammemory(true); // Reset AdamNet ook
+        adam_ram_lo = adam_ram_hi = adam_ram_lo_exp = adam_ram_hi_exp = 0;
+        adam_128k_mode = 0; // 64K basis
+        // Nog NIET mappen hier; doen we onderaan één keer met resetAdamNet=true
     }
-    else // Coleco mode setup
+    else
     {
-        coleco_setupsgm(); // Stel SGM in op basis van poorten (nu default uit)
-        // Memory map is al ingesteld voor standaard Coleco
+        // Coleco start uit BIOS_Memory @ 0000-1FFF
+        MemoryMap[0] = BIOS_Memory + 0x0000;                      // CONFIRM
     }
 
-
-    // Cartridge specifieke setup
+    // Backup-type autodetectie
     switch (emul2->cardcrc)
     {
-    case 0x62DACF07: emul2->typebackup=EEP24C256; break;
-    case 0xDDDD1396: emul2->typebackup=EEP24C08; break;
-    case 0xFEE15196: case 0x1053F610: case 0x60D6FD7D: case 0x37A9F237:
-        emul2->typebackup=EEPSRAM;
-        // Map SRAM naar E000-E7FF? MemoryMap[7] is al RAM+0xE000, maar wijst naar Cartridge.
-        // Dit moet waarschijnlijk via de read/write functies.
-        break;
-    case 0xEF25AF90: case 0xC2E7F0E0: sgm_neverenable=1; break;
-    default: emul2->typebackup = NOBACKUP; break; // Zet default op NOBACKUP
+    case 0x62DACF07: emul2->typebackup = EEP24C256; break;
+    case 0xDDDD1396: emul2->typebackup = EEP24C08;  break;
+    case 0xFEE15196:
+    case 0x1053F610:
+    case 0x60D6FD7D:
+    case 0x37A9F237: emul2->typebackup = EEPSRAM;   break;
+    case 0xEF25AF90:
+    case 0xC2E7F0E0: sgm_neverenable = 1;           break;
     }
 
-    // Reset hardware
-    if (emul2->F18A) f18a_reset(); else tms9918_reset(); // Gebruik F18A of TMS reset
+    // VDP reset
+    if (emul2->F18A) f18a_reset(); else tms9918_reset();
     tms.ScanLines = emul2->NTSC ? TMS9918_LINES : TMS9929_LINES;
-    if (emul2->F18A && f18a.Row30) tms.ScanLines += 27; // Pas aan voor F18A Row30 mode
+    if (emul2->F18A && f18a.Row30) tms.ScanLines += 27;
 
+    // PSG’s
     sn76489_init(Clock, SampleRate);
-    sn76489_reset(Clock, SampleRate);
+    ay8910_init(Clock, SampleRate);
 
-    // VCL: Sound->SoundPrepSmpTab(tms.ScanLines);
-    if (emul2->typebackup != NOBACKUP && emul2->typebackup != EEPSRAM) { // Reset EEPROM, niet SRAM
-        c24xx_reset(SRAM_Memory, emul2->typebackup==EEP24C08 ? C24XX_24C08 : C24XX_24C256); // C24XX types direct gebruiken
-    } else if (emul2->typebackup == EEPSRAM) {
-        // SRAM hoeft niet gereset te worden zoals EEPROM
+    // EEPROM reset
+    if (emul2->typebackup != NOBACKUP && emul2->typebackup != EEPSRAM) {
+        c24xx_reset(SRAM_Memory, emul2->typebackup==EEP24C08 ? C24XX_24C08 : C24XX_24C256);
     }
 
+    // CPU reset
     z80_reset();
 
+    // Vars
     tStatesCount = 0;
-    frametstates = 0; // Reset frameteller ook
 
-    coleco_joymode=0;
-    coleco_joystat=0x00000000;
+    // Input init
+    coleco_joymode = 0;
+    coleco_joystat = 0x00000000;
     coleco_spinpos[0]=coleco_spinpos[1]=0;
     coleco_spinrecur[0]=coleco_spinrecur[1]=0;
     coleco_spinparam[0]=coleco_spinparam[1]=0;
     coleco_spinstate[0]=coleco_spinstate[1]=0;
-    // VCL gerelateerde controller flags:
-    // coleco_steerwheel=machine.steerwheel ? 1 : 0;
-    // coleco_rollercontrol=machine.rollercontrol ? 1 : 0;
-    // coleco_superaction=machine.superaction ? 1 : 0;
+
+    // EIND-mapping: exact één keer, afhankelijk van machine
+    if (emul2->currentMachineType == MACHINEADAM) {
+        coleco_setadammemory(true);  // resetAdamNet = true, mapt EOS/Writer/OS7 correct
+    } else {
+        coleco_setupsgm();           // laat port53/port60 regels bepalen of low 8K BIOS/RAM is
+    }
 }
+
 //---------------------------------------------------------------------------
 
 void coleco_reset_and_restart_bios()
@@ -680,22 +707,50 @@ void coleco_reset_and_restart_bios()
         // 2) Bouw ADAM-mapping op
         coleco_setadammemory(/*resetAdamNet=*/true);
     } else {
-        // Coleco/Phoenix: standaard BIOS+cart en SGM volgens emul2->SGM
+        // Coleco/Phoenix: standaard BIOS+cart
+        // MOET ALTIJD 0x0F (BIOS AAN) zijn bij een reset!
         coleco_port60 = 0x0F;
         coleco_writeport(0x60, coleco_port60, nullptr);
 
+        // Stel de SGM hardware poort (0x53) wel alvast in
         coleco_port53 = emul2->SGM ? 0x01 : 0x00;
         coleco_writeport(0x53, coleco_port53, nullptr);
 
-        // 2) Bouw Coleco-mapping op
+        // 2) Bouw Coleco-mapping op (die nu 0x0F respecteert)
         coleco_setupsgm();
+     }
+
+    // 3) Cartridge pages voor de zekerheid opnieuw (met respect voor megacarts)
+    if (coleco_megacart)
+    {
+        // Forceer bank her-evaluatie
+        coleco_megabank = 199;
+        megacart_bankswitch(0); // Zet bank 0 op 0x8000
+
+        //MemoryMap[6] = ROM_Memory + ((coleco_megasize-1)<<14);
+        //MemoryMap[7] = MemoryMap[6] + 0x2000;
+    }
+    else
+    {
+        if (emul2->currentMachineType != MACHINEADAM)
+        {
+            coleco_setupsgm();
+        }        // Standaard 32K cart mapping
+        // MemoryMap[4] = ROM_Memory + 0x0000;
+        // MemoryMap[5] = ROM_Memory + 0x2000;
+        // MemoryMap[6] = ROM_Memory + 0x4000;
+        // MemoryMap[7] = ROM_Memory + 0x6000;
     }
 
-    // 3) Cartridge pages voor de zekerheid opnieuw
-    MemoryMap[4] = ROM_Memory + 0x0000;
-    MemoryMap[5] = ROM_Memory + 0x2000;
-    MemoryMap[6] = ROM_Memory + 0x4000;
-    MemoryMap[7] = ROM_Memory + 0x6000;
+    // --- VOEG DIT BLOK TOE ---
+    // De VDP (en F18A) MOET OOK gereset worden. Anders start
+    // de Adam BIOS terwijl de VDP nog in Coleco-modus staat.
+    if (emul2->F18A) f18a_reset(); else tms9918_reset();
+    tms.ScanLines = emul2->NTSC ? TMS9918_LINES : TMS9929_LINES;
+    if (emul2->F18A && f18a.Row30) tms.ScanLines += 27;
+    // --- EINDE TOEVOEGING ---
+
+    z80_reset();
 }
 //---------------------------------------------------------------------------
 // coleco.h:  extern void coleco_hardreset(void);
@@ -726,7 +781,10 @@ void coleco_hardreset(void)
     // 5) (Aanrader) CPU en VDP netjes resetten zodat BIOS meteen beeld kan geven
     //    en de jump niet in “oude” cartcode terechtkomt.
     //    Als je “BIOS only” wil laten draaien:
-    // coleco_reset_and_restart_bios();  // zet BIOS op 0x0000 + reset VDP/CPU/PSG
+    z80_reset();
+    tms9918_reset();
+
+    //coleco_reset_and_restart_bios();  // zet BIOS op 0x0000 + reset VDP/CPU/PSG
 }
 
 //---------------------------------------------------------------------------
@@ -754,200 +812,239 @@ void coleco_initialise(void)
 
     coleco_megasize = 2;
     coleco_megacart = 0;
-    emul2->romCartridgeType = ROMCARTRIDGENONE; // Gebruik Type enum
+    emul2->romCartridgeType = ROMCARTRIDGENONE;
 
-    if (emul2->F18A) f18agpu_init(); // Init GPU alleen als F18A actief is
+    if (emul2->F18A) f18agpu_init();
 
-    memset(ROM_Memory,0xFF,MAX_CART_SIZE * 1024);
-    memset(RAM_Memory,0xFF,MAX_RAM_SIZE * 1024);
-    memset(BIOS_Memory, 0xFF, MAX_BIOS_SIZE * 1024); // Init BIOS memory ook
+    memset(ROM_Memory,  0xFF, MAX_CART_SIZE  * 1024);
+    memset(RAM_Memory,  0xFF, MAX_RAM_SIZE   * 1024);
+    memset(BIOS_Memory, 0xFF, MAX_BIOS_SIZE  * 1024); // ← BIOS vooraf leegmaken
 
     if (emul2->currentMachineType == MACHINEADAM)
     {
-        bool bios_ok = true;
-        if (strcmp(emul2->colecobios,"Internal") != 0) {
-            if (!loadBios(emul2->colecobios, BIOS_Memory+0xA000, 0x2000)) bios_ok = false;
-        } else {
-            memcpy(BIOS_Memory+0xA000, colecobios_rom, 0x2000);
+        // --- COLECO.ROM (OS7) in BIOS @ 0xA000..0xBFFF (8KB) ---
+        if (strcmp(emul2->colecobios, "Internal") != 0)
+        {
+            if (!loadBios(emul2->colecobios, BIOS_Memory + 0xA000, 0x2000))
+                memcpy(BIOS_Memory + 0xA000, colecobios_rom, 0x2000);
         }
-        if (strcmp(emul2->adameos,"Internal") != 0) {
-            if (!loadBios(emul2->adameos, BIOS_Memory+0x8000, 0x2000)) bios_ok = false;
-        } else {
-            memcpy(BIOS_Memory+0x8000, adambios_eos,0x2000);
+        else
+        {
+            memcpy(BIOS_Memory + 0xA000, colecobios_rom, 0x2000);
         }
-        if (strcmp(emul2->adamwriter,"Internal") != 0) {
-            if (!loadBios(emul2->adamwriter, BIOS_Memory, 0x8000)) bios_ok = false;
-        } else {
-            memcpy(BIOS_Memory+0x0000, adambios_writer, 0x8000);
+
+        // --- EOS.ROM (ADAM EOS) in BIOS @ 0x8000..0x9FFF (8KB) ---
+        if (strcmp(emul2->adameos, "Internal") != 0)
+        {
+            if (!loadBios(emul2->adameos, BIOS_Memory + 0x8000, 0x2000))
+                memcpy(BIOS_Memory + 0x8000, adambios_eos, 0x2000);
         }
-        if (!bios_ok) {
-            // VCL: Application->MessageBox("Error loading one or more ADAM BIOS files. Using internal defaults.", "BIOS Error", MB_OK | MB_ICONWARNING);
-            // Laad defaults als backup
-            memcpy(BIOS_Memory+0xA000, colecobios_rom, 0x2000);
-            memcpy(BIOS_Memory+0x8000, adambios_eos,0x2000);
-            memcpy(BIOS_Memory+0x0000, adambios_writer, 0x8000);
+        else
+        {
+            memcpy(BIOS_Memory + 0x8000, adambios_eos, 0x2000);
         }
+
+        // --- WRITER.ROM (SmartWriter) in BIOS @ 0x0000..0x7FFF (32KB) ---
+        if (strcmp(emul2->adamwriter, "Internal") != 0)
+        {
+            if (!loadBios(emul2->adamwriter, BIOS_Memory + 0x0000, 0x8000))
+                memcpy(BIOS_Memory + 0x0000, adambios_writer, 0x8000);
+        }
+        else
+        {
+            memcpy(BIOS_Memory + 0x0000, adambios_writer, 0x8000);
+        }
+
+        memcpy(RAM_Memory + 0x0000, BIOS_Memory + 0x0000, 0x8000);
+
     }
-    else // ColecoVision
+    else
     {
-        if (strcmp(emul2->colecobios,"Internal") != 0) {
-            if (!loadBios(emul2->colecobios, BIOS_Memory, 0x2000)) {
-                // VCL: Application->MessageBox("Can't open coleco bios, load default","Error", MB_OK | MB_ICONERROR);
+        // --- ColecoVision BIOS @ 0x0000..0x1FFF (8KB) ---
+        if (strcmp(emul2->colecobios, "Internal") != 0)
+        {
+            if (!loadBios(emul2->colecobios, BIOS_Memory, 0x2000))
                 memcpy(BIOS_Memory, colecobios_rom, 0x2000);
-            }
-        } else {
+        }
+        else
+        {
             memcpy(BIOS_Memory, colecobios_rom, 0x2000);
         }
 
-        // Kopieer BIOS ook naar RAM locatie voor hacks (zal overschreven worden indien SGM RAM actief)
+        // Kopie naar RAM voor BIOS-hacks (wordt overschreven als SGM low-RAM actief is)
         memcpy(RAM_Memory, BIOS_Memory, 0x2000);
 
-        // Pas hacks toe op RAM kopie
-        RAM_Memory[0x0069] = emul2->hackbiospal ? 50 : 60;
+        // Hacks
+        RAM_Memory[0x0069] = emul2->hackbiospal ? 50 : 60; // 50/60 Hz
         if (emul2->biosnodelay) {
-            RAM_Memory[0x1F51] = 0x00; // NOPs over delay loop
-            RAM_Memory[0x1F52] = 0x00;
-            RAM_Memory[0x1F53] = 0x00;
+            RAM_Memory[159*32+17] = 0x00;
+            RAM_Memory[159*32+18] = 0x00;
+            RAM_Memory[159*32+19] = 0x00;
         }
     }
 
-    for(i=0;i<MAX_DISKS;i++) EjectFDI(&Disks[i]);
-    for(i=0;i<MAX_TAPES;i++) EjectFDI(&Tapes[i]);
+    qDebug() << "[INIT] WRITER[0000]=" << Qt::hex << BIOS_Memory[0]
+             << " EOS[8000]=" << Qt::hex << BIOS_Memory[0x8000]
+             << " OS7[A000]=" << Qt::hex << BIOS_Memory[0xA000];
 
+    // Verwijder alle Adam-media
+    for (i = 0; i < MAX_DISKS;  ++i) EjectFDI(&Disks[i]);
+    for (i = 0; i < MAX_TAPES;  ++i) EjectFDI(&Tapes[i]);
+
+    // Reset & palet
     coleco_reset();
     coleco_setpalette(emul2->palette);
 }
-//---------------------------------------------------------------------------
 
+//---------------------------------------------------------------------------
+// Switch banks. Up to 512K of the Colecovision Mega Cart ROM can be stored
 void megacart_bankswitch(BYTE bank)
 {
-    bank &= coleco_megacart; // Maskeer met grootte
+    // Only if the bank was changed...
     if (coleco_megabank != bank)
     {
-        // Alleen 0x8000 - 0xBFFF wordt geswitched
-        MemoryMap[4] = ROM_Memory + ((unsigned int) bank * 0x4000);
-        MemoryMap[5] = MemoryMap[4] + 0x2000;
+        MemoryMap[6] = ROM_Memory + ((unsigned int) bank * 0x4000);
+        MemoryMap[7] = MemoryMap[6] + 0x2000;
         coleco_megabank = bank;
     }
 }
 //---------------------------------------------------------------------------
-
+// coleco.cpp
 void coleco_WriteByte(unsigned int Address, int Data)
 {
-    // ADAM Memory Handling
-    if(emul2->currentMachineType == MACHINEADAM)
+    // --- ADAM MODUS ---
+    if (emul2->currentMachineType == MACHINEADAM)
     {
-        // Check of huidig gemapt segment schrijfbaar RAM is
-        if ((Address < 0x8000 && adam_ram_lo) || (Address >= 0x8000 && adam_ram_hi)) {
-            RAM_Memory[Address] = Data;
-        } else if ((Address < 0x8000 && adam_ram_lo_exp) || (Address >= 0x8000 && adam_ram_hi_exp)) {
-            RAM_Memory[0x10000 + Address] = Data; // Expanded RAM
+        // Adam-geheugen heeft GEEN 1K-spiegel.
+        // Het is een platte 64K/128K map.
+        // We schrijven naar RAM EN laten de PCB meeluisteren.
+
+        if ((Address < 0x8000) && adam_ram_lo)
+        {
+            RAM_Memory[Address] = (BYTE)Data;
+            if (PCBTable[Address]) WritePCB(Address, Data);
         }
-        // ADAMNet check (alleen als RAM is gemapt op die locatie)
-        if (PCBTable[Address] && ((Address < 0x8000 && adam_ram_lo) || (Address >= 0x8000 && adam_ram_hi))) {
-            WritePCB(Address, Data);
+        else if ((Address >= 0x8000) && adam_ram_hi)
+        {
+            RAM_Memory[Address] = (BYTE)Data;
+            if (PCBTable[Address]) WritePCB(Address, Data);
         }
-        return;
+
+        // Expanded RAM (heeft NOOIT PCB-toegang)
+        else if ((Address < 0x8000) && adam_ram_lo_exp)
+        {
+            RAM_Memory[0x10000 + Address] = (BYTE)Data;
+        }
+        else if ((Address >= 0x8000) && adam_ram_hi_exp)
+        {
+            RAM_Memory[0x10000 + Address] = (BYTE)Data;
+        }
+
+        return; // ADAM-pad afgehandeld
     }
-    // ColecoVision Memory Handling
+
+    // --- COLECO MODUS (else) ---
     else
     {
-        // SGM RAM (0x2000-0x7FFF) of Standaard RAM (0x6000-0x7FFF gespiegeld)
-        if (sgm_enable) {
-            if ((Address >= sgm_low_addr) && (Address < 0x8000)) RAM_Memory[Address]=Data;
-            return;
-        } else if((Address >= 0x6000) && (Address < 0x8000)) {
-            // Standaard 1K RAM met spiegels
-            RAM_Memory[0x6000 + (Address & 0x03FF)] = Data;
-            return;
+        // SGM RAM
+        if (sgm_enable)
+        {
+            if (Address < 0x2000 && sgm_low_addr == 0x0000)
+            {
+                RAM_Memory[Address] = Data;
+                return; // Klaar
+            }
+            else if (Address >= 0x2000 && Address < 0x8000)
+            {
+                RAM_Memory[Address] = Data; // Schrijf naar 24K SGM RAM
+                return; // Klaar
+            }
         }
-
-        // Cartridge / IO ruimte
-        if (Address >= 0xE000) {
-
-            // SRAM write (E000-E7FF schrijft naar E800-EFFF)
-            // if (emul2->typebackup == EEPSRAM && Address < 0xE800) {
-            //     RAM_Memory[Address + 0x800] = Data; // Map naar E800-EFFF
-            //     return;
-            // }
-            // writes
-            if (emul2->typebackup == EEPSRAM) {
-                if (Address >= 0xE000 && Address < 0xE800) { RAM_Memory[Address + 0x800] = Data; return; }
-                if (Address >= 0xE800 && Address < 0xF000) { RAM_Memory[Address] = Data; return; }
-            }
-
-            // EEPROM Control Lines (FFC0-FFF0)
-            if (emul2->typebackup == EEP24C08 || emul2->typebackup == EEP24C256) {
-                switch(Address & 0xFFF0) { // Maskeer laatste 4 bits
-                case 0xFFC0: c24xx_write(c24.Pins & ~C24XX_SCL); return;
-                case 0xFFD0: c24xx_write(c24.Pins | C24XX_SCL); return;
-                case 0xFFE0: c24xx_write(c24.Pins & ~C24XX_SDA); return;
-                case 0xFFF0: c24xx_write(c24.Pins | C24XX_SDA); return;
-                }
-            }
-            // MegaCart Bankswitch Hotspots (FFC0-FFFF)
-            if (coleco_megacart && Address >= 0xFFC0) {
-                megacart_bankswitch(Address & 0x1F); // Gebruik onderste 5 bits
-                return;
-            }
+        // Standaard 1K RAM (gespiegeld)
+        else if((Address>0x5FFF)&&(Address<0x8000))
+        {
+            Address&=0x03FF;
+            RAM_Memory[0x6000+Address]=RAM_Memory[0x6400+Address]=
+                RAM_Memory[0x6800+Address]=RAM_Memory[0x6C00+Address]=
+                RAM_Memory[0x7000+Address]=RAM_Memory[0x7400+Address]=
+                RAM_Memory[0x7800+Address]=RAM_Memory[0x7C00+Address]=Data;
+            return; // Klaar
         }
     }
-    // VCL: if (machine.HaltWriteRom) { /* WarningForm call */ }
-}
 
+    // --- STAP 2: Hardware/Cartridge-write (Gedeeld door Adam & Coleco) ---
+    // Als de code hier komt, was het geen schrijf-actie naar RAM.
+    // Het moet dus hardware zijn (SRAM, EEPROM, of Megacart).
+
+    // Allow SRAM
+    if ((Address >= 0xE000) && (Address < 0xE800))
+    {
+        if (emul2->typebackup==EEPSRAM)
+        {
+            RAM_Memory[Address+0x800]=Data;
+            return;
+        }
+    }
+
+    // Cartridges, containing EEPROM
+    else if (((emul2->currentMachineType != MACHINEADAM) && (emul2->typebackup==EEP24C08)) || (emul2->typebackup==EEP24C256) )
+    {
+        if ((Address == 0xFF90) || (Address == 0xFFA0) || (Address == 0xFFB0))
+        {
+            megacart_bankswitch((Address>>4) & coleco_megacart);
+        }
+
+        switch(Address)
+        {
+        case 0xFFC0: c24xx_write(c24.Pins&~C24XX_SCL);return;
+        case 0xFFD0: c24xx_write(c24.Pins|C24XX_SCL);return;
+        case 0xFFE0: c24xx_write(c24.Pins&~C24XX_SDA);return;
+        case 0xFFF0: c24xx_write(c24.Pins|C24XX_SDA);return;
+        }
+        return; // Belangrijk: return ook als het geen van de cases was
+    }
+
+    // Handle Megacart Hot Spot writes
+    else if (Address >= 0xFFC0)
+    {
+        megacart_bankswitch(Address & coleco_megacart);
+        return;
+    }
+}
+//---------------------------------------------------------------------------
 void coleco_setbyte(int Address, int Data) { coleco_WriteByte(Address, Data); } // Debugger
+//---------------------------------------------------------------------------
 void coleco_writebyte(unsigned int Address, int Data) { // Vanuit Z80
     lastMemoryWriteAddrLo = lastMemoryWriteAddrHi; lastMemoryWriteAddrHi = Address;
     lastMemoryWriteValueLo = lastMemoryWriteValueHi; lastMemoryWriteValueHi = Data;
     coleco_WriteByte(Address, Data);
 }
-
-BYTE coleco_ReadByte(int Address) // Interne leesfunctie
+//---------------------------------------------------------------------------
+BYTE coleco_ReadByte(int Address)
 {
-    // MegaCart Bankswitch Hotspots (lezen geeft huidige bank terug)
-    if (coleco_megacart && Address >= 0xFFC0) {
-        megacart_bankswitch(Address & 0x1F); // Gebruik onderste 5 bits
-        return coleco_megabank;
-    }
-    // EEPROM Read (FF80)
-    else if ((emul2->typebackup==EEP24C08 || emul2->typebackup==EEP24C256) && Address==0xFF80) {
-        return(c24xx_read() ? 0x01 : 0x00); // Geef 1 of 0 terug
-    }
-    // ADAMNet Read Check
-    if ((emul2->currentMachineType == MACHINEADAM) && PCBTable[Address]) {
-        // Lees alleen als het onderliggende geheugen RAM is
-        if ((Address < 0x8000 && adam_ram_lo) || (Address >= 0x8000 && adam_ram_hi)) {
-            ReadPCB(Address); // Deze functie returned void, de waarde wordt intern geüpdatet?
-            // De return hieronder leest dan de (mogelijk gewijzigde) RAM waarde.
+    // ADAM mag NOOIT de cart-hotspots zien
+    if (emul2->currentMachineType != MACHINEADAM && coleco_megacart) {
+        if (Address >= 0xFFC0) {
+            megacart_bankswitch(Address & coleco_megacart);
+            return coleco_megabank;
         }
     }
 
-    // Expansion gap: open bus op echte ColecoVision
-    if (!sgm_enable && emul2->currentMachineType != MACHINEADAM &&
-        Address >= 0x2000 && Address < 0x6000) {
-        return 0xFF; // of keep last bus als je dat modelleert
+    // ADAM mag ook geen EEPROM-bitje “kapen”
+    if (emul2->currentMachineType != MACHINEADAM &&
+        ((emul2->typebackup==EEP24C08)||(emul2->typebackup==EEP24C256)) &&
+        Address==0xFF80)
+    {
+        return c24xx_read();
     }
 
-    // Lees van de gemapte geheugenlocatie
-    BYTE* page = MemoryMap[Address >> 13];
-
-    // Speciale behandeling voor standaard Coleco RAM mirroring (als SGM uit staat)
-    if (!sgm_enable && (Address >= 0x6000 && Address < 0x8000)) {
-        return page[Address & 0x03FF]; // Lees van de basis 1K
+    // AdamNet side-effect + ALTIJD geheugenbyte teruggeven
+    if (emul2->currentMachineType == MACHINEADAM && PCBTable[Address]) {
+        (void)ReadPCB(Address); // side-effect only
     }
-
-    // Speciale behandeling voor SRAM read (E800-EFFF)
-    // if (emul2->typebackup == EEPSRAM && Address >= 0xE800) {
-    //     return RAM_Memory[Address]; // Lees direct uit RAM array
-    // }
-    if (emul2->typebackup == EEPSRAM) {
-        if (Address >= 0xE000 && Address < 0xE800) return RAM_Memory[Address + 0x800];
-        if (Address >= 0xE800 && Address < 0xF000) return RAM_Memory[Address];
-    }
-
-    return page[Address & 0x1FFF];
+    return *(MemoryMap[Address>>13] + (Address & 0x1FFF));
 }
-
+//---------------------------------------------------------------------------
 BYTE coleco_getbyte(int Address) { return coleco_ReadByte(Address); } // Debugger
 BYTE coleco_readoperandbyte(int Address) { return coleco_ReadByte(Address); } // Z80 Operand
 BYTE coleco_readbyte(int Address) { // Vanuit Z80 met logging
@@ -961,33 +1058,28 @@ BYTE coleco_opcode_fetch(int Address) { return coleco_ReadByte(Address); } // Z8
 //---------------------------------------------------------------------------
 void coleco_writeport(int Address, int Data, int * /**tstates*/)
 {
-    BYTE irq_status = 0;
-    bool resetadam;
+    bool resetadam = 0;
 
     Address &= 0xFF; // 8-bit poort adres
-
-    // // FAST PATH: PSG op 0xFF
-    // if (Address == 0xFF) {
-    //     sn76489_write((uint8_t)Data);   // gewoon direct aanroepen
-    //     // DBG_PRINTF("[PSG] W %02X", Data); // tijdelijk aan voor debug
-    // }
-
-    // // stuur eerst joystick/keypad select door naar nieuwe I/O
-    // if ((Address & 0xE0)==0x80 || (Address & 0xE0)==0xC0) {
-    //     coleco_io_write((uint8_t)Address, (uint8_t)Data);
-    //     // ga NIET meer met coleco_joymode werken
-    // }
 
     switch(Address & 0xE0)
     {
     case 0x00: // 0x00 - 0x1F: Unused
         break;
+
     case 0x20: // 0x20 - 0x3F: AdamNet Control
-        resetadam = (coleco_port20 & 1) && ((Data & 1) == 0);
+        resetadam=(coleco_port20 & 1) && ((Data & 1) == 0);
         coleco_port20=Data;
         if (emul2->currentMachineType == MACHINEADAM) coleco_setadammemory(resetadam);
         else if(emul2->SGM) coleco_setupsgm();
         break;
+
+    case 0x60: // 0x60 - 0x7F: Memory Control
+        coleco_port60=Data;
+        if (emul2->currentMachineType == MACHINEADAM) coleco_setadammemory(resetadam);
+        else if (emul2->SGM) coleco_setupsgm();
+        break;
+
     case 0x40: // 0x40-0x5F: Printer / SGM Sound / SGM Control
         if((emul2->currentMachineType == MACHINEADAM)&&(Address==0x40)) Printer(Data);
         else if(emul2->SGM)
@@ -997,31 +1089,17 @@ void coleco_writeport(int Address, int Data, int * /**tstates*/)
             else if (Address==0x51) ay8910_write(1,Data); // Write data
         }
         break;
-    case 0x60: // 0x60 - 0x7F: Memory Control
-        coleco_port60=Data;
-        if (emul2->currentMachineType == MACHINEADAM) coleco_setadammemory(resetadam);
-        else if (emul2->SGM) coleco_setupsgm();
-        break;
+
+
     case 0x80: // 0x80 - 0x9F: Controller 1 Write (Mode Select)
         coleco_io_write((uint8_t)Address, (uint8_t)Data);
         break;
     case 0xA0: // 0xA0 - 0xBF: VDP Write (Video Display Processor)
         coleco_updatetms=1;
-        if((Address & 0x01)==0) // Even addresses: 0xA0, 0xA2... 0xBE (VDP DATA)
-        { // Data Port
-            //if (emul2->F18A) f18a_writedata(Data);
-            //else
-                tms9918_writedata(Data);
-        }
-        else // Odd addresses: 0xA1, 0xA3... 0xBF (VDP CONTROL/REGISTER)
-        { // Control Port
-           //if (emul2->F18A) irq_status = f18a_writectrl(Data);
-           //else
-           if (tms9918_writectrl(Data))
-                z80_set_irq_line(machine.interrupt, ASSERT_LINE);
-           else
-                z80_set_irq_line(machine.interrupt, CLEAR_LINE);
-        }
+        if((Address & 0x01)==0) // Even addresses
+        { tms9918_writedata(Data); }
+        else // Odd addresses
+        { tms9918_writectrl(Data); }
         break;
     case 0xC0: // 0xC0 - 0xDF: Controller 2 Write (Mode Select)
         coleco_io_write((uint8_t)Address, (uint8_t)Data);
@@ -1049,23 +1127,43 @@ BYTE coleco_readport(int Address, int * /*tstates*/) // Interne leesfunctie poor
             return(coleco_port20);
         }
         break;
+    // NU-
     case 0x40: // 0x40 - 0x5F: Printer Status / SGM Sound Read
-        if((emul2->currentMachineType == MACHINEADAM) && (Address==0x40))
+        // --- NIEUWE, ROBUUSTE LOGICA ---
+        if (emul2->currentMachineType == MACHINEADAM)
         {
-            return 0xFF;
+            // --- Adam Modus ---
+            if (Address == 0x40) {
+                return 0xFF; // Printer = OK (Fix 7)
+            }
+
+            // Adam mag NOOIT de SGM-poorten lezen.
+            // Blokkeer 0x52 (SGM Read) en alle andere
+            // poorten in deze 0x40-0x5F range.
+            return idleDataBus; // (0xFF)
         }
-        // SGM AY-3-8910 Sound Chip (Port 0x52 = read data)
-        else if (emul2->SGM && (Address == 0x52))
+        else
         {
-            return(ay8910_read());
+            // --- Coleco Modus ---
+            // SGM AY-3-8910 Sound Chip (Port 0x52 = read data)
+            // Deze mag ALLEEN in Coleco-modus worden gelezen.
+            if (Address == 0x52)
+            {
+                return(ay8910_read());
+            }
+            // (Geen printer op Coleco, dus we vallen door)
         }
-        break;
+        break; // Val door naar 'return idleDataBus'
+
     case 0x60: // 0x60 - 0x7F: Memory Control Read
         if (emul2->currentMachineType == MACHINEADAM)
         {
             return(coleco_port60);
         }
         break;
+
+    case 0x99:
+        return ReadStatus9918();
 
     case 0xA0: // 0xA0 - 0xBF: VDP Read (Video Display Processor)
         if ((Address & 0x01) == 0) // Even addresses: 0xA0, 0xA2... 0xBE (DATA READ)
@@ -1076,8 +1174,8 @@ BYTE coleco_readport(int Address, int * /*tstates*/) // Interne leesfunctie poor
     case 0xE0: // 0xE0..0xE3 brede controller-reads (A1 = pad)
     case 0xFC: // smal: pad 1
     case 0xFF: // smal: pad 2
-        return coleco_io_read((uint8_t)Address); // 🔴 alleen doorsturen
-    }
+         return coleco_io_read((uint8_t)Address); // alleen doorsturen
+     }
 
     return idleDataBus; // Geen geldige poort
 }
@@ -1117,9 +1215,6 @@ int coleco_do_scanline(void)
 
     } while (CurScanLine_len > 0 && !(emul2->stop) && !(emul2->singlestep));
 
-    // VDP-lijn draaien en checken of we in VBlank komen
-    BYTE vdp_irq = emul2->F18A ? f18a_loop() : tms9918_loop();
-
 
     /*
       NMI is edge-insensitive op Z80: bij level-hoog verlaat de CPU HALT zodra de lijn actief is.
@@ -1127,35 +1222,31 @@ int coleco_do_scanline(void)
       ook niet als je per scanline maar weinig opcodes draait of de puls net tussen twee calls viel.
       Zodra de game de TMS-status leest in zijn ISR, wordt tms.SR & TMS9918_STAT_VBLANK 0 → we clearen NMI → alles zoals hardware.
 .   */
+
     static int nmi_active = 0;
 
-    if (vdp_irq) {
+    // --- VDP update ---
+    if (emul2->F18A) f18a_loop();
+    else tms9918_loop();
+
+    // --- NMI level-driven interrupt ---
+    // Level: NMI = aan als (IRQ enable in R1) EN (VBlank-bit in SR)
+    const bool vdp_irq_level =
+        ( (tms.VR[1] & TMS9918_REG1_IRQ) != 0 ) &&
+        ( (tms.SR    & TMS9918_STAT_VBLANK) != 0 );
+
+    if (vdp_irq_level) {
         if (!nmi_active) {
-            // Start VBlank → NMI level HOOG
             z80_set_irq_line(INPUT_LINE_NMI, ASSERT_LINE);
             nmi_active = 1;
         }
-    } else {
-        // Buiten het zichtbare VBlank-venster. Kijk of de game het VBlank-flag al heeft gelezen.
+    }
+    else {
         if (nmi_active) {
-            // Zodra het VBlank-bit uit de status is gewist (ACK), mogen we de NMI weer laag maken.
-            if (!(tms.SR & TMS9918_STAT_VBLANK)) {
-                z80_set_irq_line(INPUT_LINE_NMI, CLEAR_LINE);
-                nmi_active = 0;
-            }
-            // Let op: als de game *nog* niet gelezen heeft, laten we NMI gewoon hoog;
-            // de volgende scanlines blijven de CPU wakker houden tot de ISR status leest.
+            z80_set_irq_line(INPUT_LINE_NMI, CLEAR_LINE);
+            nmi_active = 0;
         }
     }
-
-    // if (tms.CurLine == TMS9918_END_LINE) {
-
-    //     DBG_PRINTF("[Z80] PC=%04X HALT=%u IFF1=%u IFF2=%u",
-    //                (unsigned)Z80.pc.w.l,
-    //                (unsigned)Z80.halt,
-    //                (unsigned)Z80.iff1,
-    //                (unsigned)Z80.iff2);
-    // }
     return tstotal;
 }
 
@@ -1396,6 +1487,29 @@ void cpu_writeport16(unsigned int port, unsigned int value)
 {
     // Een Z80 schrijft nog steeds 8-bits naar een 16-bit poortadres
     coleco_writeport(port, (BYTE)value, &tstates);
+}
+
+byte coleco_load_disk(int drive, const char *filename) {
+    // ChangeDisk (uit adamnet.cpp) retourneert 1 (succes) of 0 (mislukt)
+    // We draaien dit om voor consistentie (0 = succes)
+    return ChangeDisk((byte)drive, filename) ? 0 : 1;
+}
+byte coleco_load_tape(int drive, const char *filename) {
+    return ChangeTape((byte)drive, filename) ? 0 : 1;
+}
+
+int coleco_save_disk(int drive, const char *filename) {
+    return SaveFDI(&Disks[drive], filename, FMT_ADMDSK);
+}
+int coleco_save_tape(int drive, const char *filename) {
+    return SaveFDI(&Tapes[drive], filename, FMT_DDP);
+}
+
+void coleco_eject_disk(int drive) {
+    EjectFDI(&Disks[drive]);
+}
+void coleco_eject_tape(int drive) {
+    EjectFDI(&Tapes[drive]);
 }
 
 } // extern "C"

@@ -3,6 +3,7 @@
 SOURCES += \
     $$PWD/bridge/video_bridge.c \
     $$PWD/bridge/input_bridge.c \
+    $$PWD/bridge/psg_bridge.cpp \
     $$PWD/bridge/disasm_bridge.cpp
 
 

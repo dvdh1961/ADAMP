@@ -3,36 +3,30 @@
 
 #include <cstdint>
 
-extern "C" {
-// --- exact uit sn76489.h ---
-void sn76489_init(int clock, int sample_rate);
-void sn76489_reset(int clock, int sample_rate);
-void sn76489_update(short *buffer, unsigned int length);
-void sn76489_write(int data);
+           // De C-headers voor BEIDE chips
+           extern "C" {
+    // --- Standaard SN-chip (van sn76489.c) ---
+    void sn76489_init(int clock, int sample_rate);
+    void sn76489_reset(int clock, int sample_rate);
+    void sn76489_update(short *buffer, unsigned int length);
+    void sn76489_write(int data);
+
+    // --- SGM AY-chip (van ay8910.c) ---
+    void ay8910_init(int clock, int sample_rate);
+    void ay8910_reset(void);
+    void ay8910_update(short *buffer, unsigned int length);
+    void ay8910_write(int a, int data);
 }
 
-// --- nette C++ inline wrapper ---
+// --- Nette C++ wrapper (alleen declaraties) ---
 namespace PsgBridge {
 
-inline void init(int clockHz = 3579545, int sampleRate = 44100) //3579545
-{
-    sn76489_init(clockHz, sampleRate);
-}
+void init(int clockHz = 3579545, int sampleRate = 44100);
+void reset(int clockHz = 3579545, int sampleRate = 44100);
+void getSamples(int16_t* dstMono16, unsigned int frames);
 
-inline void reset(int clockHz = 3579545, int sampleRate = 44100)
-{
-    sn76489_reset(clockHz, sampleRate);
-}
-
-inline void write(uint8_t data)
-{
-    sn76489_write(static_cast<int>(data));
-}
-
-inline void getSamples(int16_t* dstMono16, unsigned int frames)
-{
-    sn76489_update(reinterpret_cast<short*>(dstMono16), frames);
-}
+// Opmerking: 'write'-functies zijn hier niet nodig,
+// 'coleco.cpp' roept ze al direct aan via 'coleco_writeport'.
 
 } // namespace PsgBridge
 #endif // PSG_BRIDGE_H

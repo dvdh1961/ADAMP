@@ -17,7 +17,6 @@ void vb_present_scanline(int y, const uint32_t *argb32_line);
 
 // Door de VDP aan te roepen na voltooid frame
 void vb_present_frame(void);
-void coleco_vdp_check_irq(void);
 
 #ifdef __cplusplus
 }

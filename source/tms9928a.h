@@ -21,7 +21,7 @@
  *
  */
 
- #ifndef _TMS9928A_H_
+#ifndef _TMS9928A_H_
 #define _TMS9928A_H_
 
 #include "coleco.h"
@@ -62,7 +62,7 @@
 #define TMS9929_LINE            (TMS9918_BASE/(2*TMS9929_FRAMES*TMS9929_LINES))
 
 #define TMS9918_Mode            (((tms.VR[0]&0x02)>>1)|(((tms.VR[1]&0x18)>>2)))
-#define TMS9918_Exttms.VR          (R[0]&TMS9918_REG0_EXTtms.VR)
+#define TMS9918_ExtVDP          (R[0]&TMS9918_REG0_EXTVDP)
 #define TMS9918_VRAMMask        (tms.VR[1]&TMS9918_REG1_RAM16K ? 0x3FFF:0x0FFF)
 #define TMS9918_VBlankON        (tms.VR[1]&TMS9918_REG1_IRQ)
 #define TMS9918_Sprites16       (tms.VR[1]&TMS9918_REG1_SPR16)
@@ -123,5 +123,7 @@ extern unsigned char tms9918_readctrl(void);
 extern int ScanSprites(unsigned char Y,unsigned int *Mask);
 extern unsigned char CheckSprites(void);
 #endif
+
+BYTE ReadStatus9918(void);
 
 #endif

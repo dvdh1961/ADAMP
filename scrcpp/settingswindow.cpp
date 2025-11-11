@@ -1,83 +1,99 @@
-#include "settingswindow.h" // <-- Aangepast
-
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QFormLayout>
+#include "settingswindow.h"
+#include <QGridLayout>
+#include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
-#include <QDialogButtonBox>
 #include <QFileDialog>
-#include <QCoreApplication>
-#include <QDir>
+#include <QDialogButtonBox>
 
-// Hernoemd van SettingsDialog naar SettingsWindow
 SettingsWindow::SettingsWindow(QWidget *parent)
     : QDialog(parent)
 {
-    setWindowTitle("Settings");
-    setModal(true);
-    setMinimumWidth(450);
+    setWindowTitle(tr("Settings"));
+    setMinimumWidth(500);
 
-    setupUI();
+    QGridLayout *pathsLayout = new QGridLayout;
 
-    connect(m_browseButton, &QPushButton::clicked, this, &SettingsWindow::onBrowseClicked);
-    connect(m_buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
-    connect(m_buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
-}
+    // --- Rij 1: ROM Path ---
+    QLabel *romLabel = new QLabel(tr("ROM Path:"));
+    m_romPathEdit = new QLineEdit;
+    m_romPathBtn = new QPushButton(tr("Browse..."));
+    pathsLayout->addWidget(romLabel, 0, 0);
+    pathsLayout->addWidget(m_romPathEdit, 0, 1);
+    pathsLayout->addWidget(m_romPathBtn, 0, 2);
 
-void SettingsWindow::setupUI() // <-- Hernoemd
-{
+    // --- Rij 2: Disk Path (NIEUW) ---
+    QLabel *diskLabel = new QLabel(tr("Disk Path:"));
+    m_diskPathEdit = new QLineEdit;
+    m_diskPathBtn = new QPushButton(tr("Browse..."));
+    pathsLayout->addWidget(diskLabel, 1, 0);
+    pathsLayout->addWidget(m_diskPathEdit, 1, 1);
+    pathsLayout->addWidget(m_diskPathBtn, 1, 2);
+
+    // --- Rij 3: Tape Path (NIEUW) ---
+    QLabel *tapeLabel = new QLabel(tr("Tape Path:"));
+    m_tapePathEdit = new QLineEdit;
+    m_tapePathBtn = new QPushButton(tr("Browse..."));
+    pathsLayout->addWidget(tapeLabel, 2, 0);
+    pathsLayout->addWidget(m_tapePathEdit, 2, 1);
+    pathsLayout->addWidget(m_tapePathBtn, 2, 2);
+
+    // --- Knoppen ---
+    m_okButton = new QPushButton(tr("OK"));
+    m_cancelButton = new QPushButton(tr("Cancel"));
+    m_okButton->setDefault(true);
+
+    QDialogButtonBox *buttonBox = new QDialogButtonBox(Qt::Horizontal);
+    buttonBox->addButton(m_okButton, QDialogButtonBox::AcceptRole);
+    buttonBox->addButton(m_cancelButton, QDialogButtonBox::RejectRole);
+
+    // --- Hoofdlayout ---
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
-    QFormLayout *formLayout = new QFormLayout();
+    mainLayout->addLayout(pathsLayout);
+    mainLayout->addSpacing(15);
+    mainLayout->addWidget(buttonBox);
 
-    // --- ROM Path ---
-    m_romPathLineEdit = new QLineEdit(this);
-    m_browseButton = new QPushButton("Browse...", this);
-
-    QHBoxLayout *romPathLayout = new QHBoxLayout();
-    romPathLayout->addWidget(m_romPathLineEdit, 1); // 1 = stretch factor
-    romPathLayout->addWidget(m_browseButton);
-    romPathLayout->setContentsMargins(0, 0, 0, 0);
-
-    formLayout->addRow("ROM Folder:", romPathLayout);
-
-    mainLayout->addLayout(formLayout);
-
-    // --- OK / Cancel knoppen ---
-    m_buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    mainLayout->addWidget(m_buttonBox);
+    // --- Connecties ---
+    connect(m_romPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseRomPath);
+    connect(m_diskPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseDiskPath); // NIEUW
+    connect(m_tapePathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseTapePath); // NIEUW
+    connect(m_okButton, &QPushButton::clicked, this, &SettingsWindow::accept);
+    connect(m_cancelButton, &QPushButton::clicked, this, &SettingsWindow::reject);
 }
 
-void SettingsWindow::onBrowseClicked() // <-- Hernoemd
+// --- Getters ---
+QString SettingsWindow::romPath() const { return m_romPathEdit->text(); }
+QString SettingsWindow::diskPath() const { return m_diskPathEdit->text(); } // NIEUW
+QString SettingsWindow::tapePath() const { return m_tapePathEdit->text(); } // NIEUW
+
+// --- Setters ---
+void SettingsWindow::setRomPath(const QString &path) { m_romPathEdit->setText(path); }
+void SettingsWindow::setDiskPath(const QString &path) { m_diskPathEdit->setText(path); } // NIEUW
+void SettingsWindow::setTapePath(const QString &path) { m_tapePathEdit->setText(path); } // NIEUW
+
+// --- Slots ---
+void SettingsWindow::onBrowseRomPath()
 {
-    // Bepaal de huidige (absolute) map om de dialoog te openen
-    QString currentRelativePath = m_romPathLineEdit->text();
-    QString startPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + currentRelativePath);
-
-    // Open de bestandsdialoog
-    QString absoluteNewPath = QFileDialog::getExistingDirectory(this,
-                                                                "Select Default ROM Folder",
-                                                                startPath,
-                                                                QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
-
-    if (!absoluteNewPath.isEmpty()) {
-        // Converteer het absolute pad terug naar een relatief pad
-        QDir appDir(QCoreApplication::applicationDirPath());
-        QString relativeNewPath = appDir.relativeFilePath(absoluteNewPath);
-
-        // Sla het relatieve pad op
-        m_romPathLineEdit->setText(relativeNewPath);
-    }
+    QString dir = QFileDialog::getExistingDirectory(
+        this, tr("Select ROM Directory"), m_romPathEdit->text()
+        );
+    if (!dir.isEmpty()) { m_romPathEdit->setText(dir); }
 }
 
-// --- Publieke functies ---
-
-void SettingsWindow::setRomPath(const QString &path) // <-- Hernoemd
+// NIEUWE SLOT
+void SettingsWindow::onBrowseDiskPath()
 {
-    m_romPathLineEdit->setText(path);
+    QString dir = QFileDialog::getExistingDirectory(
+        this, tr("Select Disk Directory"), m_diskPathEdit->text()
+        );
+    if (!dir.isEmpty()) { m_diskPathEdit->setText(dir); }
 }
 
-QString SettingsWindow::romPath() const // <-- Hernoemd
+// NIEUWE SLOT
+void SettingsWindow::onBrowseTapePath()
 {
-    return m_romPathLineEdit->text();
+    QString dir = QFileDialog::getExistingDirectory(
+        this, tr("Select Tape Directory"), m_tapePathEdit->text()
+        );
+    if (!dir.isEmpty()) { m_tapePathEdit->setText(dir); }
 }
