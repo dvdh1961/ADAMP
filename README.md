@@ -25,13 +25,14 @@ It serves as a central platform for integrating a wide range of hardware-related
 - 🔊 **Super Game Module** support (inclusief AY-soundchip)
 - 🧠 **Megacart Bankswitching** up to 512 KB
 - 🎯 **Full Controller Button Mapping**
+- 💾 **Coleco ADAM** game support (`.ddp`, `.dsk`)
+- 🖨️ **Print to txt and pdf support (with smartwritter some ussues)
 
 ## 💡Info
 - You need the free community QT Creator to build the project.
 
 ## 🚧 ToDo
 
-- 💾 **Coleco ADAM** game support (`.ddp`, `.dsk`)
 - 💾 **Save / Load Game State**
 
 ## ADAM+ The Emulated Computer Entertainment System
