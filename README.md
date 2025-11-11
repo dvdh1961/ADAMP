@@ -26,7 +26,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 - 🧠 **Megacart Bankswitching** up to 512 KB
 - 🎯 **Full Controller Button Mapping**
 - 💾 **Coleco ADAM** game support (`.ddp`, `.dsk`)
-- 🖨️ **Print to txt and pdf support (with smartwritter some ussues)
+- 🖨️ **Print to txt and pdf support (with smartwritter some issues)
 
 ## 💡Info
 - You need the free community QT Creator to build the project.
