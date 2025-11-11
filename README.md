@@ -34,6 +34,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 ## 🚧 ToDo
 
 - 💾 **Save / Load Game State**
+- 🕹️ Hardware integration with ADAM+ console (connecting Hardware, Cartridges,Keyboard,Joypads,...)
 
 ## ADAM+ The Emulated Computer Entertainment System
 
