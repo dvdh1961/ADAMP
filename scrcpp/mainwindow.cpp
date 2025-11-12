@@ -62,6 +62,9 @@ MainWindow::MainWindow(QWidget *parent)
     m_inputWidget(nullptr),
     m_logView(nullptr),
     m_kbWidget(nullptr),
+    m_actFullScreen(nullptr),
+    m_actToggleSmoothing(nullptr),
+    m_smoothingEnabled(true),
     m_diskMenuA(nullptr),
     m_diskMenuB(nullptr),
     m_tapeMenu(nullptr),
@@ -74,7 +77,6 @@ MainWindow::MainWindow(QWidget *parent)
     m_actAdamKeyboard(nullptr),
     m_actAdamJoystick(nullptr),
     m_adamInputModeJoystick(false),
-
     m_debugWin(nullptr),
     m_cartInfoDialog(nullptr)
 {
@@ -83,17 +85,31 @@ MainWindow::MainWindow(QWidget *parent)
 
     setWindowTitle("ADAM+ ColecoVision Emulator");
     m_screenWidget = new ScreenWidget(this);
-    m_screenWidget->setScale(2.9);
+    //m_screenWidget->setScale(2.9);
 
     m_logoLabel = new QLabel(this);
     QPixmap logoPixmap(":/images/images/adamp_logo.png");
     m_logoLabel->setPixmap(logoPixmap);
+    m_logoLabel->installEventFilter(this);
+    m_logoLabel->setCursor(Qt::PointingHandCursor);
+
     QVBoxLayout *mainLayout = new QVBoxLayout;
     mainLayout->setContentsMargins(0, 0, 0, 0); // Geen witruimte rondom
-    mainLayout->addWidget(m_screenWidget, 0, Qt::AlignHCenter);
-    mainLayout->addStretch(1);
-    mainLayout->addWidget(m_logoLabel, 0, Qt::AlignHCenter);
-    mainLayout->addStretch(1);
+
+    // 1. Voeg het spelscherm toe met een stretch factor van 1
+    //    Dit betekent dat het alle beschikbare verticale ruimte zal innemen.
+    mainLayout->addWidget(m_screenWidget, 1);
+
+    // 2. Voeg het logo toe met een stretch factor van 0
+    //    en lijn het onderaan en in het midden uit.
+    mainLayout->addWidget(m_logoLabel, 0, Qt::AlignHCenter | Qt::AlignBottom);
+
+
+
+    // mainLayout->addWidget(m_screenWidget, 0, Qt::AlignHCenter);
+    // mainLayout->addStretch(1);
+    // mainLayout->addWidget(m_logoLabel, 0, Qt::AlignHCenter);
+    // mainLayout->addStretch(1);
 
     m_ntableWindow = new NTableWindow(this);
     m_ntableWindow->hide(); // Zorg dat het verborgen start
@@ -130,6 +146,8 @@ MainWindow::MainWindow(QWidget *parent)
     // Menu's/acties
     setupUI();
     loadSettings();
+
+    m_screenWidget->setSmoothScaling(m_smoothingEnabled);
 
     if (m_sysLabel) {
         m_sysLabel->setText(m_machineType ? "ADAM" : "COLECO");
@@ -205,6 +223,21 @@ MainWindow::~MainWindow()
     }
 }
 
+void MainWindow::onToggleSmoothing(bool checked)
+{
+    m_smoothingEnabled = checked;
+
+    // 1. Update de menu tekst
+    m_actToggleSmoothing->setText(checked ? "Smooth Scaling" : "Sharp Scaling");
+
+    // 2. Stuur de wijziging direct door naar de widget
+    if (m_screenWidget) {
+        m_screenWidget->setSmoothScaling(checked);
+    }
+
+    // 3. Sla de instelling op voor de volgende keer
+    saveSettings();
+}
 
 void MainWindow::onOpenSettings()
 {
@@ -242,6 +275,7 @@ void MainWindow::loadSettings()
     m_ctrlSteering    = settings.value("controller/steering",    false).toBool();
     m_ctrlRoller      = settings.value("controller/roller",      false).toBool();
     m_ctrlSuperAction = settings.value("controller/superaction", false).toBool();
+    m_smoothingEnabled = settings.value("video/smoothing", true).toBool();
 
     qDebug() << "Loaded settings:"
              << "machine="  << m_machineType
@@ -271,6 +305,7 @@ void MainWindow::saveSettings()
     settings.setValue("controller/steering",    m_ctrlSteering);
     settings.setValue("controller/roller",      m_ctrlRoller);
     settings.setValue("controller/superaction", m_ctrlSuperAction);
+    settings.setValue("video/smoothing", m_smoothingEnabled);
 
     qDebug() << "Settings saved."
              << "palette=" << m_paletteIndex
@@ -565,6 +600,19 @@ void MainWindow::setupUI()
     videoGroup->addAction(m_actTogglePAL);
     optionsMenu->addAction(m_actTogglePAL);
     optionsMenu->addSeparator();
+
+    m_actToggleSmoothing = new QAction(this);
+    m_actToggleSmoothing->setCheckable(true);
+    m_actToggleSmoothing->setChecked(m_smoothingEnabled);
+    m_actToggleSmoothing->setText(m_smoothingEnabled ? "Smooth Scaling" : "Sharp Scaling");
+    optionsMenu->addAction(m_actToggleSmoothing);
+    m_actFullScreen = new QAction(tr("Full Screen"), this);
+    m_actFullScreen->setCheckable(true);
+    m_actFullScreen->setChecked(false);
+    // Use Alt+Enter as a common shortcut
+    //m_actFullScreen->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Enter));
+    optionsMenu->addAction(m_actFullScreen);
+    optionsMenu->addSeparator();
     m_actHardware = new QAction(tr("Hardware..."), this);
     optionsMenu->addAction(m_actHardware);
     connect(m_actHardware, &QAction::triggered, this, &MainWindow::onOpenHardware);
@@ -634,6 +682,32 @@ void MainWindow::setupUI()
     });
 
     connect(m_actAbout, &QAction::triggered, this, &MainWindow::showAboutDialog);
+
+    connect(m_actFullScreen, &QAction::toggled, this, &MainWindow::onToggleFullScreen);
+    connect(m_actToggleSmoothing, &QAction::toggled, this, &MainWindow::onToggleSmoothing);
+}
+
+void MainWindow::onToggleFullScreen(bool checked)
+{
+    if (checked) {
+        // --- GA NAAR GEMAXIMALISEERD VENSTER ---
+
+        // Verwijder de vaste grootte zodat maximaliseren werkt
+        this->setMinimumSize(QSize(0, 0));
+        this->setMaximumSize(QSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX));
+
+        // Maximaliseer het venster
+        showMaximized();
+    } else {
+        // --- TERUG NAAR NORMAAL VENSTER ---
+
+        // Herstel normale venstermodus
+        showNormal();
+
+        // Pas de vaste grootte opnieuw toe
+        this->setFixedWidth(770);
+        this->setFixedHeight(700);
+    }
 }
 
 void MainWindow::onOpenJoypadMapper()
@@ -884,6 +958,12 @@ void MainWindow::onToggleVideoStandard()
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 {
+    // Vang een klik op het logo af om het hardware-venster te openen
+    if (obj == m_logoLabel && event->type() == QEvent::MouseButtonPress) {
+        onOpenHardware(); // Roep de bestaande slot aan
+        return true;      // Event afgehandeld, niet doorsturen
+    }
+
     if (obj == m_logView && event->type() == QEvent::Close) {
         if (m_actShowLog) {
             m_actShowLog->setChecked(false);
@@ -924,6 +1004,16 @@ void MainWindow::onToggleKeyboard(bool on)
     }
 }
 
+void MainWindow::onFrameReceived(const QImage &frame)
+{
+    if (!m_screenWidget || frame.isNull()) return;
+
+    // Stuur de ORIGINELE, KLEINE (256x192) frame
+    // direct door naar de widget.
+    // Alle schaal-logica, canvas, en painter zijn hier weg.
+    m_screenWidget->setFrame(frame);
+}
+
 void MainWindow::setupEmulatorThread()
 {
     qDebug() << "Thread setup: Aanmaken thread en controller...";
@@ -933,11 +1023,17 @@ void MainWindow::setupEmulatorThread()
     m_colecoController->moveToThread(m_emulatorThread);
 
     connect(m_colecoController, &ColecoController::frameReady,
-            m_screenWidget,     &ScreenWidget::setFrame,
+            this,               &MainWindow::onFrameReceived, // <-- NIEUW
             Qt::QueuedConnection);
+
+    // connect(m_colecoController, &ColecoController::frameReady,
+    //         m_screenWidget,     &ScreenWidget::setFrame,
+    //         Qt::QueuedConnection);
+
     connect(m_colecoController, &ColecoController::frameReady,
             this, &MainWindow::onFramePresented,
             Qt::QueuedConnection);
+
     connect(m_colecoController, SIGNAL(videoStandardChanged(QString)),
             this, SLOT(setVideoStandard(QString)),
             Qt::QueuedConnection);

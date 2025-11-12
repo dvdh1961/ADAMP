@@ -18,16 +18,15 @@ public:
     uchar* frameBits() { return m_frame.bits(); }
     int    frameStride() const { return m_frame.bytesPerLine(); }
 
-    // Nieuw: eenvoudige zoom (1.0 = 256x192, 2.0 = 512x384, ...)
-    void setScale(qreal s);
-    qreal scale() const { return m_scale; }
-
     // Standaard Coleco resolutie
     static constexpr int COLECO_WIDTH  = 256;
     static constexpr int COLECO_HEIGHT = 192;
 
    QSize sizeHint() const override;
    QSize minimumSizeHint() const override;
+
+   void setBackgroundColor(const QColor& color);
+   void setSmoothScaling(bool enabled);
 
 
 public slots:
@@ -42,9 +41,8 @@ protected:
 private:
     QImage m_frame; // De huidige afbeelding die we tonen
     QMutex m_mutex; // Beveiliging voor toegang vanuit meerdere threads
-    qreal  m_scale = 2.0; // standaard 2x weergave
-
-    void applyFixedSize(); // helper om vaste grootte te zetten op basis van m_scale
+    QColor m_backgroundColor;
+    bool m_smoothScaling;
 };
 
 #endif // SCREENWIDGET_H

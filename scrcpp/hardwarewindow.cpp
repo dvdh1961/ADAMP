@@ -1,4 +1,5 @@
 #include "hardwarewindow.h"
+#include "printwindow.h"
 
 // Paletbron rechtstreeks uit core-header (alleen voor UI-preview)
 #include "coleco.h"
@@ -19,6 +20,7 @@
 #include <QColor>
 #include <QToolTip>
 #include <QButtonGroup>
+#include <QScreen>
 
 static QWidget* makeHSpacer(QWidget* parent=nullptr) {
     auto *w = new QWidget(parent);
@@ -35,8 +37,11 @@ HardwareWindow::HardwareWindow(const HardwareConfig& initial, QWidget *parent)
 
     buildUi();
     loadFromConfig(initial);
-    updateAvailability();
     updatePaletteSwatches();
+
+    // Sync de printerknop met de (mogelijke) huidige staat
+    m_btnPrinter->setChecked(PrintWindow::instance()->isVisible());
+    updateAvailability();
 
     // Venstermaat en niet-resizable
     setFixedSize(920,520);
@@ -159,15 +164,21 @@ void HardwareWindow::buildUi()
     m_groupAddHw = new QGroupBox("Additional Hardware", this);
     m_btnSGM  = new QToolButton(m_groupAddHw);
     m_btnF18A = new QToolButton(m_groupAddHw);
+    m_btnPrinter = new QToolButton(m_groupAddHw);
 
     auto *layHw = new QHBoxLayout;
     layHw->addWidget(makeLabeledButton(m_btnSGM,  ":/images/images/hw_sgm.png",  "Opcode SGM",       false));
     layHw->addWidget(makeLabeledButton(m_btnF18A, ":/images/images/hw_f18a.png", "F18A VGA Adapter", false));
+
+    auto *wrapPrinter = makeLabeledButton(m_btnPrinter, ":/images/images/hw_printer.png", "Printer Output", false);
+    layHw->addWidget(wrapPrinter);
+
     layHw->addStretch(1);
     m_groupAddHw->setLayout(layHw);
 
     connect(m_btnSGM,  &QToolButton::clicked, this, &HardwareWindow::updateAvailability);
     connect(m_btnF18A, &QToolButton::clicked, this, &HardwareWindow::updateAvailability);
+    connect(m_btnPrinter, &QToolButton::clicked, this, &HardwareWindow::onPrinterClicked);
 
     // === Video ==============================================================
     m_groupVideo = new QGroupBox("Video", this);
@@ -363,6 +374,7 @@ void HardwareWindow::updateAvailability()
     }
     // F18A altijd toegestaan
     m_btnF18A->setEnabled(true);
+    m_btnPrinter->setEnabled(true);
 
     // Controllers: Coleco/ADAMP oké; ADAM uit
     const bool padControllers = isColeco || isAdamP;
@@ -392,6 +404,43 @@ void HardwareWindow::updateAvailability()
     setBorder(m_btnSuperAction);
     setBorder(m_btnSGM);
     setBorder(m_btnF18A);
+    setBorder(m_btnPrinter);
+}
+
+void HardwareWindow::onPrinterClicked()
+{
+    PrintWindow* w = PrintWindow::instance();
+
+    if (m_btnPrinter->isChecked()) {
+        w->show();
+        w->raise();
+        w->activateWindow();
+
+        // --- AANPASSING ---
+        // Positioneer rechts van het *hoofdvenster* (de parent),
+        // niet dit dialoogvenster.
+        QWidget* mainWin = parentWidget();
+        if (mainWin)
+        {
+            const QRect mainGeom = mainWin->frameGeometry();
+            const QRect avail    = screen()->availableGeometry(); // Let op: screen() is gebruikt
+            QPoint pos(mainGeom.right() + 10, mainGeom.top());
+            QSize  sz  = w->size();
+
+            if (pos.x() + sz.width() > avail.right())
+                pos.setX(qMax(avail.left(), mainGeom.left() - 10 - sz.width()));
+            if (pos.y() + sz.height() > avail.bottom())
+                pos.setY(qMax(avail.top(), avail.bottom() - sz.height()));
+
+            w->move(pos);
+        }
+        // --- EINDE AANPASSING ---
+
+    } else {
+        w->hide();
+    }
+
+    updateAvailability();
 }
 
 void HardwareWindow::updatePaletteSwatches()

@@ -136,7 +136,7 @@ PrintWindow::PrintWindow(QWidget* parent)
 
     // ===== statusbar (zelfde look/hoogte als MainWindow) =====
     m_status   = new QStatusBar(this);
-    m_status->setFixedHeight(28);
+    m_status->setFixedHeight(21);
     m_statLeft = new QLabel(this);
     m_statMid  = new QLabel(this);
     m_statRight= new QLabel(this);
@@ -203,7 +203,7 @@ PrintWindow::PrintWindow(QWidget* parent)
 
     // ===== ONDER: bitmap QLabel (fixed height 73) =====
     m_bitmapLabel = new QLabel(this);
-    m_bitmapLabel->setFixedSize(600,173);
+    m_bitmapLabel->setFixedSize(600,168);
     m_bitmapLabel->setContentsMargins(0,0,0,0);
     m_bitmapLabel->setStyleSheet(
         "QTableView{border:0; background:#1e1e1e;}"

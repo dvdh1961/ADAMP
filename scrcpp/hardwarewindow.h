@@ -60,6 +60,7 @@ private slots:
     void onMachineChanged();
     void onOk();
     void onPaletteChanged(int idx);
+    void onPrinterClicked();
 
 private:
     // helpers
@@ -88,6 +89,7 @@ private:
     QGroupBox*   m_groupAddHw = nullptr;
     QToolButton* m_btnSGM  = nullptr;
     QToolButton* m_btnF18A = nullptr;
+    QToolButton* m_btnPrinter = nullptr;
 
     // Video
     QGroupBox*   m_groupVideo = nullptr;

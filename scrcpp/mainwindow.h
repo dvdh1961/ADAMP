@@ -82,6 +82,9 @@ private slots:
     void onDiskStatusChanged(int drive, const QString& fileName);
     void onTapeStatusChanged(int drive, const QString& fileName);
     void onAdamInputModeChanged();
+    void onToggleFullScreen(bool checked);
+    void onFrameReceived(const QImage &frame);
+    void onToggleSmoothing(bool checked);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -169,6 +172,9 @@ private:
     QAction *m_ejectTapeAction    = nullptr;
 
     QAction* m_actPrinterOutput   = nullptr;
+    QAction* m_actFullScreen      = nullptr;
+    QAction* m_actToggleSmoothing = nullptr;
+    bool m_smoothingEnabled;
 
     // --- MEDIA STATUSBALK LABELS ---
     QLabel *m_diskLabelA          = nullptr;
