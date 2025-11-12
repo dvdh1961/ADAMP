@@ -6,6 +6,13 @@
 #include <QPainter>
 #include <QMutex> // Nodig voor thread-veiligheid
 
+// 1. Definieer de modi
+enum ScalingMode {
+    ModeSharp,  // 0
+    ModeSmooth, // 1
+    ModeEPX     // 2
+};
+
 class ScreenWidget : public QWidget
 {
     Q_OBJECT
@@ -27,7 +34,8 @@ public:
 
    void setBackgroundColor(const QColor& color);
    void setSmoothScaling(bool enabled);
-
+   void setFullScreenMode(bool enabled);
+   void setScalingMode(ScalingMode mode);
 
 public slots:
     // Dit is het slot dat het signaal van de ColecoController ontvangt
@@ -43,6 +51,11 @@ private:
     QMutex m_mutex; // Beveiliging voor toegang vanuit meerdere threads
     QColor m_backgroundColor;
     bool m_smoothScaling;
+    bool m_isFullScreen;
+    ScalingMode m_scalingMode;
+
+    QImage m_epxBuffer;
+    void applyEPX(const QImage& source);
 };
 
 #endif // SCREENWIDGET_H

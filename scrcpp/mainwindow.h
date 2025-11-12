@@ -84,7 +84,7 @@ private slots:
     void onAdamInputModeChanged();
     void onToggleFullScreen(bool checked);
     void onFrameReceived(const QImage &frame);
-    void onToggleSmoothing(bool checked);
+    void onCycleScalingMode();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -92,6 +92,7 @@ protected:
     void moveEvent(QMoveEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     // helpers
@@ -106,6 +107,7 @@ private:
     void showAboutDialog();
     void applyHardwareConfig(const HardwareConfig& cfg);
     void onOpenJoypadMapper();
+    void updateFullScreenWallpaper();
 
 private:
     // emulator thread en controller
@@ -174,7 +176,6 @@ private:
     QAction* m_actPrinterOutput   = nullptr;
     QAction* m_actFullScreen      = nullptr;
     QAction* m_actToggleSmoothing = nullptr;
-    bool m_smoothingEnabled;
 
     // --- MEDIA STATUSBALK LABELS ---
     QLabel *m_diskLabelA          = nullptr;
@@ -183,6 +184,7 @@ private:
     QLabel *m_sepLabelMedia1a     = nullptr;
     QLabel *m_sepLabelMedia1b     = nullptr;
     QLabel *m_sepLabelMedia2      = nullptr;
+    QLabel* m_wallpaperLabel      = nullptr;
 
     QMenu *m_diskMenuA            = nullptr;
     QMenu *m_diskMenuB            = nullptr;
@@ -191,12 +193,14 @@ private:
     bool m_isDiskLoadedA;
     bool m_isDiskLoadedB;
     bool m_isTapeLoaded;
+    int  m_scalingMode; // 0=Sharp, 1=Smooth, 2=EPX
+    bool m_startFullScreen;
 
     QActionGroup* m_adamInputGroup;
     QMenu* m_adamInputMenu;
     QAction* m_actAdamKeyboard;
     QAction* m_actAdamJoystick;
-    bool          m_adamInputModeJoystick; // false = KB, true = Joystick
+    bool     m_adamInputModeJoystick; // false = KB, true = Joystick
 
     void updateMediaMenuState();
     void updateMediaStatusLabels();

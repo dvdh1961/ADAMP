@@ -64,14 +64,14 @@ MainWindow::MainWindow(QWidget *parent)
     m_kbWidget(nullptr),
     m_actFullScreen(nullptr),
     m_actToggleSmoothing(nullptr),
-    m_smoothingEnabled(true),
     m_diskMenuA(nullptr),
     m_diskMenuB(nullptr),
     m_tapeMenu(nullptr),
     m_isDiskLoadedA(false),
     m_isDiskLoadedB(false),
     m_isTapeLoaded(false),
-
+    m_scalingMode(1),
+    m_startFullScreen(false),
     m_adamInputGroup(nullptr),
     m_adamInputMenu(nullptr),
     m_actAdamKeyboard(nullptr),
@@ -84,6 +84,17 @@ MainWindow::MainWindow(QWidget *parent)
     QCoreApplication::setApplicationName("ADAMP_EMU");
 
     setWindowTitle("ADAM+ ColecoVision Emulator");
+
+    // --- VOEG DE WALLPAPER-LABEL TOE ---
+    m_wallpaperLabel = new QLabel(this);
+    // BELANGRIJK: U moet zelf een .png of .jpg toevoegen aan uw resources (qrc)
+    // en hier het pad ernaartoe opgeven.
+    QPixmap wallpaper(":/images/images/wallpaper_coleco.png");
+    m_wallpaperLabel->setPixmap(wallpaper);
+    m_wallpaperLabel->setScaledContents(true); // Rek de afbeelding uit
+    m_wallpaperLabel->hide(); // Verberg standaard
+    // --- EINDE TOEVOEGING ---
+
     m_screenWidget = new ScreenWidget(this);
     //m_screenWidget->setScale(2.9);
 
@@ -92,6 +103,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_logoLabel->setPixmap(logoPixmap);
     m_logoLabel->installEventFilter(this);
     m_logoLabel->setCursor(Qt::PointingHandCursor);
+
+    m_logoLabel->setAttribute(Qt::WA_TranslucentBackground);
 
     QVBoxLayout *mainLayout = new QVBoxLayout;
     mainLayout->setContentsMargins(0, 0, 0, 0); // Geen witruimte rondom
@@ -126,8 +139,13 @@ MainWindow::MainWindow(QWidget *parent)
     QWidget *centralContainer = new QWidget(this);
     centralContainer->setLayout(mainLayout);
 
+    // Maak de *hele* centrale container transparant
+    centralContainer->setAttribute(Qt::WA_TranslucentBackground); // <-- VOEG DIT TOE
+
     // 5. Stel de container in als de central widget
     setCentralWidget(centralContainer);
+
+    m_wallpaperLabel->lower();
 
     m_inputWidget = new InputWidget(this);
     m_inputWidget->attachTo(m_screenWidget);
@@ -143,11 +161,11 @@ MainWindow::MainWindow(QWidget *parent)
 
     setStatusBar();
 
+    loadSettings();
     // Menu's/acties
     setupUI();
-    loadSettings();
 
-    m_screenWidget->setSmoothScaling(m_smoothingEnabled);
+    m_screenWidget->setScalingMode(static_cast<ScalingMode>(m_scalingMode));
 
     if (m_sysLabel) {
         m_sysLabel->setText(m_machineType ? "ADAM" : "COLECO");
@@ -208,6 +226,20 @@ MainWindow::MainWindow(QWidget *parent)
     m_cartInfoDialog = new CartridgeInfoDialog(this);
     m_cartInfoDialog->hide(); // Standaard verborgen
 
+    // --- VOEG DIT BLOK TOE ---
+    // Pas de geladen full-screen instelling toe bij het opstarten
+    if (m_startFullScreen) {
+        // Gebruik een timer om dit te doen nadat het venster
+        // volledig is getoond en de event loop draait.
+        QTimer::singleShot(0, this, [this]() {
+            // We hoeven de actie niet te 'checken', we roepen de functie
+            // gewoon direct aan die de full-screen logica uitvoert.
+            onToggleFullScreen(true);
+            // Zorg dat de actie-knop zelf ook 'checked' is
+            if(m_actFullScreen) m_actFullScreen->setChecked(true);
+        });
+    }
+
     QTimer::singleShot(0, this, [this]() {
         if (m_screenWidget) {
             m_screenWidget->setFocus(Qt::OtherFocusReason);
@@ -223,19 +255,30 @@ MainWindow::~MainWindow()
     }
 }
 
-void MainWindow::onToggleSmoothing(bool checked)
+void MainWindow::onCycleScalingMode()
 {
-    m_smoothingEnabled = checked;
+    // 0=Sharp, 1=Smooth, 2=EPX
+    // Fiets naar de volgende modus: 0 -> 1 -> 2 -> 0
+    m_scalingMode = (m_scalingMode + 1) % 3;
 
-    // 1. Update de menu tekst
-    m_actToggleSmoothing->setText(checked ? "Smooth Scaling" : "Sharp Scaling");
-
-    // 2. Stuur de wijziging direct door naar de widget
-    if (m_screenWidget) {
-        m_screenWidget->setSmoothScaling(checked);
+    QString scaleText;
+    if (m_scalingMode == 0) { // ModeSharp
+        scaleText = "Scaling: Sharp";
+    } else if (m_scalingMode == 1) { // ModeSmooth
+        scaleText = "Scaling: Smooth";
+    } else { // ModeEPX
+        scaleText = "Scaling: EPX";
     }
 
-    // 3. Sla de instelling op voor de volgende keer
+    // 1. Update de menu tekst
+    m_actToggleSmoothing->setText(scaleText);
+
+    // 2. Stuur de wijziging door naar de widget
+    if (m_screenWidget) {
+        m_screenWidget->setScalingMode(static_cast<ScalingMode>(m_scalingMode));
+    }
+
+    // 3. Sla de nieuwe instelling op
     saveSettings();
 }
 
@@ -275,7 +318,9 @@ void MainWindow::loadSettings()
     m_ctrlSteering    = settings.value("controller/steering",    false).toBool();
     m_ctrlRoller      = settings.value("controller/roller",      false).toBool();
     m_ctrlSuperAction = settings.value("controller/superaction", false).toBool();
-    m_smoothingEnabled = settings.value("video/smoothing", true).toBool();
+
+    m_scalingMode = settings.value("video/scalingMode", 1).toInt();
+    m_startFullScreen = settings.value("video/fullscreen", false).toBool();
 
     qDebug() << "Loaded settings:"
              << "machine="  << m_machineType
@@ -305,7 +350,9 @@ void MainWindow::saveSettings()
     settings.setValue("controller/steering",    m_ctrlSteering);
     settings.setValue("controller/roller",      m_ctrlRoller);
     settings.setValue("controller/superaction", m_ctrlSuperAction);
-    settings.setValue("video/smoothing", m_smoothingEnabled);
+
+    settings.setValue("video/scalingMode", m_scalingMode);
+    settings.setValue("video/fullscreen", m_startFullScreen);
 
     qDebug() << "Settings saved."
              << "palette=" << m_paletteIndex
@@ -602,13 +649,21 @@ void MainWindow::setupUI()
     optionsMenu->addSeparator();
 
     m_actToggleSmoothing = new QAction(this);
-    m_actToggleSmoothing->setCheckable(true);
-    m_actToggleSmoothing->setChecked(m_smoothingEnabled);
-    m_actToggleSmoothing->setText(m_smoothingEnabled ? "Smooth Scaling" : "Sharp Scaling");
+    m_actToggleSmoothing->setCheckable(false);
+
+    // Stel de initiële tekst in op basis van de geladen modus
+    if (m_scalingMode == 0) { // ModeSharp
+        m_actToggleSmoothing->setText("Scaling: Sharp");
+    } else if (m_scalingMode == 2) { // ModeEPX
+        m_actToggleSmoothing->setText("Scaling: EPX");
+    } else { // ModeSmooth (default)
+        m_actToggleSmoothing->setText("Scaling: Smooth");
+    }
     optionsMenu->addAction(m_actToggleSmoothing);
+    optionsMenu->addSeparator();
     m_actFullScreen = new QAction(tr("Full Screen"), this);
     m_actFullScreen->setCheckable(true);
-    m_actFullScreen->setChecked(false);
+    m_actFullScreen->setChecked(m_startFullScreen);
     // Use Alt+Enter as a common shortcut
     //m_actFullScreen->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Enter));
     optionsMenu->addAction(m_actFullScreen);
@@ -684,11 +739,13 @@ void MainWindow::setupUI()
     connect(m_actAbout, &QAction::triggered, this, &MainWindow::showAboutDialog);
 
     connect(m_actFullScreen, &QAction::toggled, this, &MainWindow::onToggleFullScreen);
-    connect(m_actToggleSmoothing, &QAction::toggled, this, &MainWindow::onToggleSmoothing);
+    connect(m_actToggleSmoothing, &QAction::triggered, this, &MainWindow::onCycleScalingMode);
 }
 
 void MainWindow::onToggleFullScreen(bool checked)
 {
+    m_startFullScreen = checked;
+
     if (checked) {
         // --- GA NAAR GEMAXIMALISEERD VENSTER ---
 
@@ -698,16 +755,30 @@ void MainWindow::onToggleFullScreen(bool checked)
 
         // Maximaliseer het venster
         showMaximized();
+        updateFullScreenWallpaper();
+        m_wallpaperLabel->show(); // <-- TOON DE WALLPAPER
+        m_screenWidget->setFullScreenMode(true); // <-- ZET SCREENWIDGET TRANSPARANT
     } else {
         // --- TERUG NAAR NORMAAL VENSTER ---
 
         // Herstel normale venstermodus
         showNormal();
 
+        m_wallpaperLabel->hide(); // <-- VERBERG DE WALLPAPER
+        m_screenWidget->setFullScreenMode(false); // <-- ZET SCREENWIDGET OPAAK
         // Pas de vaste grootte opnieuw toe
         this->setFixedWidth(770);
         this->setFixedHeight(700);
     }
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    // Zorg dat de wallpaper-label altijd de grootte van het hoofdvenster heeft
+    if (m_wallpaperLabel) {
+        m_wallpaperLabel->setGeometry(this->rect());
+    }
+    QMainWindow::resizeEvent(event);
 }
 
 void MainWindow::onOpenJoypadMapper()
@@ -817,6 +888,8 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
     // 5) Status + bewaren
     if (m_sysLabel) m_sysLabel->setText(m_machineType ? "ADAM" : "COLECO");
     saveSettings();
+
+    updateFullScreenWallpaper();
 
     // --- UI UPDATE VOOR MEDIA ---
     bool isAdam = (m_machineType == 1);
@@ -1250,6 +1323,11 @@ void MainWindow::moveEvent(QMoveEvent *event)
 {
     // Roep altijd eerst de basis-implementatie aan
     QMainWindow::moveEvent(event);
+
+    // Alleen positioneren als we NIET gemaximaliseerd zijn
+    if (isMaximized()) {
+        return;
+    }
 
     // Roep onze helper aan om de debugger mee te schuiven
     positionDebugger();
@@ -1794,3 +1872,33 @@ void MainWindow::positionPrinter()
     // Eenvoudig: alleen X bijwerken (rechts blijven “plakken”)
     w->move(pos);
 }
+
+void MainWindow::updateFullScreenWallpaper()
+{
+    if (!m_wallpaperLabel) return;
+
+    QString wallpaperPath;
+
+    // m_machineType == 1 is ADAM
+    if (m_machineType == 1) {
+        wallpaperPath = ":/images/images/wallpaper_adamp.png";
+    }
+    // m_machineType == 0 is Coleco
+    else {
+        wallpaperPath = ":/images/images/wallpaper_coleco.png";
+    }
+
+    QPixmap newWallpaper(wallpaperPath);
+
+    // Fallback voor als de afbeelding niet geladen kan worden
+    if (newWallpaper.isNull()) {
+        qWarning() << "Kan wallpaper niet laden:" << wallpaperPath;
+        m_wallpaperLabel->clear();
+        m_wallpaperLabel->setStyleSheet("background-color: black;");
+    } else {
+        m_wallpaperLabel->setStyleSheet(""); // Verwijder eerdere stijl
+        m_wallpaperLabel->setPixmap(newWallpaper);
+    }
+}
+
+
