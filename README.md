@@ -29,6 +29,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 - 🖨️ **Print to txt and pdf support (with smartwritter some issues)
 - 🎨 **Pixel sharp,smooth and EPX interpolation
 - 🖥️ **Full screen option with buildin bezels 
+- ✒️ **LOAD & SAVE on your media!
 
 ## 💡Info
 - You need the free community QT Creator to build the project.
