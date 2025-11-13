@@ -12,7 +12,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ## 💾 Downloads
 
-[![release](https://img.shields.io/badge/Latest%20release-windows64-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.1.1025/Setup_ADAM_EMU_0.1.1025.exe)
+[![release](https://img.shields.io/badge/Latest%20release-windows32-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.1.1025/Setup_ADAM_EMU_0.1.1025.exe)
 ![Current Release](https://img.shields.io/badge/Version-V0.1.1025-blue)
 ![Total Downloads](https://img.shields.io/github/downloads/dvdh1961/ADAMP/total.svg)
 
