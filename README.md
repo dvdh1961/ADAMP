@@ -30,13 +30,13 @@ It serves as a central platform for integrating a wide range of hardware-related
 - 🎨 **Pixel sharp,smooth and EPX interpolation
 - 🖥️ **Full screen option with buildin bezels 
 - ✒️ **LOAD & SAVE on your media!
-
+- 💾 **Save / Load Game State**
+- 
 ## 💡Info
 - You need the free community QT Creator to build the project.
 
 ## 🚧 ToDo
 
-- 💾 **Save / Load Game State**
 - 🕹️ Hardware integration with ADAM+ console (connecting Hardware, Cartridges,Keyboard,Joypads,...)
 
 ## ADAM+ The Emulated Computer Entertainment System
