@@ -1,5 +1,5 @@
-/* EmulTwo  - A Windows Colecovision emulator.
- * Copyright (C) 2018-2019 Alekmaul
+/* ADAMP_EMU  - A Windows Colecovision emulator.
+ * Copyright (C) 2025 DannyVdH
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
- *
+ * Based on   PCB emulation (C) AlekMaul 2014-2023
  * sn76489.h
  *
  */

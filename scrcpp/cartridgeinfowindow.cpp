@@ -58,29 +58,60 @@ void CartridgeInfoDialog::setupUi()
     rightLayout->addWidget(footprintLabel);
     rightLayout->addWidget(m_scrollArea, 1);
 
+
     // --- Knoppen ---
-    QPushButton *refreshButton = new QPushButton(tr("Refresh"), this);
-    QPushButton *closeButton = new QPushButton(tr("OK"), this); // Dit is de 'OK' knop
+    // Laad de iconen EN de pixmaps (om de grootte te lezen)
+    QIcon refreshIcon(":/images/images/REFRESH.png");
+    QIcon closeIcon(":/images/images/CLOSE.png");
+    QPixmap refreshPixmap(":/images/images/REFRESH.png");
+    QPixmap closePixmap(":/images/images/CLOSE.png");
+
+    // Optionele check
+    if (refreshIcon.isNull()) { qWarning() << "CartridgeInfoDialog: Kon REFRESH.png niet laden."; }
+    if (closeIcon.isNull()) { qWarning() << "CartridgeInfoDialog: Kon CLOSE.png niet laden."; }
+
+    // Krijg de 'originele' groottes
+    QSize refreshSize = refreshPixmap.size();
+    QSize closeSize = closePixmap.size();
+
+    // 1. Maak de 'Refresh' knop (met OK.png)
+    QPushButton *refreshButton = new QPushButton(this);
+    refreshButton->setIcon(refreshIcon);
+    refreshButton->setIconSize(refreshSize);
+    refreshButton->setFixedSize(refreshSize);
+    refreshButton->setText("");
+    refreshButton->setFlat(true);
+    refreshButton->setStyleSheet(
+        "QPushButton { border: none; background: transparent; }"
+        "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }"
+        );
+
+    // 2. Maak de 'Close' knop (met CANCEL.png)
+    QPushButton *closeButton = new QPushButton(this);
+    closeButton->setIcon(closeIcon);
+    closeButton->setIconSize(closeSize);
+    closeButton->setFixedSize(closeSize);
+    closeButton->setText("");
+    closeButton->setFlat(true);
+    closeButton->setStyleSheet(
+        "QPushButton { border: none; background: transparent; }"
+        "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }"
+        );
+
+    // Connecteer de signalen
     connect(refreshButton, &QPushButton::clicked, this, &CartridgeInfoDialog::refreshData);
     connect(closeButton, &QPushButton::clicked, this, &QDialog::close);
 
     // --- Radiobuttons & Knoppen Layout ---
-    //m_emptyFF = new QRadioButton(tr("Empty=Green"), this);
-    //m_empty00 = new QRadioButton(tr("Empty=Black"), this);
-    //m_emptyFF->setChecked(true);
-    //m_emptyGroup = new QButtonGroup(this);
-    //m_emptyGroup->addButton(m_emptyFF);
-    //m_emptyGroup->addButton(m_empty00);
-
     QHBoxLayout *radioAndButtonLayout = new QHBoxLayout();
     radioAndButtonLayout->addWidget(m_emptyFF);
     radioAndButtonLayout->addWidget(m_empty00);
+
+    radioAndButtonLayout->addStretch();
+
     // Voeg de knoppen hier direct toe
     radioAndButtonLayout->addWidget(refreshButton);
     radioAndButtonLayout->addWidget(closeButton);
-    // --- AANGEPAST ---
-    // Verplaats de stretch naar het einde
-    //radioAndButtonLayout->addStretch(); // <--- STRETCH (duwt alles naar links)
 
     rightLayout->addLayout(radioAndButtonLayout);
 
@@ -139,7 +170,7 @@ void CartridgeInfoDialog::showProfile()
         html += QString("<div %1>Cartridge Identifier</div>").arg(titleStyle);
 
         // Check of er een ROM geladen is
-        if (emul2 == nullptr || emul2->romCartridgeType == ROMCARTRIDGENONE) {
+        if (emulator == nullptr || emulator->romCartridgeType == ROMCARTRIDGENONE) {
             html += QString("<p %1>No ROM loaded.</p>").arg(bodyStyle);
             m_memoEdit->setHtml(html + "</body>"); // Sluit de body-tag af en zet de HTML
             return;
@@ -147,7 +178,7 @@ void CartridgeInfoDialog::showProfile()
 
         // Info lijnen (platte tekst)
         // We gebruiken .toHtmlEscaped() om ervoor te zorgen dat eventuele speciale tekens in de naam correct worden weergegeven.
-        html += QString("<p %1>%2</p>").arg(bodyStyle).arg(QString("Name: %1").arg(emul2->currentrom).toHtmlEscaped());
+        html += QString("<p %1>%2</p>").arg(bodyStyle).arg(QString("Name: %1").arg(emulator->currentrom).toHtmlEscaped());
 
         BYTE b0 = coleco_getbyte(0x8000);
         BYTE b1 = coleco_getbyte(0x8001);
@@ -158,7 +189,7 @@ void CartridgeInfoDialog::showProfile()
             headerType = "Header Type: Game (0xAA55)";
         else if (b0 == 0x55 && b1 == 0xAA)
             headerType = "Header Type: Test (0x55AA)";
-        else if (emul2->romCartridgeType == ROMCARTRIDGEMEGA)
+        else if (emulator->romCartridgeType == ROMCARTRIDGEMEGA)
             headerType = QString("Header Type: MegaCart (0x%1)").arg(b0 + b1 * 256, 4, 16, QChar('0')).toUpper();
         else
             headerType = "Header Type: Invalid (InsertCartridge message)";
@@ -176,9 +207,9 @@ void CartridgeInfoDialog::showProfile()
 
         // Backup Type
         QString backupType = "No Backup SRAM/EEPROM";
-        if (emul2->typebackup == EEP24C08) backupType = "256-byte EEPROM";
-        else if (emul2->typebackup == EEP24C256) backupType = "32kB EEPROM";
-        else if (emul2->typebackup == EEPSRAM) backupType = "2kB SRAM";
+        if (emulator->typebackup == EEP24C08) backupType = "256-byte EEPROM";
+        else if (emulator->typebackup == EEP24C256) backupType = "32kB EEPROM";
+        else if (emulator->typebackup == EEPSRAM) backupType = "2kB SRAM";
         html += QString("<p %1>%2</p>").arg(bodyStyle).arg(backupType);
 
 
@@ -262,7 +293,7 @@ void CartridgeInfoDialog::showBanks()
     }
     // --- EINDE AANPASSING ---
 
-    if (emul2 == nullptr || emul2->romCartridgeType == ROMCARTRIDGENONE) {
+    if (emulator == nullptr || emulator->romCartridgeType == ROMCARTRIDGENONE) {
         layout->addWidget(new QLabel(tr("Geen ROM geladen."), this), 0, 0);
         layout->setRowStretch(1, 1); // Zorg dat de melding bovenaan blijft
         layout->setColumnStretch(1, 1); // Zorg dat de melding links blijft

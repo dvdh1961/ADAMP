@@ -130,6 +130,7 @@ extern unsigned char cpu_readport(unsigned int port);
 extern void cpu_writeport(unsigned int port, unsigned char value);
 extern unsigned int cpu_readport16(unsigned int port);
 extern void cpu_writeport16(unsigned int port, unsigned int value);
+extern void DebugUpdate(void);
 
 #define INLINE
 //static __inline__

@@ -5,10 +5,13 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
-#include <QDialogButtonBox>
+#include <QDialogButtonBox> // <-- Blijft staan, maar wordt niet meer gebruikt in buildUi
 #include <QKeyEvent>
 #include <QSettings>
 #include <QComboBox>
+#include <QIcon>     // <-- NIEUW
+#include <QPixmap>   // <-- NIEUW
+#include <QDebug>    // <-- NIEUW (voor qWarning)
 
 // kleine util
 static QString vkPretty(int vk) {
@@ -52,10 +55,64 @@ void JoypadWindow::buildUi()
     m_tabs->addTab(m_p1.page, "Player 1");
     m_tabs->addTab(m_p2.page, "Player 2");
 
-    auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    connect(bb, &QDialogButtonBox::accepted, this, &JoypadWindow::onAccept);
-    connect(bb, &QDialogButtonBox::rejected, this, &JoypadWindow::reject);
-    v->addWidget(bb);
+    // ==========================================================
+    // --- VERVANGEN SECTIE: DIALOGBUTTONBOX -> IMAGE BUTTONS ---
+    // ==========================================================
+
+    // 1. Laad de iconen en pixmaps
+    QIcon okIcon(":/images/images/OK.png");
+    QIcon cancelIcon(":/images/images/CANCEL.png");
+    QPixmap okPixmap(":/images/images/OK.png");
+    QPixmap cancelPixmap(":/images/images/CANCEL.png");
+
+    // Optionele check
+    if (okIcon.isNull()) { qWarning() << "JoypadWindow: Kon OK.png niet laden."; }
+    if (cancelIcon.isNull()) { qWarning() << "JoypadWindow: Kon CANCEL.png niet laden."; }
+
+    // 2. Definieer de stijl
+    QString buttonStyle =
+        "QPushButton { border: none; background: transparent; }"
+        "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }";
+
+    // 3. Maak de OK-knop
+    QPushButton* okButton = new QPushButton(this);
+    okButton->setIcon(okIcon);
+    okButton->setIconSize(okPixmap.size());
+    okButton->setFixedSize(okPixmap.size());
+    okButton->setText("");
+    okButton->setFlat(true);
+    okButton->setStyleSheet(buttonStyle);
+
+    // 4. Maak de Cancel-knop
+    QPushButton* cancelButton = new QPushButton(this);
+    cancelButton->setIcon(cancelIcon);
+    cancelButton->setIconSize(cancelPixmap.size());
+    cancelButton->setFixedSize(cancelPixmap.size());
+    cancelButton->setText("");
+    cancelButton->setFlat(true);
+    cancelButton->setStyleSheet(buttonStyle);
+
+    // 5. Maak de knoppenbalk-layout (rechts uitgelijnd)
+    QHBoxLayout *buttonLayout = new QHBoxLayout();
+    buttonLayout->addStretch();
+    buttonLayout->addWidget(okButton);
+    buttonLayout->addWidget(cancelButton);
+
+    // 6. Koppel de signalen (onAccept voor OK, reject voor Cancel)
+    connect(okButton, &QPushButton::clicked, this, &JoypadWindow::onAccept);
+    connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
+
+    // 7. Voeg de knoppenbalk-layout toe aan de hoofdlayout 'v'
+    v->addLayout(buttonLayout);
+
+    // --- OUDE CODE (VERWIJDERD) ---
+    // auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    // connect(bb, &QDialogButtonBox::accepted, this, &JoypadWindow::onAccept);
+    // connect(bb, &QDialogButtonBox::rejected, this, &JoypadWindow::reject);
+    // v->addWidget(bb);
+    // ==========================================================
+    // --- EINDE VERVANGEN SECTIE ---
+    // ==========================================================
 }
 
 void JoypadWindow::buildPlayerPage(PlayerUI& ui, const QString& title)

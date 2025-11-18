@@ -20,7 +20,6 @@
 #include <QTextStream>
 
 // Standaard C-headers (die hadden we al)
-#include <stdio.h>
 #include <time.h>
 
 

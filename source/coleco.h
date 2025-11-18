@@ -1,5 +1,5 @@
-/* EmulTwo  - A Windows ColecoVision emulator.
- * Copyright (C) 2014-2023 Alekmaul
+/* ADAMP_EMU  - A Windows ColecoVision emulator.
+ * Copyright (C) 2025 DannyVdH
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,6 +15,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
+ * Based on   PCB emulation (C) AlekMaul 2014-2023
  * coleco.h
  *
  */
@@ -34,6 +35,10 @@
 
 #define MAX_DISKS     4       /* Maximal number of disks     */
 #define MAX_TAPES     4       /* Maximal number of tapes     */
+
+#define MAX_BREAKPOINTS 100
+extern int breakpoints[MAX_BREAKPOINTS];
+extern int breakpoint_count;
 
 // F18A specific resolutions
 #define TVW_F18A 336
@@ -112,9 +117,6 @@ extern void coleco_hardreset(void);
 extern void coleco_setupsgm(void);
 extern void Printer(BYTE V);
 
-extern BYTE coleco_savestate(char *filename);
-extern BYTE coleco_loadstate(char *filename);
-
 extern void coleco_set_machine_type(int isAdam);
 
 #ifdef __cplusplus
@@ -126,6 +128,10 @@ int  coleco_save_disk(int drive, const char *filename);
 int  coleco_save_tape(int drive, const char *filename);
 void coleco_eject_disk(int drive);
 void coleco_eject_tape(int drive);
+BYTE coleco_savestate(char *filename);
+BYTE coleco_loadstate(char *filename);
+
+void coleco_clear_debug_flags(void);
 }
 #else
 extern void RenderCalcPalette(BYTE *cv_palette_out, int nbcolors);

@@ -12,9 +12,9 @@ typedef uint32_t DWORD;
 #define MAX_TAPES     4       /* Maximal number of tapes     */
 
 // Forward declare globale emulatorstruct
-// Jij hebt emul2 als pointer naar TEmul2Form in coleco.cpp, dus:
-struct TEmul2Form;
-extern TEmul2Form *emul2;
+// Jij hebt emulator als pointer naar TAdamP in coleco.cpp, dus:
+struct TAdamP;
+extern TAdamP *emulator;
 
 // Cartridge load result codes (pas aan als jouw defines anders zijn)
 #define ROM_LOAD_PASS      1
@@ -139,15 +139,15 @@ extern BYTE ReadPCB(unsigned int Address);
 extern void WritePCB(unsigned int Address, BYTE Data);
 //extern BYTE *PCBTable; // pointer/array in jouw code
 
-// VRAM timing fix vars (je hebt tms struct / emul2->F18A etc.)
+// VRAM timing fix vars (je hebt tms struct / emulator->F18A etc.)
 struct TmsState {
     int ScanLines;
 };
 extern struct TmsState tms;
 
-// emul2 fields we depend on
+// emulator fields we depend on
 // (pas types aan als ze anders zijn in jouw struct)
-struct TEmul2Form {
+struct TAdamP {
     int currentMachineType;   // MACHINECOLECO/MACHINEADAM
     int SGM;                  // bool-ish
     int F18A;                 // bool-ish

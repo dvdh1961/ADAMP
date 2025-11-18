@@ -1,9 +1,18 @@
 #include "disasm_bridge.h"
 #include "coleco.h"
 #include <QString>
+#include <QVector>
+
+// Deze zijn nodig voor de bridge-logica
+#include "debuggerwindow.h" // Heeft de C++ klasse definitie
+#include "emu.h"            // Heeft de 'emulator' globale struct
+#include <QMetaObject>
 
 #define B(x) QString("%1").arg((x),2,16,QChar('0')).toUpper()
 #define W(x) QString("%1").arg((x),4,16,QChar('0')).toUpper()
+
+// Deze pointer "houdt" de C++ debugger vast voor de C-functies
+//static DebuggerWindow* g_debugger = nullptr;
 
 static QString disasm_cb(unsigned short addr,int &oplen);
 static QString disasm_ed(unsigned short addr,int &oplen);
@@ -506,3 +515,83 @@ static QString disasm_ddfd(unsigned short addr,int &oplen,bool iy)
         return QString("DB $%1,$%2").arg(iy?"FD":"DD").arg(B(op1));
     }
 }
+
+// ============================================================
+// --- IMPLEMENTATIE VAN DE BREAKPOINT VERWERKING ---
+// ============================================================
+
+/**
+ * @brief Wordt aangeroepen vanuit C++ (bv. main.cpp) om de C++ Debugger
+ * instantie op te slaan in een static pointer.
+ */
+// void debug_register_debugger(void* debugger_instance)
+// {
+//     g_debugger = static_cast<DebuggerWindow*>(debugger_instance);
+//     if (g_debugger) {
+//         qDebug() << "Debugger registered to bridge.";
+//     } else {
+//         qDebug() << "Debugger unregistered from bridge.";
+//     }
+// }
+
+// /**
+//  * @brief Wordt aangeroepen vanuit de C-core (via DebugUpdate) om de C++
+//  * debugger te vragen of de huidige PC een breakpoint raakt.
+//  */
+// extern "C" int debug_check_breakpoint(unsigned short pc)
+// {
+//     // Als de C++ debugger niet geregistreerd is, doe niets.
+//     if (!g_debugger) {
+//         return 0; // 0 = geen hit
+//     }
+
+//     // Roep de C++ member functie aan
+//     // Deze C++ functie is verantwoordelijk voor het zetten van emulator->stop
+//     if (g_debugger->checkHitBreakpoint(pc)) {
+//         return 1; // 1 = HIT
+//     }
+
+//     return 0; // 0 = geen hit
+// }
+
+void debug_sync_breakpoints(ColecoController* controller, const QStringList &list)
+{
+    if (!controller) return;
+
+    // 1. Parse de QStringList naar een C-compatibele lijst (QVector<int>)
+    //    Dit gebeurt op de GUI-thread.
+    QVector<int> bp_list;
+    for (const QString &s : list) {
+        // Parse "EXE BBA3"
+        if (s.startsWith("EXE ")) {
+            bool ok;
+            int addr = s.mid(4).toInt(&ok, 16);
+            if (ok) {
+                bp_list.append(addr);
+            }
+        }
+        // TODO: Parse hier de andere types (REG, MEM, WR...)
+    }
+
+    // 2. Stuur deze C-lijst naar de emulator-thread via een QueuedConnection.
+    //    De lambda-functie wordt uitgevoerd op de emulator-thread.
+    QMetaObject::invokeMethod((QObject*)controller, [bp_list]() {
+
+        // --- DEZE CODE DRAAIT VEILIG OP DE EMU-THREAD ---
+        // (De Z80-loop is gepauzeerd terwijl dit blokje draait)
+
+        qDebug() << "[EmuThread] Synchroniseer C-breakpoint array...";
+        breakpoint_count = 0;
+        for (int addr : bp_list) {
+            if (breakpoint_count < MAX_BREAKPOINTS) {
+                breakpoints[breakpoint_count] = addr;
+                breakpoint_count++;
+            } else {
+                break; // Array is vol
+            }
+        }
+        qDebug() << "[EmuThread] Synchronisatie voltooid." << breakpoint_count << "breakpoints ingesteld.";
+
+    }, Qt::QueuedConnection);
+}
+

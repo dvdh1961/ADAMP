@@ -1,5 +1,5 @@
-/* EmulTwo  - A Windows Colecovision emulator.
- * Copyright (C) 2014-2023 Alekmaul
+/* ADAMP_EMU  - A Windows Colecovision emulator.
+ * Copyright (C) 2025 DannyVdH
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,8 +21,6 @@
  * Based on   SN76489 emulation by Maxim in 2001 and 2002
  *  converted from hisoriginal Delphi implementation
 */
-
-#include <limits.h>
 
 #include "sn76489.h"
 

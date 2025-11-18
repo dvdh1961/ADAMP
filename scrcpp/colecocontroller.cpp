@@ -6,6 +6,7 @@
 #include <cstring>
 #include <QAudioFormat>
 #include <QTimer>
+#include <QFile>
 
 // ==== C++-core header ====
 #include "coleco.h"
@@ -18,10 +19,10 @@ extern "C" {
 #include "video_bridge.h"
 #include "adamnet.h"
 #include "ay8910.h"
+#include "z80.h"
 }
 
 #include <stdint.h>
-#include "printwindow.h"
 
 extern "C" void adamnet_inject_scancode(uint8_t sc);
 extern "C" void adamnet_block_ascii_fkeys(int count);
@@ -37,11 +38,11 @@ void RenderCalcPalette(unsigned char *dst, int nbcolors);
 
 ColecoController::ColecoController(QObject *parent)
     : QObject(parent)
-    , m_realFrames(0)
     , m_paused(false)
     , m_audioSink(nullptr)
     , m_audioDevice(nullptr)
     , m_running(false)
+    , m_realFrames(0)
     , m_fpsFrameCount(0) // <-- Init
 {
     // Alloceer buffers groot genoeg voor PAL (882 samples)
@@ -69,262 +70,66 @@ extern "C" {
 extern tTMS9981A tms;
 }
 
-// Houd bij welke FG-toets(en) ingedrukt is/zijn.
-// bit0 = FG1 (0x54), bit1 = FG2 (0x55), ... bit5 = FG6 (0x59)
-
 /*
-case '!':
-    Modifier = 0X02; // modifier key
-    Key0 = 0x1E; // !
-    break;
-case '@':
-    Modifier = 0X02;
-    Key0 = 0x1F; // @
-    break;
-case '#':
-    Modifier = 0X02;
-    Key0 = 0x20; // #
-    break;
-case '$':
-    Modifier = 0X02;
-    Key0 = 0x21; // $
-    break;
-case '%':
-    Modifier = 0X02;
-    Key0 = 0x22; // %
-    break;
-case '_':
-    Modifier = 0X02;
-    Key0 = 0x2D; // _
-    break;
-case '&':
-    Modifier = 0X02;
-    Key0 = 0x24; // &
-    break;
-case '*':
-    Modifier = 0X02;
-    Key0 = 0x25; // *
-    break;
-case '(':
-    Modifier = 0X02;
-    Key0 = 0x26; // (
-    break;
-case ')':
-    Modifier = 0X02;
-    Key0 = 0x27; // )
-    break;
-case '0':
-    Modifier = 0X00;
-    Key0 = 0x27; // 0
-    break;
-case '`':
-    Modifier = 0X00;
-    Key0 = 0x35; // `
-    break;
-case '-':
-    Modifier = 0X00;
-    Key0 = 0x2D; // -
-    break;
-case '=':
-    Modifier = 0X02;
-    Key0 = 0x2E; // =
-    break;
-case '+':
-    Modifier = 0X00;
-    Key0 = 0x2E; // +
-    break;
-
-case '{':
-    Modifier = 0X00;
-    Key0 = 0x2F; // {
-    break;
-case '[':
-    Modifier = 0X02;
-    Key0 = 0x2F; // [
-    break;
-case '}':
-    Modifier = 0X00;
-    Key0 = 0x30; // }
-    break;
-case ']':
-    Modifier = 0X02;
-    Key0 = 0x30; // ]
-    break;
-case ':':
-    Modifier = 0X00;
-    Key0 = 0x33; // :
-    break;
-case ';':
-    Modifier = 0X02;
-    Key0 = 0x33; // ;
-    break;
-case '"':
-    Modifier = 0X00;
-    Key0 = 0x34; // "
-    break;
-case '\'':
-    Modifier = 0X02;
-    Key0 = 0x34; // '
-    break;
-
-case '<':
-    Modifier = 0X00;
-    Key0 = 0x36; // <
-    break;
-case ',':
-    Modifier = 0X02;
-    Key0 = 0x36; // ,
-    break;
-case '>':
-    Modifier = 0X00;
-    Key0 = 0x37; // >
-    break;
-case '.':
-    Modifier = 0X02;
-    Key0 = 0x37; // .
-    break;
-case '?':
-    Modifier = 0X00;
-    Key0 = 0x38; // ?
-    break;
-case '/':
-    Modifier = 0X02;
-    Key0 = 0x38; // /
-    break;
-
-case '|':
-    Modifier = 0X00;
-    Key0 = 0x31; // |
-    break;
-case '\\':
-    Modifier = 0X02;
-    Key0 = 0x31; // '\'
-    break;
-
-case ' ':
-    Modifier = 0X00;
-    Key0 = SPACE; // space
-    break;
-case 13 :
-    Modifier = 0X00;
-    Key0 = ENTER; // enter
-    break;
-case 8  :
-    Modifier = 0X00;
-    Key0 = 0x2A;  // backspace
-    break;
-case 151:
-    Modifier = 0X00;
-    Key0 = 0x63;  // delete
-    break;
-case 148:
-    Modifier = 0X00;
-    Key0 = 0x49;  // insert
-    break;
-case 9  :
-case 0xB9 :
-    Modifier = 0X00;
-    Key0 = 0x2B;  // tab
-    break;
-case 1  :
-    Modifier = 0X01;
-    Key0 = 0x04;  // control a
-    break;
-case 3  :
-    Modifier = 0X01;
-    Key0 = 0x06;  // control c
-    break;
-case 4  :
-    Modifier = 0X01;
-    Key0 = 0x07;  // control d
-    break;
-case 22 :
-    Modifier = 0X01;
-    Key0 = 0x19;  // control v
-    break;
-
-case 129:
-    Modifier = 0X00;
-    Key0 = F1; 		// F1
-    break;
-case 130:
-    Modifier = 0X00;
-    Key0 = F2; 		// F2
-    break;
-case 131:
-    Modifier = 0X00;
-    Key0 = F3; 		// F3
-    break;
-case 132:
-    Modifier = 0X00;
-    Key0 = F4; 		// F4
-    break;
-case 133:
-    Modifier = 0X00;
-    Key0 = F5; 		// F5
-    break;
-case 134:
-    Modifier = 0X00;
-    Key0 = F6; 		// F6
-    break;
-
-case 137: // with shift
-    Modifier = 0X00;
-    Key0 = F7; 		// F7
-    break;
-case 138:
-    Modifier = 0X00;
-    Key0 = F8; 		// F8
-    break;
-case 139:
-    Modifier = 0X00;
-    Key0 = F9; 		// F9
-    break;
-case 140:
-    Modifier = 0X00;
+    Key0 = 0x1E;        // !
+    Key0 = 0x1F;        // @
+    Key0 = 0x20;        // #
+    Key0 = 0x21;        // $
+    Key0 = 0x22;        // %
+    Key0 = 0x2D;        // _
+    Key0 = 0x24;        // &
+    Key0 = 0x25;        // *
+    Key0 = 0x26;        // (
+    Key0 = 0x27;        // )
+    Key0 = F1;          // F1
+    Key0 = F2;          // F2
+    Key0 = F3;          // F3
+    Key0 = F4;          // F4
+    Key0 = F5;          // F5
+    Key0 = F6;          // F6
+    Key0 = F7;          // F7
+    Key0 = F8;          // F8
+    Key0 = F9;          // F9
     Key0 = F10; 		// F10
-    break;
-case 141:
-    Modifier = 0X00;
     Key0 = F11; 		// F11
-    break;
-case 142:
-    Modifier = 0X00;
     Key0 = F12; 		// F12
-    break;
+    Key0 = HOME;        // home
+    Key0 = LEFT;        // left arrow
+    Key0 = UP;          // up arrow
+    Key0 = RIGHT;       // right arrow
+    Key0 = DOWN;        // down arrow
 
-case 27:
-    Modifier = 0X00;
-    Key0 = F12;    // escape (F12)
-    break;
+    Key0 = 0x27;        // 0
+    Key0 = 0x35;        // `
+    Key0 = 0x2D;        // -
+    Key0 = 0x2E;        // +
+    Key0 = 0x2F;        // {
+    Key0 = 0x30;        // }
+    Key0 = 0x33;        // :
+    Key0 = 0x34;        // "
+    Key0 = 0x36;        // <
+    Key0 = 0x37;        // >
+    Key0 = 0x38;        // ?
+    Key0 = 0x31;        // '\'
+    Key0 = SPACE;       // space
+    Key0 = 0x2A;        // backspace
+    Key0 = 0x49;        // insert
+    Key0 = 0x2B;        // tab
 
-case 128:
-    Modifier = 0X00;
-    Key0 = HOME; // home
-    break;
-case 163:
-    Modifier = 0X00;
-    Key0 = LEFT; // left arrow
-    break;
-case 160:
-    Modifier = 0X00;
-    Key0 = UP;   // up arrow
-    break;
-case 161:
-    Modifier = 0X00;
-    Key0 = RIGHT;// right arrow
-    break;
-case 162:
-    Modifier = 0X00;
-    Key0 = DOWN; // down arrow
-    break;
+    Key0 = 0x04;        // control a
+    Key0 = 0x06;        // control c
+    Key0 = 0x07;        // control d
+    Key0 = 0x19;        // control v
+
+    Key0 = 0x2E;        // =
+    Key0 = 0x2F;        // [
+    Key0 = 0x30;        // ]
+    Key0 = 0x33;        // ;
+    Key0 = 0x34;        // '
+    Key0 = 0x36;        // ,
+    Key0 = 0x37;        // .
+    Key0 = 0x38;        // /
 */
-
-
-
-
-
-
 
 static uint8_t s_fgActiveMask = 0;
 
@@ -376,7 +181,7 @@ void ColecoController::setMachineType(int machineType)
     coleco_set_machine_type(isAdam);
 
     if (isAdam) {
-        emul2->SGM = 0;
+        emulator->SGM = 0;
         emit sgmStatusChanged(false); // Zorg dat de UI ook klopt
     }
 
@@ -506,6 +311,7 @@ void ColecoController::startEmulation()
         }
         if (!m_running || m_paused) continue;
 
+
         // === D: Emuleer 1 frame (audio per scanline) ===
         int samples_generated = 0;
         tstate_accumulator = 0.0;
@@ -523,11 +329,23 @@ void ColecoController::startEmulation()
                 }
                 tstate_accumulator -= m_tstates_per_sample;
             }
+
+            // Optioneel: stop scanlines verder verwerken zodra de core gestopt is
+            if (emulator->stop) {
+                break;
+            }
         }
 
-        int samples_to_fill = m_AudioChunkFrames - samples_generated;
-        if (samples_to_fill > 0 && samples_to_fill < m_AudioChunkFrames) {
-            PsgBridge::getSamples(&m_monoBuf[samples_generated], samples_to_fill);
+        if (emulator->stop) {
+            // CPU staat stil door breakpoint → audio stil maken
+            for (int i = 0; i < m_AudioChunkFrames; ++i) {
+                m_monoBuf[i] = 0;
+            }
+        } else {
+            int samples_to_fill = m_AudioChunkFrames - samples_generated;
+            if (samples_to_fill > 0 && samples_to_fill < m_AudioChunkFrames) {
+                PsgBridge::getSamples(&m_monoBuf[samples_generated], samples_to_fill);
+            }
         }
 
         // === E: Converteer naar Stereo ===
@@ -585,6 +403,13 @@ void ColecoController::resumeEmulation()
 {
     if (!m_paused) return;
     qDebug() << "[Controller] resumeEmulation()";
+
+    // <<< BELANGRIJK: breakpoint-stop resetten >>>
+    if (emulator) {
+        emulator->stop = 0;
+        emulator->singlestep = 0;  // voor later als je echte single-step maakt
+    }
+
     m_paused = false;
     if (m_audioSink) m_audioSink->resume();
     emit emuPausedChanged(false);
@@ -607,6 +432,12 @@ void ColecoController::stepOnce()
     }
     qDebug() << "[Controller] stepOnce()";
 
+    // <<< ZEKER MAKEN DAT DE CPU NIET MEER “STOP” IS >>>
+    if (emulator) {
+        emulator->stop = 0;
+        // eventueel: emulator->singlestep = 1; als je dat wilt gaan gebruiken
+    }
+
     for (int i = 0; i < tms.ScanLines; ++i) {
         coleco_do_scanline();
     }
@@ -618,6 +449,45 @@ void ColecoController::stepOnce()
     }
 
     QCoreApplication::processEvents();
+}
+
+void ColecoController::sstepOnce()
+{
+    // Zorg dat we in pauze-modus zitten zodat audio/video niet doorlopen
+    if (!m_paused) {
+        pauseEmulation();
+    }
+
+    qDebug() << "[Controller] sstepOnce()";
+
+    if (!emulator) {
+        return;
+    }
+
+    // Als de core in 'stop' stond na een breakpoint, even vrijgeven
+    emulator->stop = 0;
+
+    // *** HIER GEBEURT DE ECHTE SINGLE STEP ***
+    // Dit voert exact één Z80-opcode uit en zet PC/regs verder.
+    z80_do_opcode();
+
+    // Debugger UI de kans geven om te updaten
+    QCoreApplication::processEvents();
+}
+
+void ColecoController::gotoAddr(uint16_t newPC)
+{
+    if (!emulator) return;
+
+    pauseEmulation();  // altijd veilig
+
+    // Z80 heeft PC in de union:
+    // Z80.pc.w.l = low byte
+    // Z80.pc.w.h = high byte
+    Z80.pc.w.l = newPC & 0xFF;
+    Z80.pc.w.h = (newPC >> 8) & 0xFF;
+
+    qDebug() << "[Controller] PC manually set to" << Qt::hex << newPC;
 }
 
 void ColecoController::loadRom(const QString &romPath)
@@ -655,7 +525,7 @@ void ColecoController::resethMachine()
 void ColecoController::setSGMEnabled(bool enabled)
 {
     // NEW: SGM bestaat niet in ADAM
-    if (emul2->currentMachineType == MACHINEADAM)
+    if (emulator->currentMachineType == MACHINEADAM)
     {
         // ADAM Modus
         if (enabled) { // Probeer SGM AAN te zetten in ADAM mode
@@ -666,13 +536,13 @@ void ColecoController::setSGMEnabled(bool enabled)
 
         // Forceer SGM 'uit' in de core, maar doe GEEN port writes
         qDebug() << "[COLECO] SGM set = false (Forced for ADAM)";
-        emul2->SGM = 0;
+        emulator->SGM = 0;
     }
     else
     {
         // COLECO Modus
         qDebug() << "[COLECO] SGM set =" << enabled;
-        emul2->SGM = enabled ? 1 : 0;
+        emulator->SGM = enabled ? 1 : 0;
 
         // Deze port writes zijn VEILIG in Coleco-modus
         if (enabled) {
@@ -774,3 +644,44 @@ void ColecoController::ejectTape(int drive)
     emit tapeStatusChanged(drive, ""); // Stuur lege string
 }
 
+void ColecoController::saveState(const QString& filePath)
+{
+    if (filePath.isEmpty()) {
+        qWarning() << "[Controller] saveState(): leeg pad, niets te doen";
+        return;
+    }
+
+    QByteArray cPath = QFile::encodeName(filePath);
+    qDebug() << "[Controller] saveState ->" << filePath;
+
+    BYTE ok = coleco_savestate(cPath.data());
+    if (!ok) {
+        qWarning() << "[Controller] saveState FAILED for" << filePath;
+    } else {
+        qDebug() << "[Controller] saveState OK";
+    }
+}
+
+void ColecoController::loadState(const QString& filePath)
+{
+    if (filePath.isEmpty()) {
+        qWarning() << "[Controller] loadState(): leeg pad, niets te doen";
+        return;
+    }
+
+    QByteArray cPath = QFile::encodeName(filePath);
+    qDebug() << "[Controller] loadState <-" << filePath;
+
+    BYTE ok = coleco_loadstate(cPath.data());
+    if (!ok) {
+        qWarning() << "[Controller] loadState FAILED for" << filePath;
+        return;
+    }
+
+    // Na een loadstate audio/PSG opnieuw syncen
+    PsgBridge::init(m_Clock, m_SampleRate);
+    PsgBridge::reset(m_Clock, m_SampleRate);
+    ay8910_init(m_Clock, m_SampleRate);
+
+    qDebug() << "[Controller] loadState OK";
+}

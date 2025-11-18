@@ -9,7 +9,7 @@
 #include <QToolButton>
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDialogButtonBox>
+#include <QDialogButtonBox> // Deze is nu niet meer nodig, maar mag blijven staan
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QGridLayout>
@@ -21,6 +21,14 @@
 #include <QToolTip>
 #include <QButtonGroup>
 #include <QScreen>
+
+// --- VOEG DEZE INCLUDES TOE ---
+#include <QPushButton>
+#include <QIcon>
+#include <QPixmap>
+#include <QDebug> // Voor qWarning
+// --- EINDE TOEVOEGING ---
+
 
 static QWidget* makeHSpacer(QWidget* parent=nullptr) {
     auto *w = new QWidget(parent);
@@ -245,7 +253,7 @@ void HardwareWindow::buildUi()
     // m_cboFrequency    = new QComboBox(m_groupEmu);
     // m_cboFrequency->addItems({"NTSC (60 Hz)", "PAL (50 Hz)"});
 
-     auto *layEmu = new QVBoxLayout;
+    auto *layEmu = new QVBoxLayout;
     // layEmu->addWidget(m_chkStartDebug);
     // layEmu->addWidget(m_chkNoDelayBios);
     // layEmu->addWidget(m_chkPatchBiosPAL);
@@ -257,13 +265,47 @@ void HardwareWindow::buildUi()
     // freqLayout->addStretch(1);
     // layEmu->addLayout(freqLayout);
 
-     layEmu->addStretch(1); // trek inhoud omhoog
-     m_groupEmu->setLayout(layEmu);
+    layEmu->addStretch(1); // trek inhoud omhoog
+    m_groupEmu->setLayout(layEmu);
 
     // === Buttons ============================================================
-    m_btnBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    connect(m_btnBox, &QDialogButtonBox::accepted, this, &HardwareWindow::onOk);
-    connect(m_btnBox, &QDialogButtonBox::rejected, this, &HardwareWindow::reject);
+    // m_btnBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this); // <-- VERWIJDERD
+    // connect(m_btnBox, &QDialogButtonBox::accepted, this, &HardwareWindow::onOk); // <-- VERWIJDERD
+    // connect(m_btnBox, &QDialogButtonBox::rejected, this, &HardwareWindow::reject); // <-- VERWIJDERD
+
+    // +++ NIEUW BLOK VOOR IMAGE KNOPPEN +++
+    QIcon okIcon(":/images/images/OK.png");
+    QIcon cancelIcon(":/images/images/CANCEL.png");
+    QPixmap okPixmap(":/images/images/OK.png");
+    QPixmap cancelPixmap(":/images/images/CANCEL.png");
+
+    if (okIcon.isNull()) { qWarning() << "HardwareWindow: Kon OK.png niet laden."; }
+    if (cancelIcon.isNull()) { qWarning() << "HardwareWindow: Kon CANCEL.png niet laden."; }
+
+    QString buttonStyle =
+        "QPushButton { border: none; background: transparent; }"
+        "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }";
+
+    QPushButton* okButton = new QPushButton(this);
+    okButton->setIcon(okIcon);
+    okButton->setIconSize(okPixmap.size());
+    okButton->setFixedSize(okPixmap.size());
+    okButton->setText("");
+    okButton->setFlat(true);
+    okButton->setStyleSheet(buttonStyle);
+
+    QPushButton* cancelButton = new QPushButton(this);
+    cancelButton->setIcon(cancelIcon);
+    cancelButton->setIconSize(cancelPixmap.size());
+    cancelButton->setFixedSize(cancelPixmap.size());
+    cancelButton->setText("");
+    cancelButton->setFlat(true);
+    cancelButton->setStyleSheet(buttonStyle);
+
+    connect(okButton, &QPushButton::clicked, this, &HardwareWindow::onOk);
+    connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
+    // +++ EINDE NIEUW BLOK +++
+
 
     // === Hoofd-layout: linker/rechter kolom + knoppen rechts ===============
     auto *colLeft  = new QVBoxLayout;   // Machine / Controllers / Hardware
@@ -282,7 +324,9 @@ void HardwareWindow::buildUi()
 
     auto *btnLayout = new QHBoxLayout;
     btnLayout->addStretch(1);          // duwt knoppen naar rechts
-    btnLayout->addWidget(m_btnBox);
+    // btnLayout->addWidget(m_btnBox); // <-- VERWIJDERD
+    btnLayout->addWidget(okButton);     // <-- TOEGEVOEGD
+    btnLayout->addWidget(cancelButton); // <-- TOEGEVOEGD
 
     auto *mainLayout = new QVBoxLayout(this);
     mainLayout->addLayout(rowMain, 1);

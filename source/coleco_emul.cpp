@@ -78,7 +78,7 @@ void coleco_setupsgm(void)
     //
     // Daarna stelt hij MemoryMap[0..3] opnieuw in.
 
-    if (!emul2->SGM) {
+    if (!emulator->SGM) {
         // SGM niet geactiveerd in UI -> standaard Coleco gedrag
         sgm_enable = 0;
         sgm_low_addr = 0x2000;
@@ -129,7 +129,7 @@ void coleco_setupsgm(void)
 BYTE coleco_ReadByte(unsigned int Address)
 {
     // ADAM memory special cases
-    if (emul2->currentMachineType == MACHINEADAM)
+    if (emulator->currentMachineType == MACHINEADAM)
     {
         // Adam RAM hi/lo windows + AdamNet I/O
         // Dit moet overeenkomen met jouw bestaande Adam code.
@@ -173,7 +173,7 @@ void coleco_WriteByte(unsigned int Address, int Data)
     lastMemoryWriteValueHi  = (unsigned int)Data;
 
     // ADAM?
-    if (emul2->currentMachineType == MACHINEADAM)
+    if (emulator->currentMachineType == MACHINEADAM)
     {
         // Schrijf alleen als RAM gemapt is in deze bank
         // (dit komt uit je huidige coleco_WriteByte Adam-blok)
@@ -207,7 +207,7 @@ void coleco_WriteByte(unsigned int Address, int Data)
     if (Address >= 0xE000)
     {
         // SRAM cart writes (EEPSRAM): E000-E7FF map naar E800-EFFF
-        if (emul2->typebackup == EEPSRAM)
+        if (emulator->typebackup == EEPSRAM)
         {
             if (Address >= 0xE000 && Address < 0xE800) {
                 RAM_Memory[Address + 0x800] = (BYTE)Data;
@@ -220,7 +220,7 @@ void coleco_WriteByte(unsigned int Address, int Data)
         }
 
         // I2C EEPROM bitbang (EEP24C08 / EEP24C256)
-        if (emul2->typebackup == EEP24C08 || emul2->typebackup == EEP24C256)
+        if (emulator->typebackup == EEP24C08 || emulator->typebackup == EEP24C256)
         {
             switch (Address & 0xFFF0)
             {
@@ -270,11 +270,11 @@ void coleco_writeport(int Address, int Data, int *Cycles)
 
         if (!(Address & 0x01)) {
             // data port
-            if (emul2->F18A) f18a_writedata(Data);
+            if (emulator->F18A) f18a_writedata(Data);
             else             tms9918_writedata(Data);
         } else {
             // control port
-            BYTE irq_status = emul2->F18A ? f18a_writectrl(Data)
+            BYTE irq_status = emulator->F18A ? f18a_writectrl(Data)
                                           : tms9918_writectrl(Data);
 
             // Jij hebt waarschijnlijk een z80_set_irq_line variant.
@@ -291,9 +291,9 @@ void coleco_writeport(int Address, int Data, int *Cycles)
 
     case 0x40:
         // ADAM printer OR Super Game Module extra ports
-        if ((emul2->currentMachineType == MACHINEADAM) && (Address == 0x40)) {
+        if ((emulator->currentMachineType == MACHINEADAM) && (Address == 0x40)) {
             Printer((BYTE)Data);
-        } else if (emul2->SGM) {
+        } else if (emulator->SGM) {
             if (Address == 0x53) {
                 coleco_port53 = (BYTE)Data;
                 coleco_setupsgm();
@@ -310,15 +310,15 @@ void coleco_writeport(int Address, int Data, int *Cycles)
     case 0x20:
     {
         bool resetadam = (
-            emul2->currentMachineType == MACHINEADAM &&
+            emulator->currentMachineType == MACHINEADAM &&
             ((coleco_port20 & 1) && ((Data & 1) == 0))
             );
 
         coleco_port20 = (BYTE)Data;
 
-        if (emul2->currentMachineType == MACHINEADAM) {
+        if (emulator->currentMachineType == MACHINEADAM) {
             coleco_setadammemory(resetadam);
-        } else if (emul2->SGM) {
+        } else if (emulator->SGM) {
             coleco_setupsgm();
         }
         break;
@@ -326,9 +326,9 @@ void coleco_writeport(int Address, int Data, int *Cycles)
 
     case 0x60:
         coleco_port60 = (BYTE)Data;
-        if (emul2->currentMachineType == MACHINEADAM) {
+        if (emulator->currentMachineType == MACHINEADAM) {
             coleco_setadammemory(false);
-        } else if (emul2->SGM) {
+        } else if (emulator->SGM) {
             coleco_setupsgm();
         }
         break;
@@ -346,14 +346,14 @@ BYTE ReadInputPort(int Address)
     case 0xA0:
         // VDP read (data or status)
         if (Address & 0x01) {
-            BYTE st = emul2->F18A ? f18a_readctrl() : tms9918_readctrl();
+            BYTE st = emulator->F18A ? f18a_readctrl() : tms9918_readctrl();
             // Sommige emu’s doen hier z80_set_irq_line(CLEAR_LINE) na status read.
             // Als jouw games blijven hangen in een waits-for-vblank loop,
             // dan moet je hier irq lijn droppen.
             z80_set_irq_line(0 /*CLEAR_LINE*/);
             return st;
         } else {
-            return emul2->F18A ? f18a_readdata() : tms9918_readdata();
+            return emulator->F18A ? f18a_readdata() : tms9918_readdata();
         }
 
     case 0xE0:
@@ -372,10 +372,10 @@ BYTE ReadInputPort(int Address)
 
     case 0x40:
         // SGM AY8910 read/status port 0x52
-        if (emul2->SGM && (Address == 0x52)) {
+        if (emulator->SGM && (Address == 0x52)) {
             return (BYTE)ay8910_read();
         }
-        if ((emul2->currentMachineType == MACHINEADAM) && (Address == 0x40)) {
+        if ((emulator->currentMachineType == MACHINEADAM) && (Address == 0x40)) {
             // ADAM printer status
             return 0xFF;
         }
@@ -404,14 +404,14 @@ void coleco_reset(void)
     MemoryMap[7] = RAM_Memory + 0xE000;
 
     // 2. Copy Coleco BIOS into RAM_Memory and map it at 0x0000 (unless ADAM)
-    if (emul2->currentMachineType != MACHINEADAM)
+    if (emulator->currentMachineType != MACHINEADAM)
     {
         // BIOS naar werkbuffer
         std::memcpy(RAM_Memory + 0x0000, BIOS_Memory, 0x2000);
 
         // PAL timing hack / bios delay hack
-        RAM_Memory[0x0069] = emul2->hackbiospal ? 50 : 60;
-        if (emul2->biosnodelay) {
+        RAM_Memory[0x0069] = emulator->hackbiospal ? 50 : 60;
+        if (emulator->biosnodelay) {
             RAM_Memory[0x1F51] = 0x00;
             RAM_Memory[0x1F52] = 0x00;
             RAM_Memory[0x1F53] = 0x00;
@@ -436,7 +436,7 @@ void coleco_reset(void)
 
     coleco_port53   = 0x00;
     coleco_port20   = 0x00;
-    coleco_port60   = (emul2->currentMachineType == MACHINEADAM) ? 0x00 : 0x0F;
+    coleco_port60   = (emulator->currentMachineType == MACHINEADAM) ? 0x00 : 0x0F;
 
     coleco_megacart = 0x00; // kan door loadcart overschreven zijn voor >32K
     coleco_megabank = 0x00;
@@ -449,20 +449,20 @@ void coleco_reset(void)
     adam_128k_mode   = 0;
 
     // Adam geheugen fix toepassen als je in Adam mode zit
-    if (emul2->currentMachineType == MACHINEADAM) {
+    if (emulator->currentMachineType == MACHINEADAM) {
         coleco_setadammemory(false);
-    } else if (emul2->SGM) {
+    } else if (emulator->SGM) {
         coleco_setupsgm();
     }
 
     // 5. Video chip reset
-    if (emul2->F18A) f18a_reset();
+    if (emulator->F18A) f18a_reset();
     else             tms9918_reset();
 
     // scanline config
-    tms.ScanLines = emul2->NTSC ? /*TMS9918_LINES*/ 262 : /*TMS9929_LINES*/ 313; // pas aan naar jouw defines
+    tms.ScanLines = emulator->NTSC ? /*TMS9918_LINES*/ 262 : /*TMS9929_LINES*/ 313; // pas aan naar jouw defines
     // F18A 30-row mode extra lijnen
-    // if (emul2->F18A && f18a.Row30) tms.ScanLines += 27;
+    // if (emulator->F18A && f18a.Row30) tms.ScanLines += 27;
     // TODO: gebruik jouw eigen F18A row30 flag als je die hebt.
 
     // 6. Audio init? (je had coleco_audio_init() in jouw versie)
@@ -504,8 +504,8 @@ BYTE coleco_loadcart(char *filename)
     }
     std::fclose(fRomfile);
 
-    emul2->cardsize = (DWORD)size;
-    emul2->cardcrc  = 0; // TODO: implement CRC32Block later // CRC32Block(ROM_Memory, emul2->cardsize); // TODO: declare CRC32Block somewhere
+    emulator->cardsize = (DWORD)size;
+    emulator->cardcrc  = 0; // TODO: implement CRC32Block later // CRC32Block(ROM_Memory, emulator->cardsize); // TODO: declare CRC32Block somewhere
 
     coleco_megacart = 0x00;
     coleco_megasize = 2;
@@ -551,7 +551,7 @@ BYTE coleco_loadcart(char *filename)
         megacart_bankswitch(0);
     }
 
-    emul2->romCartridgeType = coleco_megacart ? ROMCARTRIDGEMEGA : ROMCARTRIDGESTD;
+    emulator->romCartridgeType = coleco_megacart ? ROMCARTRIDGEMEGA : ROMCARTRIDGESTD;
 
     return ROM_LOAD_PASS;
 }

@@ -227,7 +227,7 @@ void PatternWindow::closeEvent(QCloseEvent *event)
 
 void PatternWindow::showEvent(QShowEvent *event)
 {
-    if (!emul2) return;
+    if (!emulator) return;
     onRefresh();
     event->accept();
 }
@@ -269,7 +269,7 @@ void PatternWindow::onCopyToClipboard()
 
 void PatternWindow::onRefresh()
 {
-    if (!emul2) return;
+    if (!emulator) return;
     updateOfsText();
     updateChanges();
     smallUpdateChanges();
@@ -379,7 +379,7 @@ void PatternWindow::createTilePixmap()
     QImage tileImage(8, 8, QImage::Format_RGB32);
 
     // Safety check
-    if (!emul2) {
+    if (!emulator) {
         m_tilePixmap = QPixmap::fromImage(tileImage);
         return;
     }
@@ -474,7 +474,7 @@ void PatternWindow::createVramPixmap(QPaintDevice *device, int w, int h)
     QImage image(ROWCNT, LINECNT, QImage::Format_RGB32);
     image.fill(Qt::black); // Start met een zwarte achtergrond
 
-    if (!emul2) {
+    if (!emulator) {
         QPainter painter(device);
         painter.drawPixmap(0, 0, w, h, QPixmap::fromImage(image));
         return;
@@ -546,7 +546,7 @@ void PatternWindow::createVramPixmap(QPaintDevice *device, int w, int h)
         QColor defaultColor(Qt::darkGray);
 
         // Haal de boundaries *eenmaal* op
-        if (!emul2) { // Veiligheidscheck als de emulator nog niet draait
+        if (!emulator) { // Veiligheidscheck als de emulator nog niet draait
             painter.setPen(defaultColor);
             for(int i = 0; i <= 32; ++i) {
                 int x = (i * step); int y = (i * step);

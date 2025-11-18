@@ -1,9 +1,11 @@
 #include "mainwindow.h"
+#include "customfiledialog.h"
 #include "colecocontroller.h"
 #include "screenwidget.h"
 #include "inputwidget.h"
 #include "logwindow.h"
 #include "debuggerwindow.h"
+#include "disasm_bridge.h"
 #include "cartridgeinfowindow.h"
 #include "ntablewindow.h"
 #include "patternwindow.h"
@@ -49,6 +51,7 @@
 #include <QPixmap>
 #include <QFont>
 #include <QMap>
+#include <QDateTime>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -83,7 +86,7 @@ MainWindow::MainWindow(QWidget *parent)
     QCoreApplication::setOrganizationName("DVdHSoft");
     QCoreApplication::setApplicationName("ADAMP_EMU");
 
-    setWindowTitle("ADAM+ ColecoVision Emulator");
+    setWindowTitle("ADAM+ Emulator");
 
     // --- VOEG DE WALLPAPER-LABEL TOE ---
     m_wallpaperLabel = new QLabel(this);
@@ -117,12 +120,6 @@ MainWindow::MainWindow(QWidget *parent)
     //    en lijn het onderaan en in het midden uit.
     mainLayout->addWidget(m_logoLabel, 0, Qt::AlignHCenter | Qt::AlignBottom);
 
-
-
-    // mainLayout->addWidget(m_screenWidget, 0, Qt::AlignHCenter);
-    // mainLayout->addStretch(1);
-    // mainLayout->addWidget(m_logoLabel, 0, Qt::AlignHCenter);
-    // mainLayout->addStretch(1);
 
     m_ntableWindow = new NTableWindow(this);
     m_ntableWindow->hide(); // Zorg dat het verborgen start
@@ -212,7 +209,13 @@ MainWindow::MainWindow(QWidget *parent)
             Qt::QueuedConnection);
 
     // 2. debugger
+    // --- Koppel de controller aan de debugger ---
     m_debugWin = new DebuggerWindow(this);
+    m_debugWin->setController(m_colecoController);
+
+    // Zorg ervoor dat de debugger het pad kent *direct na het aanmaken*.
+    m_debugWin->setBreakpointPath(m_breakpointPath);
+
     connect(m_debugWin, &DebuggerWindow::requestStepCPU,
             this,       &MainWindow::onDebuggerStepCPU);
     connect(m_debugWin, &DebuggerWindow::requestRunCPU,
@@ -255,6 +258,13 @@ MainWindow::~MainWindow()
     }
 }
 
+
+// (We gebruiken deze nu niet meer direct, maar het is goed om hem te hebben)
+void MainWindow::setDebugger(DebuggerWindow *debugger)
+{
+    m_debugWin        = debugger;
+}
+
 void MainWindow::onCycleScalingMode()
 {
     // 0=Sharp, 1=Smooth, 2=EPX
@@ -282,20 +292,78 @@ void MainWindow::onCycleScalingMode()
     saveSettings();
 }
 
+// In mainwindow.cpp
+
 void MainWindow::onOpenSettings()
 {
     // 1. Laad de huidige instellingen in het dialoogvenster
+    //    We geven nog steeds de (mogelijk relatieve) paden mee
     m_settingsWindow->setRomPath(m_romPath);
     m_settingsWindow->setDiskPath(m_diskPath);
     m_settingsWindow->setTapePath(m_tapePath);
+    m_settingsWindow->setStatePath(m_statePath);
+    m_settingsWindow->setBreakpointPath(m_breakpointPath);
 
     // 2. Toon het dialoogvenster modaal
     if (m_settingsWindow->exec() == QDialog::Accepted) {
-        // 3. Als de gebruiker op OK klikt, haal de waarden op...
-        m_romPath = m_settingsWindow->romPath();
-        m_diskPath = m_settingsWindow->diskPath();
-        m_tapePath = m_settingsWindow->tapePath();
-        // 4. ...en sla ze direct op.
+
+        // 3. Haal de waarden op (dit zijn waarschijnlijk absolute paden
+        //    als de gebruiker een "Browse" knop heeft gebruikt)
+        QString newRomPath = m_settingsWindow->romPath();
+        QString newDiskPath = m_settingsWindow->diskPath();
+        QString newTapePath = m_settingsWindow->tapePath();
+        QString newStatePath = m_settingsWindow->statePath();
+        QString newBreakpointPath = m_settingsWindow->breakpointPath();
+
+        // --- HIER IS DE FIX ---
+        // Converteer deze paden terug naar relatieve paden
+        // (relatief aan de .exe-map) voordat we ze opslaan.
+
+        QDir appDir(QCoreApplication::applicationDirPath());
+
+        // Zorg ervoor dat paden 'schoon' zijn (geen /../ of C://)
+        // en controleer of ze bestaan voordat we ze relativeren.
+        QFileInfo romInfo(newRomPath);
+        if (romInfo.exists() && romInfo.isDir()) {
+            m_romPath = appDir.relativeFilePath(newRomPath);
+        } else {
+            m_romPath = newRomPath; // Behoud de getypte waarde (bv. ".")
+        }
+
+        QFileInfo diskInfo(newDiskPath);
+        if (diskInfo.exists() && diskInfo.isDir()) {
+            m_diskPath = appDir.relativeFilePath(newDiskPath);
+        } else {
+            m_diskPath = newDiskPath;
+        }
+
+        QFileInfo tapeInfo(newTapePath);
+        if (tapeInfo.exists() && tapeInfo.isDir()) {
+            m_tapePath = appDir.relativeFilePath(newTapePath);
+        } else {
+            m_tapePath = newTapePath;
+        }
+
+        QFileInfo stateInfo(newStatePath);
+        if (stateInfo.exists() && stateInfo.isDir()) {
+            m_statePath = appDir.relativeFilePath(newStatePath);
+        } else {
+            m_statePath = newStatePath;
+        }
+
+        QFileInfo bpInfo(newBreakpointPath);
+        if (bpInfo.exists() && bpInfo.isDir()) {
+            m_breakpointPath = appDir.relativeFilePath(newBreakpointPath);
+        } else {
+            m_breakpointPath = newBreakpointPath;
+        }
+
+        // Update de debugger *live* met het nieuwe pad
+        if (m_debugWin) {
+            m_debugWin->setBreakpointPath(m_breakpointPath);
+        }
+
+        // 4. Sla de (nu relatieve) paden op.
         saveSettings();
     }
 }
@@ -307,6 +375,9 @@ void MainWindow::loadSettings()
     m_romPath      = settings.value("romPath", ".").toString();
     m_diskPath     = settings.value("diskPath", ".").toString();
     m_tapePath     = settings.value("tapePath", ".").toString();
+    m_statePath    = settings.value("statePath", ".").toString();
+    m_breakpointPath = settings.value("breakpointPath", "media/breakpoints").toString();
+
     m_paletteIndex = settings.value("video/palette", 0).toInt();
     m_machineType  = settings.value("machine/type", 0).toInt();
 
@@ -329,7 +400,8 @@ void MainWindow::loadSettings()
              << "f18a="     << m_f18aEnabled
              << "steer="    << m_ctrlSteering
              << "roller="   << m_ctrlRoller
-             << "saction="  << m_ctrlSuperAction;
+             << "saction="  << m_ctrlSuperAction
+             << "bppath="   << m_breakpointPath;
 }
 
 // Slaat de instellingen op
@@ -339,6 +411,8 @@ void MainWindow::saveSettings()
     settings.setValue("romPath",        m_romPath);
     settings.setValue("diskPath",       m_diskPath);
     settings.setValue("tapePath",       m_tapePath);
+    settings.setValue("statePath",      m_statePath);
+    settings.setValue("breakpointPath", m_breakpointPath);
     settings.setValue("video/palette",  m_paletteIndex);
     settings.setValue("machine/type",   m_machineType);
 
@@ -361,7 +435,8 @@ void MainWindow::saveSettings()
              << "f18a="    << m_f18aEnabled
              << "steer="   << m_ctrlSteering
              << "roller="  << m_ctrlRoller
-             << "saction=" << m_ctrlSuperAction;
+             << "saction=" << m_ctrlSuperAction
+             << "bppath="  << m_breakpointPath;
 }
 
 void MainWindow::setUpLogWindow()
@@ -552,9 +627,24 @@ void MainWindow::setupUI()
     m_tapeMenu->setEnabled(false);
 
     fileMenu->addSeparator();
+
+    // --- SAVE/LOAD STATE ---
+    m_actSaveState = new QAction(tr("Save State..."), this);
+    connect(m_actSaveState, &QAction::triggered, this, &MainWindow::onSaveState);
+    fileMenu->addAction(m_actSaveState);
+
+    m_actLoadState = new QAction(tr("Load State..."), this);
+    connect(m_actLoadState, &QAction::triggered, this, &MainWindow::onLoadState);
+    fileMenu->addAction(m_actLoadState);
+
+    m_actSaveState->setEnabled(false);
+    m_actLoadState->setEnabled(false);
+
+    fileMenu->addSeparator();
     m_settingsAction = new QAction(tr("Settings..."), this);
     connect(m_settingsAction, &QAction::triggered, this, &MainWindow::onOpenSettings);
     fileMenu->addAction(m_settingsAction);
+
     fileMenu->addSeparator();
     m_quitAction = new QAction(tr("&Exit"), this);
     m_quitAction->setShortcut(QKeySequence::Quit);
@@ -564,12 +654,11 @@ void MainWindow::setupUI()
     // Debug
     QMenu* debugMenu = menuBar()->addMenu(tr("Debug"));
     m_startAction = new QAction(tr("Run/Stop"), this);
-    //m_startAction->setShortcut(Qt::Key_F9);
+    m_startAction->setShortcut(Qt::Key_F11);
     connect(m_startAction, &QAction::triggered, this, &MainWindow::onRunStop);
     debugMenu->addAction(m_startAction);
     debugMenu->addSeparator();
     m_resetAction = new QAction(tr("&Soft Reset"), this);
-    m_resetAction->setShortcut(Qt::Key_F11);
     connect(m_resetAction, &QAction::triggered, this, &MainWindow::onReset);
     debugMenu->addAction(m_resetAction);
     m_hresetAction = new QAction(tr("&Hard Reset"), this);
@@ -665,8 +754,14 @@ void MainWindow::setupUI()
     m_actFullScreen->setCheckable(true);
     m_actFullScreen->setChecked(m_startFullScreen);
     // Use Alt+Enter as a common shortcut
-    //m_actFullScreen->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Enter));
+    m_actFullScreen->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F));
     optionsMenu->addAction(m_actFullScreen);
+
+    optionsMenu->addSeparator();
+    m_actSaveScreenshot = new QAction(tr("Save Screenshot..."), this);
+    optionsMenu->addAction(m_actSaveScreenshot);
+    m_actSaveScreenshot->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
+
     optionsMenu->addSeparator();
     m_actHardware = new QAction(tr("Hardware..."), this);
     optionsMenu->addAction(m_actHardware);
@@ -740,6 +835,67 @@ void MainWindow::setupUI()
 
     connect(m_actFullScreen, &QAction::toggled, this, &MainWindow::onToggleFullScreen);
     connect(m_actToggleSmoothing, &QAction::triggered, this, &MainWindow::onCycleScalingMode);
+
+    connect(m_actSaveScreenshot, &QAction::triggered,this, &MainWindow::onSaveScreenshot);
+
+    onEmuPausedChanged(false); // of true, afhankelijk van je default
+}
+
+void MainWindow::onSaveScreenshot()
+{
+    if (!m_screenWidget)
+        return;
+
+    // 1. Neem screenshot van alleen het spel-scherm
+    QPixmap pix = m_screenWidget->grab();
+    if (pix.isNull()) {
+        qWarning() << "Screenshot: nothing to grab from m_screenWidget";
+        return;
+    }
+
+    // 2. Standaard map: <appdir>/screenshots
+    QString absoluteShotPath =
+        QDir::cleanPath(QCoreApplication::applicationDirPath() + "/screenshots");
+
+    QDir shotDir(absoluteShotPath);
+    if (!shotDir.exists())
+        shotDir.mkpath(".");
+
+    // 3. Basisnaam: huidige ROM of "screen"
+    QString baseName = m_currentRomName;
+    if (baseName.isEmpty())
+        baseName = "screen";
+
+    QFileInfo fi(baseName);
+    baseName = fi.completeBaseName();
+
+    // 4. Timestamp toevoegen
+    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+
+    // 5. Volledige default bestandsnaam
+    QString defaultFile = shotDir.filePath(baseName + "_" + timestamp + ".png");
+
+    // 6. Dialoog tonen (zelfde CustomFileDialog als bij Save State)
+    const QString filePath = CustomFileDialog::getSaveFileName(
+        this,
+        tr("Save Screenshot"),
+        defaultFile,
+        tr("PNG Image (*.png);;All Files (*.*)")
+        );
+
+    if (filePath.isEmpty())
+        return;
+
+    QString finalPath = filePath;
+    if (!finalPath.endsWith(".png", Qt::CaseInsensitive))
+        finalPath += ".png";
+
+    // 7. Bewaren
+    if (!pix.save(finalPath, "PNG")) {
+        qWarning() << "Failed to save screenshot to" << finalPath;
+    } else {
+        qDebug() << "Screenshot saved to" << finalPath;
+    }
 }
 
 void MainWindow::onToggleFullScreen(bool checked)
@@ -967,9 +1123,36 @@ void MainWindow::showAboutDialog()
     textLabel->setFont(font);
     layout->addWidget(textLabel);
 
-    // OK-knop
-    QPushButton *okButton = new QPushButton("OK", &aboutDialog);
-    okButton->setFixedWidth(80);
+    // // OK-knop
+    // QPushButton *okButton = new QPushButton("OK", &aboutDialog);
+    // okButton->setFixedWidth(80);
+    // connect(okButton, &QPushButton::clicked, &aboutDialog, &QDialog::accept);
+    // layout->addWidget(okButton, 0, Qt::AlignCenter);
+
+    // 1. Laad icoon en pixmap
+    QIcon okIcon(":/images/images/OK.png");
+    QPixmap okPixmap(":/images/images/OK.png");
+    if (okIcon.isNull()) {
+        qWarning() << "AboutDialog: Kon OK.png niet laden.";
+    }
+
+    // 2. Maak de knop aan
+    QPushButton *okButton = new QPushButton(&aboutDialog);
+
+    // 3. Pas de stijl toe
+    okButton->setIcon(okIcon);
+    okButton->setIconSize(okPixmap.size());
+    okButton->setFixedSize(okPixmap.size()); // Grootte van de PNG
+    okButton->setText("");
+    okButton->setFlat(true);
+    okButton->setStyleSheet(
+        "QPushButton { border: none; background: transparent; }"
+        "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }"
+        );
+    // ==================================================
+    // --- EINDE AANPASSING ---
+    // ==================================================
+
     connect(okButton, &QPushButton::clicked, &aboutDialog, &QDialog::accept);
     layout->addWidget(okButton, 0, Qt::AlignCenter);
 
@@ -1175,7 +1358,8 @@ void MainWindow::onOpenRom()
     // Gebruik het opgeslagen (relatieve) pad om een absoluut pad te maken
     QString absoluteRomPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_romPath);
 
-    const QString filePath = QFileDialog::getOpenFileName(
+    const QString filePath = CustomFileDialog::getOpenFileName(
+    //const QString filePath = QFileDialog::getOpenFileName(
         this,
         tr("Open ColecoVision ROM"),
         absoluteRomPath, // Start in de laatst gebruikte map
@@ -1340,6 +1524,9 @@ void MainWindow::onDebuggerStepCPU()
     m_isPaused = true;
     QMetaObject::invokeMethod(m_colecoController, "pauseEmulation",
                               Qt::QueuedConnection);
+
+    coleco_clear_debug_flags();
+
     QMetaObject::invokeMethod(m_colecoController, "stepOnce",
                               Qt::QueuedConnection);
     if (m_debugWin && m_debugWin->isVisible()) {
@@ -1350,6 +1537,7 @@ void MainWindow::onDebuggerStepCPU()
 void MainWindow::onDebuggerRunCPU()
 {
     m_isPaused = false;
+    coleco_clear_debug_flags();
     QMetaObject::invokeMethod(m_colecoController, "resumeEmulation",
                               Qt::QueuedConnection);
 }
@@ -1419,6 +1607,11 @@ void MainWindow::onEmuPausedChanged(bool paused)
             m_startAction->setText(tr("Stop emulation"));
         }
     }
+
+    // Save/Load State alleen als de emu 'STOP' is
+    const bool allowState = paused;
+    if (m_actSaveState) m_actSaveState->setEnabled(allowState);
+    if (m_actLoadState) m_actLoadState->setEnabled(true);
 }
 
 void MainWindow::onStartActionTriggered()
@@ -1603,7 +1796,8 @@ void MainWindow::onLoadDiskA()
 
     QString absoluteDiskPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_diskPath);
 
-    const QString filePath = QFileDialog::getOpenFileName(
+    const QString filePath = CustomFileDialog::getOpenFileName(
+    //const QString filePath = QFileDialog::getOpenFileName(
         this,
         tr("Open ADAM Disk Image"),
         absoluteDiskPath, // Start in de Disk-map
@@ -1630,7 +1824,8 @@ void MainWindow::onLoadDiskB()
 
     QString absoluteDiskPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_diskPath);
 
-    const QString filePath = QFileDialog::getOpenFileName(
+    const QString filePath = CustomFileDialog::getOpenFileName(
+    //const QString filePath = QFileDialog::getOpenFileName(
         this,
         tr("Open ADAM Disk Image"),
         absoluteDiskPath, // Start in de Disk-map
@@ -1657,7 +1852,8 @@ void MainWindow::onLoadTape()
 
     QString absoluteTapePath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_tapePath);
 
-    const QString filePath = QFileDialog::getOpenFileName(
+    const QString filePath = CustomFileDialog::getOpenFileName(
+    //const QString filePath = QFileDialog::getOpenFileName(
         this,
         tr("Open ADAM Tape Image"),
         absoluteTapePath, // Start in de Tape-map
@@ -1901,4 +2097,96 @@ void MainWindow::updateFullScreenWallpaper()
     }
 }
 
+// In mainwindow.cpp
 
+void MainWindow::onSaveState()
+{
+    // 1. Gebruik HETZELFDE pad-logica als in onLoadState
+    // m_statePath is relatief (bv "."), dus maak het absoluut
+    QString absoluteStatePath =
+        QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_statePath);
+
+    // 2. Gebruik dit absolute pad voor QDir
+    QDir statesDir(absoluteStatePath);
+    if (!statesDir.exists())
+        statesDir.mkpath("."); // Maak de map aan (op het absolute pad)
+
+    // Bestandsnaam gebaseerd op huidige ROM
+    QString baseName = m_currentRomName;
+    if (baseName.isEmpty())
+        baseName = "state";
+
+    // Haal alleen de naam zonder extensie eruit
+    QFileInfo fi(baseName);
+    baseName = fi.completeBaseName();
+
+    // 3. Maak het standaard *volledige bestandspad*
+    // Dit is nu een absoluut pad, bv: "/app/pad/states/mijnrom.sta"
+    QString defaultFile = statesDir.filePath(baseName + ".sta");
+
+    // 4. Geef dit volledige bestandspad door.
+    // CustomFileDialog::setInitialDirectory is ontworpen om dit
+    // te splitsen in een map (path) en een bestandsnaam (fileName).
+    const QString filePath = CustomFileDialog::getSaveFileName(
+        this,
+        tr("Save State"),
+        defaultFile, // <-- Dit is nu een correct, absoluut pad
+        tr("State files (*.sta);;All Files (*.*)")
+        );
+
+    if (filePath.isEmpty())
+        return;
+
+    QString finalPath = filePath;
+    if (!finalPath.endsWith(".sta", Qt::CaseInsensitive))
+        finalPath += ".sta";
+
+    // 5) Update m_statePath naar de map van het gekozen bestand (zoals bij ROM/Disk/Tape)
+    QFileInfo outInfo(finalPath);
+    QDir appDir(QCoreApplication::applicationDirPath());
+    m_statePath = appDir.relativeFilePath(outInfo.absolutePath());
+    saveSettings();   // nu wordt je nieuwe state map ook echt bewaard
+
+    // 6) Via de emu-thread laten uitvoeren
+    QMetaObject::invokeMethod(
+        m_colecoController,
+        "saveState",
+        Qt::QueuedConnection,
+        Q_ARG(QString, finalPath)
+        );
+}
+
+
+void MainWindow::onLoadState()
+{
+    // Maak van de (relatieve) statePath een absoluut pad
+    QString absoluteStatePath =
+        QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_statePath);
+
+    QDir statesDir(absoluteStatePath);
+    if (!statesDir.exists())
+        statesDir.mkpath(".");
+
+    const QString filePath = CustomFileDialog::getOpenFileName(
+        this,
+        tr("Load State"),
+        statesDir.absolutePath(),                 // start in statesDir
+        tr("State files (*.sta);;All Files (*.*)")
+        );
+
+    if (filePath.isEmpty())
+        return;
+
+    // Update m_statePath naar de gekozen map
+    QFileInfo inInfo(filePath);
+    QDir appDir(QCoreApplication::applicationDirPath());
+    m_statePath = appDir.relativeFilePath(inInfo.absolutePath());
+    saveSettings(); // optioneel
+
+    QMetaObject::invokeMethod(
+        m_colecoController,
+        "loadState",
+        Qt::QueuedConnection,
+        Q_ARG(QString, filePath)
+        );
+}

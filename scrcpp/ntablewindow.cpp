@@ -392,7 +392,7 @@ void NTableWindow::closeEvent(QCloseEvent *event)
 
 void NTableWindow::showEvent(QShowEvent *event)
 {
-    if (!emul2) { /* ... */ return; }
+    if (!emulator) { /* ... */ return; }
 
     m_namTabVal = coleco_gettmsaddr(CHRMAP, 0, 0);
     m_namTabAddrLabel->setText(QString("$%1").arg(intToHex(m_namTabVal, 4)));
@@ -428,7 +428,7 @@ bool NTableWindow::eventFilter(QObject *watched, QEvent *event)
 void NTableWindow::updatePalette()
 {
     // Veiligheidscheck
-    if (!emul2) return;
+    if (!emulator) return;
 
     for (int i = 0; i < 16; ++i) {
         // We halen de kleur op dezelfde manier op als in createMap/createTile
@@ -472,7 +472,7 @@ void NTableWindow::onCopyToClipboard()
 
 void NTableWindow::onRefresh()
 {
-    if (!emul2) return;
+    if (!emulator) return;
     updateChanges();
     smallUpdateChanges(0);
     updateVdpRegisters();
@@ -758,7 +758,7 @@ void NTableWindow::updateChanges()
 void NTableWindow::updateVdpRegisters()
 {
     // Veiligheidscheck
-    if (!emul2) return;
+    if (!emulator) return;
 
     // --- Update R0 ---
     BYTE R0 = tms.VR[0];

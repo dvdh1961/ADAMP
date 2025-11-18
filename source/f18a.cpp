@@ -1,5 +1,5 @@
-/* EmulTwo  - A Windows ColecoVision emulator.
- * Copyright (C) 2014-2023 Alekmaul
+/* ADAMP_EMU  - A Windows ColecoVision emulator.
+ * Copyright (C) 2025 DannyVdH
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,12 +32,6 @@
 #include "coleco.h"
 #include <cstring>
 #include <time.h>
-
-
-//#include "accdraw_.h"
-//#include "accsound_.h"
-
-//#include "Utils.h"
 
 // Screen handlers and masks for tms.VR table address registers
 // ----------------------------------------------------------------------------------------
@@ -700,8 +694,8 @@ void f18a_setwindowsize(void)
     TVW = (f18a.Mode == F18A_MODE_TEXT_80 ? TVW_F18A*2 : TVW_F18A);
     TVH = (f18a.Row30 ? TVH_F18A : TVH_TMS);
     f18a.WinHeight=(f18a.Row30 ? TVH_ROW30 : TVH_DEF);
-    // TODO: Koppel dit aan Qt-instellingen, niet aan de dummy emul2
-    tms.ScanLines= (emul2->NTSC ? TMS9918_LINES : TMS9929_LINES);
+    // TODO: Koppel dit aan Qt-instellingen, niet aan de dummy emulator
+    tms.ScanLines= (emulator->NTSC ? TMS9918_LINES : TMS9929_LINES);
     tms.ScanLines+=(f18a.Row30 ? 27 : 0);
 
     // Get borders

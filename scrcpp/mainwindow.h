@@ -36,6 +36,7 @@ public:
     ~MainWindow() override;
 
     void appendLog(const QString& line);
+    void setDebugger(DebuggerWindow *debugger);
 
 public slots:
     // menu / UI acties
@@ -70,6 +71,9 @@ public slots:
     void onEmuPausedChanged(bool paused);
     void onStartActionTriggered();
     void onOpenHardware();
+    void onSaveState();
+    void onLoadState();
+    void onSaveScreenshot();
 
 private slots:
     void onLoadDiskA();
@@ -164,6 +168,7 @@ private:
     QAction *m_settingsAction     = nullptr;
     QAction *m_actHardware        = nullptr;
     QAction *m_actJoypadMapper    = nullptr;
+    QAction *m_actSaveScreenshot  = nullptr;
 
     // --- MEDIA ACTIES ---
     QAction *m_loadDiskActionA    = nullptr;
@@ -177,6 +182,9 @@ private:
     QAction* m_actFullScreen      = nullptr;
     QAction* m_actToggleSmoothing = nullptr;
 
+    QAction* m_actSaveState       = nullptr;
+    QAction* m_actLoadState       = nullptr;
+
     // --- MEDIA STATUSBALK LABELS ---
     QLabel *m_diskLabelA          = nullptr;
     QLabel *m_diskLabelB          = nullptr;
@@ -185,7 +193,6 @@ private:
     QLabel *m_sepLabelMedia1b     = nullptr;
     QLabel *m_sepLabelMedia2      = nullptr;
     QLabel* m_wallpaperLabel      = nullptr;
-
     QMenu *m_diskMenuA            = nullptr;
     QMenu *m_diskMenuB            = nullptr;
     QMenu *m_tapeMenu             = nullptr;
@@ -215,6 +222,9 @@ private:
     QString m_romPath;
     QString m_diskPath;
     QString m_tapePath;
+    QString m_statePath;
+    QString m_breakpointPath;
+
     int m_paletteIndex = 0;
     int m_machineType = 0; // 0=Coleco/Phoenix, 1=ADAM
     bool m_sgmEnabled       = false;

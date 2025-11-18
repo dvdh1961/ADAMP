@@ -1,4 +1,3 @@
-// coleco_io.cpp
 #include "keypad.h"
 
 static ColecoStrobe s_strobe = ColecoStrobe::Joystick;

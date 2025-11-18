@@ -67,11 +67,15 @@ public slots:
     void pauseEmulation();
     void resumeEmulation();
     void stepOnce();
+    void sstepOnce();
+    void gotoAddr(uint16_t newPC);
     bool isPaused() const { return m_paused; }
     void loadDisk(int drive, const QString& path);
     void loadTape(int drive, const QString& path);
     void ejectDisk(int drive);
     void ejectTape(int drive);
+    void saveState(const QString& filePath);
+    void loadState(const QString& filePath);
 
 signals:
     // == NOTIFICATIES (verzonden naar UI-thread) ==

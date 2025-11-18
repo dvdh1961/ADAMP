@@ -1,5 +1,5 @@
-/* EmulTwo  - A Windows ColecoVision emulator.
- * Copyright (C) 2014-2023 Alekmaul
+/* ADAMP_EMU  - A Windows ColecoVision emulator.
+ * Copyright (C) 2025 DannyVdH
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@
  */
 //---------------------------------------------------------------------------
 #include <cstdlib>
-#include <vcl.h>
+//#include <vcl.h>
 #pragma hdrstop
 
 #include "f18agpu.h"

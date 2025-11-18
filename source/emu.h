@@ -14,8 +14,8 @@ struct TMenuItem {
     bool Checked;
 };
 
-// Dummy class voor 'emul2'
-class TEmul2Form {
+// Dummy class voor 'emulator'
+class TAdamP {
 public:
     bool NTSC;
     bool PAL;
@@ -38,20 +38,20 @@ public:
     char currentrom[1024]; // Pad naar de huidige ROM
 };
 
-extern TEmul2Form* emul2; // Externe declaratie voor C++
+extern TAdamP* emulator; // Externe declaratie voor C++
 
 #else
 // --- Dit ziet de C COMPILER (voor .c bestanden) ---
 #include <stdint.h>   // C header voor types
 #include <stdbool.h>  // C header voor 'bool'
 
-// Dummy VCL-style menu item
 struct TMenuItem {
     bool Checked;
 };
+struct EmuMachine machine;
 
-// Dummy *struct* voor 'emul2' (C kent geen 'class')
-struct TEmul2Form {
+// Dummy *struct* voor 'emulator' (C kent geen 'class')
+struct TAdamP {
     bool NTSC;
     bool PAL;
     bool F18A;
@@ -73,7 +73,13 @@ struct TEmul2Form {
     char currentrom[1024]; // Pad naar de huidige ROM
 };
 
-extern struct TEmul2Form* emul2; // Externe declaratie voor C
+extern struct TAdamP* emulator; // Externe declaratie voor C
+
+// Dit is onze *enige* instantie van de UI-configuratie struct:
+struct TAdamP g_emulator_instance;
+// Dit is de *pointer* die de hele C-core gebruikt:
+struct TAdamP* emulator = &g_emulator_instance;
+
 
 #endif // __cplusplus
 
