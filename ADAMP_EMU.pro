@@ -11,7 +11,13 @@ TEMPLATE = app
 
 # Externe bibliotheken linken
 LIBS += -lz
+win32 {
 LIBS += -ldsound
+}
+unix {
+LIBS += -lasound
+}
+
 
 # Includepaden
 # We voegen de 'source' map toe zodat de C-bestanden elkaar kunnen vinden
