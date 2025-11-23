@@ -8,7 +8,7 @@ The software has been completely redesigned from the ground up, focusing on stab
 It serves as a central platform for integrating a wide range of hardware-related devices, all developed as part of the broader ADAM+ hardware project.
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_EMU_HARDWARE_SNAP.png)
-
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_EMU_HARDWARE_SNAP2.png)
 
 ## 💾 Downloads
 
