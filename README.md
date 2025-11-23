@@ -20,6 +20,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](https://github.com/dvdh1961/ADAMP/blob/main/LICENSE)
 
 ![Commits](https://img.shields.io/github/commits-since/dvdh1961/ADAMP/latest)
+[![Contributors](https://img.shields.io/github/contributors/dvdh1961/ADAMP)](https://github.com/dvdh1961/ADAMP/graphs/contributors)
 
 ## 🚀 Features
 
