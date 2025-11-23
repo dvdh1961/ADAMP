@@ -12,8 +12,9 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ## 💾 Downloads
 
-[![release](https://img.shields.io/badge/Latest%20release-windows32-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.1.1025/Setup_ADAMP_EMU_0.1.1025.exe)
-![Current Release](https://img.shields.io/badge/Version-V0.1.1025-blue)
+[![release](https://img.shields.io/badge/Latest%20release-windows32-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.2.1125/Setup_ADAMP_EMU_0.2.1125.exe)
+[![release](https://img.shields.io/badge/Latest%20release-linux32-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.2.1125/ADAMP_EMU.AppImage)
+![Current Release](https://img.shields.io/badge/Version-V0.2.1125-blue)
 ![Total Downloads](https://img.shields.io/github/downloads/dvdh1961/ADAMP/total.svg)
 
 ## 🚀 Features
@@ -31,6 +32,12 @@ It serves as a central platform for integrating a wide range of hardware-related
 - 🖥️ **Full screen option with buildin bezels 
 - ✒️ **LOAD & SAVE on your media!
 - 💾 **Save / Load Game State**
+
+Version 0.2.11.25
+- LINUX VERSION x86-64 added
+- Added 4 tapes / 4 disks support
+- Added printer clipboard and removed some bugs with PR#1
+- Updated logging
 
 ## 💡Info
 - You need the free community QT Creator to build the project.
