@@ -24,6 +24,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 ![Stars](https://img.shields.io/github/stars/dvdh1961/ADAMP)
 ![Issues](https://img.shields.io/github/issues/dvdh1961/ADAMP)
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/dvdh1961)](https://github.com/sponsors/dvdh1961)
+[![Donate](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://www.paypal.com/donate?business=dannyvdh@pandora.be)
 
 ## 🚀 Features
 
