@@ -17,7 +17,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 ![Current Release](https://img.shields.io/badge/Version-V0.2.1125-yellow)
 ![Total Downloads](https://img.shields.io/github/downloads/dvdh1961/ADAMP/total.svg)
 [![release](https://img.shields.io/badge/YouTube-red.svg)](https://youtu.be/vobLE2F9Cc0)
-[![license](https://img.shields.io/badge/License-GPL%953.0-orange.svg)](https://github.com/dvdh1961/ADAMP/blob/main/LICENSE)
+[![license](https://img.shields.io/badge/License-GPL%2d3.0-orange.svg)](https://github.com/dvdh1961/ADAMP/blob/main/LICENSE)
 
 ## 🚀 Features
 
