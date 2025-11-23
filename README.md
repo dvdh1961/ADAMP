@@ -23,6 +23,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 [![Contributors](https://img.shields.io/github/contributors/dvdh1961/ADAMP)](https://github.com/dvdh1961/ADAMP/graphs/contributors)
 ![Stars](https://img.shields.io/github/stars/dvdh1961/ADAMP)
 ![Issues](https://img.shields.io/github/issues/dvdh1961/ADAMP)
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/dvdh1961)](https://github.com/sponsors/dvdh1961)
 
 ## 🚀 Features
 
