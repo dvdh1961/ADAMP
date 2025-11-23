@@ -60,8 +60,10 @@ Version 0.2.11.25
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/AdamPpic1.png)
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/AdamPpic2.png)
-![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_PRINTER.mp4)
-
+<video src="https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_PRINTER.mp4" 
+       controls 
+       width="100%">
+</video>
 
 ## Credits
 
