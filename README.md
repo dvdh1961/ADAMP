@@ -58,12 +58,12 @@ Version 0.2.11.25
 
 ## ADAM+ The Emulated Computer Entertainment System
 
-# Lot of tools to examine and learn
+## Lots of tools to examine and learn
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/AdamPpic1.png)
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/AdamPpic2.png)
-# Smartbasic list to Clipboard
+## Smartbasic list to Clipboard
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/Animatie.gif)
-# Debugger breakpoint
+## Debugger breakpoint
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_DEBUG.gif)
 
 ## Credits
