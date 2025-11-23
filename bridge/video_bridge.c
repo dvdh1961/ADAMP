@@ -1,9 +1,22 @@
 #include "video_bridge.h"
 #include <string.h>
+#include <qglobal.h>
+#include <error.h>
 
 uint32_t g_video_frame[VB_WIDTH * VB_HEIGHT];
 volatile int g_video_dirty = 0;
 extern int z80_irq_line;
+
+#if defined(Q_OS_LINUX)
+static inline int memcpy_s(void *dest, size_t dest_sz, const void *src, size_t count) {
+    if (dest == NULL || src == NULL || dest_sz < count) {
+        return EINVAL;  // Invalid argument error
+    }
+    memcpy(dest, src, count);
+    return 0;  // Success
+}
+#endif
+
 
 void vb_present_scanline(int y, const uint32_t *argb32_line)
 {

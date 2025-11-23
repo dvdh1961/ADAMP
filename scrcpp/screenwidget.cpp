@@ -30,56 +30,6 @@ void ScreenWidget::setScalingMode(ScalingMode mode)
     update(); // Forceer repaint
 }
 
-// Dit is een complexe functie.
-// Je kunt deze code als basis gebruiken of een bewezen implementatie
-// uit een andere emulator (zoals ColEm) aanpassen.
-// void ScreenWidget::applyEPX(const QImage& source)
-// {
-//     // Zorg dat de buffer de juiste grootte heeft (2x zo groot)
-//     if (m_epxBuffer.size() != source.size() * 2) {
-//         m_epxBuffer = QImage(source.size() * 2, QImage::Format_RGB32);
-//     }
-
-//     // Bron- en doelpointers (vereist 32-bit/4-byte pixels)
-//     const quint32* src = reinterpret_cast<const quint32*>(source.bits());
-//     quint32* dst = reinterpret_cast<quint32*>(m_epxBuffer.bits());
-
-//     int w = source.width();
-//     int h = source.height();
-//     int dstPitch = m_epxBuffer.bytesPerLine() / 4; // in pixels (quint32)
-
-//     for (int y = 0; y < h; ++y) {
-//         for (int x = 0; x < w; ++x) {
-//             // 1. Haal P en buren op (met grenscontrole)
-//             quint32 P = src[y * w + x];
-//             quint32 A = (y > 0) ? src[(y - 1) * w + x] : P;
-//             quint32 B = (x < w - 1) ? src[y * w + (x + 1)] : P;
-//             quint32 C = (x > 0) ? src[y * w + (x - 1)] : P;
-//             quint32 D = (y < h - 1) ? src[(y + 1) * w + x] : P;
-
-//             // 2. Stel de 2x2 uitvoerpixels (p1, p2, p3, p4) in
-//             quint32 p1 = P, p2 = P, p3 = P, p4 = P;
-
-//             // 3. Pas de EPX-regels toe
-//             if (A == C && A != D && A != B) { p1 = A; p3 = A; }
-//             if (A == B && A != D && A != C) { p1 = A; p2 = A; }
-//             if (D == C && D != A && D != B) { p3 = D; p4 = D; }
-//             if (D == B && D != A && D != C) { p2 = D; p4 = D; }
-
-//             // ... (Er zijn meer regels voor 3+ gelijke buren, etc.) ...
-//             // Een volledige implementatie is complexer dan deze 4 basisregels.
-
-//             // 4. Schrijf naar de 2x2 doelbuffer
-//             int dst_x = x * 2;
-//             int dst_y = y * 2;
-//             dst[dst_y * dstPitch + dst_x]     = p1;
-//             dst[dst_y * dstPitch + (dst_x + 1)] = p2;
-//             dst[(dst_y + 1) * dstPitch + dst_x] = p3;
-//             dst[(dst_y + 1) * dstPitch + (dst_x + 1)] = p4;
-//         }
-//     }
-// }
-
 // Deze functie implementeert het complete Scale2x/EPX (4-regels) algoritme
 void ScreenWidget::applyEPX(const QImage& source)
 {
@@ -167,12 +117,40 @@ QSize ScreenWidget::minimumSizeHint() const {
     return QSize(COLECO_WIDTH, COLECO_HEIGHT);
 }
 
+#if defined(Q_OS_WIN)
 void ScreenWidget::setFullScreenMode(bool enabled)
 {
     if (m_isFullScreen == enabled) return;
     m_isFullScreen = enabled;
     update(); // Forceer repaint
 }
+#endif
+#if defined(Q_OS_LINUX)
+void ScreenWidget::setFullScreenMode(bool enabled)
+{
+    if (m_isFullScreen == enabled)
+        return;
+
+    m_isFullScreen = enabled;
+
+    // Top-level venster (bv. MainWindow)
+    if (QWidget *top = window()) {
+        Qt::WindowStates st = top->windowState();
+
+        if (enabled) {
+            top->setWindowState(st | Qt::WindowFullScreen);
+            top->showFullScreen();   // extra duwtje, werkt goed op Linux
+        } else {
+            top->setWindowState(st & ~Qt::WindowFullScreen);
+            top->showNormal();
+        }
+    }
+
+    updateGeometry();
+    update();
+}
+#endif
+
 
 // Dit slot wordt aangeroepen vanuit de EMULATOR THREAD
 void ScreenWidget::updateFrame(const QImage &frame)

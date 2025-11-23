@@ -76,12 +76,10 @@ public slots:
     void onSaveScreenshot();
 
 private slots:
-    void onLoadDiskA();
-    void onLoadDiskB();
-    void onLoadTape();
-    void onEjectDiskA();
-    void onEjectDiskB();
-    void onEjectTape();
+    void onLoadDisk(int drive);
+    void onLoadTape(int drive);
+    void onEjectDisk(int drive);
+    void onEjectTape(int drive);
     // --- MEDIA STATUS UPDATE SLOTS ---
     void onDiskStatusChanged(int drive, const QString& fileName);
     void onTapeStatusChanged(int drive, const QString& fileName);
@@ -97,6 +95,7 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void configurePlatformSettings();
 
 private:
     // helpers
@@ -143,6 +142,7 @@ private:
     QLabel *m_sgmLabel    = nullptr;
     QString m_currentStd;
     QString m_currentRomName;
+    QString appVersion;
 
     // acties / menu
     QAction *m_openRomAction      = nullptr;
@@ -173,10 +173,20 @@ private:
     // --- MEDIA ACTIES ---
     QAction *m_loadDiskActionA    = nullptr;
     QAction *m_loadDiskActionB    = nullptr;
-    QAction *m_loadTapeAction     = nullptr;
+    QAction *m_loadDiskActionC    = nullptr;
+    QAction *m_loadDiskActionD    = nullptr;
+    QAction *m_loadTapeActionA    = nullptr;
+    QAction *m_loadTapeActionB    = nullptr;
+    QAction *m_loadTapeActionC    = nullptr;
+    QAction *m_loadTapeActionD    = nullptr;
     QAction *m_ejectDiskActionA   = nullptr;
     QAction *m_ejectDiskActionB   = nullptr;
-    QAction *m_ejectTapeAction    = nullptr;
+    QAction *m_ejectDiskActionC   = nullptr;
+    QAction *m_ejectDiskActionD   = nullptr;
+    QAction *m_ejectTapeActionA   = nullptr;
+    QAction *m_ejectTapeActionB   = nullptr;
+    QAction *m_ejectTapeActionC   = nullptr;
+    QAction *m_ejectTapeActionD   = nullptr;
 
     QAction* m_actPrinterOutput   = nullptr;
     QAction* m_actFullScreen      = nullptr;
@@ -188,18 +198,38 @@ private:
     // --- MEDIA STATUSBALK LABELS ---
     QLabel *m_diskLabelA          = nullptr;
     QLabel *m_diskLabelB          = nullptr;
-    QLabel *m_tapeLabel           = nullptr;
+    QLabel *m_diskLabelC          = nullptr;
+    QLabel *m_diskLabelD          = nullptr;
+    QLabel *m_tapeLabelA          = nullptr;
+    QLabel *m_tapeLabelB          = nullptr;
+    QLabel *m_tapeLabelC          = nullptr;
+    QLabel *m_tapeLabelD          = nullptr;
     QLabel *m_sepLabelMedia1a     = nullptr;
     QLabel *m_sepLabelMedia1b     = nullptr;
-    QLabel *m_sepLabelMedia2      = nullptr;
+    QLabel *m_sepLabelMedia1c     = nullptr;
+    QLabel *m_sepLabelMedia1d     = nullptr;
+    QLabel *m_sepLabelMedia2a     = nullptr;
+    QLabel *m_sepLabelMedia2b     = nullptr;
+    QLabel *m_sepLabelMedia2c     = nullptr;
+    QLabel *m_sepLabelMedia2d     = nullptr;
     QLabel* m_wallpaperLabel      = nullptr;
     QMenu *m_diskMenuA            = nullptr;
     QMenu *m_diskMenuB            = nullptr;
-    QMenu *m_tapeMenu             = nullptr;
+    QMenu *m_diskMenuC            = nullptr;
+    QMenu *m_diskMenuD            = nullptr;
+    QMenu *m_tapeMenuA            = nullptr;
+    QMenu *m_tapeMenuB            = nullptr;
+    QMenu *m_tapeMenuC            = nullptr;
+    QMenu *m_tapeMenuD            = nullptr;
 
     bool m_isDiskLoadedA;
     bool m_isDiskLoadedB;
-    bool m_isTapeLoaded;
+    bool m_isDiskLoadedC;
+    bool m_isDiskLoadedD;
+    bool m_isTapeLoadedA;
+    bool m_isTapeLoadedB;
+    bool m_isTapeLoadedC;
+    bool m_isTapeLoadedD;
     int  m_scalingMode; // 0=Sharp, 1=Smooth, 2=EPX
     bool m_startFullScreen;
 

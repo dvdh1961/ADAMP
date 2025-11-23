@@ -6,6 +6,9 @@
 #include <cstring> // memset, memcpy
 #include <QMutexLocker>
 #include <QDateTime>
+#if defined(Q_OS_LINUX)
+#include <alsa/asoundlib.h>
+#endif
 
 // debug counters
 
@@ -27,6 +30,7 @@ void SoundManager::attachController(ColecoController *ctrl)
     m_controller = ctrl;
 }
 
+#if defined(Q_OS_WIN)
 bool SoundManager::initialise(HWND hwnd, int fpsHint)
 {
     if (m_inited) {
@@ -59,6 +63,37 @@ bool SoundManager::reInitialise(HWND hwnd, int fpsHint)
     end();
     return initialise(hwnd, fpsHint);
 }
+#endif
+#if defined(Q_OS_LINUX)
+bool SoundManager::initialise(int fpsHint)
+{
+    if (m_inited) {
+        qWarning() << "[SoundManager] initialise() called twice";
+        return true;
+    }
+
+    if (!initALSA(fpsHint)) {
+        qWarning() << "[SoundManager] initALSA failed";
+        releaseALSA();
+        return false;
+    }
+
+    m_inited        = true;
+    m_suspended     = false;
+    m_running       = true;
+    m_lastWritePos  = 0;
+
+    qDebug() << "[SoundManager] initialise OK";
+    return true;
+}
+
+bool SoundManager::reInitialise(int fpsHint)
+{
+    // Simple version: fully restart
+    end();
+    return initialise(fpsHint);
+}
+#endif
 
 void SoundManager::suspend()
 {
@@ -72,14 +107,19 @@ void SoundManager::resume()
 
 void SoundManager::end()
 {
+#if defined(Q_OS_WIN)
     releaseDirectSound();
+#endif
+#if defined(Q_OS_LINUX)
+    releaseALSA();
+#endif
     m_inited = false;
 }
 
 // ----------------------
 // Private helpers
 // ----------------------
-
+#if defined(Q_OS_WIN)
 bool SoundManager::initDirectSound(HWND hwnd, int fpsHint)
 {
     m_channels       = 2;
@@ -377,3 +417,125 @@ void SoundManager::pushAudioFromEmu(const int16_t* srcStereo, int framesStereo)
     // schuif write cursor met blockBytes, niet met "full chunkBytes"
     m_lastWritePos = (m_lastWritePos + blockBytes) % m_bufferBytes;
 }
+#endif
+#if defined(Q_OS_LINUX)
+// ----------------------
+// Private helpers
+// ----------------------
+bool SoundManager::initALSA(int fpsHint)
+{
+    int err;
+    // Open PCM device
+    err = snd_pcm_open(&m_pcmHandle, "default", SND_PCM_STREAM_PLAYBACK, 0);
+    if (err < 0) {
+        qWarning() << "[SoundManager] Unable to open PCM device: " << snd_strerror(err);
+        return false;
+    }
+
+    // Allocate hardware parameters object
+    snd_pcm_hw_params_alloca(&m_params);
+
+    // Initialize hardware parameters
+    snd_pcm_hw_params_any(m_pcmHandle, m_params);
+    snd_pcm_hw_params_set_channels(m_pcmHandle, m_params, m_channels);
+    snd_pcm_hw_params_set_rate(m_pcmHandle, m_params, m_sampleRate, 0);
+    snd_pcm_hw_params_set_format(m_pcmHandle, m_params, SND_PCM_FORMAT_S16_LE); // 16-bit signed little endian
+
+    // Apply hardware parameters
+    err = snd_pcm_hw_params(m_pcmHandle, m_params);
+    if (err < 0) {
+        qWarning() << "[SoundManager] Unable to set HW parameters: " << snd_strerror(err);
+        return false;
+    }
+
+    // Get the buffer size
+    snd_pcm_uframes_t buffer_size;
+    snd_pcm_hw_params_get_buffer_size(m_params, &buffer_size);
+    m_bufferBytes = buffer_size * m_bytesPerFrame;
+
+    return true;
+}
+
+void SoundManager::releaseALSA()
+{
+    if (m_pcmHandle) {
+        snd_pcm_close(m_pcmHandle);
+        m_pcmHandle = nullptr;
+    }
+}
+
+// ----------------------
+// Periodic refill
+// ----------------------
+
+void SoundManager::refillPCMBuffer()
+{
+    if (!m_pcmHandle) return;
+
+    const DWORD chunkBytes = kChunkFrames * m_bytesPerFrame;
+    if (chunkBytes == 0 || chunkBytes > m_bufferBytes)
+        return;
+
+    // Determine where we should write in the buffer
+    DWORD startPos = m_lastWritePos;
+    DWORD endPos   = (m_lastWritePos + chunkBytes) % m_bufferBytes;
+
+    // Get the latest audio chunk from the emulator
+    if (!m_suspended) {
+        QMutexLocker lock(&m_audioMutex);
+        if (m_lastAudioValid) {
+            std::memcpy(m_mixBufferInterleaved, m_lastAudioChunk, chunkBytes);
+        } else {
+            std::memset(m_mixBufferInterleaved, 0, chunkBytes);
+        }
+    } else {
+        std::memset(m_mixBufferInterleaved, 0, chunkBytes);
+    }
+
+    // Write audio data to the ALSA buffer
+    int err = snd_pcm_writei(m_pcmHandle, m_mixBufferInterleaved, chunkBytes / m_bytesPerFrame);
+    if (err < 0) {
+        qWarning() << "[SoundManager] ALSA write error: " << snd_strerror(err);
+    }
+
+    // Update the last write position
+    m_lastWritePos = endPos;
+}
+
+// ----------------------
+// Fetch samples from emulator
+// ----------------------
+
+bool SoundManager::fetchSamplesFromEmu(int16_t *dst, int framesStereo)
+{
+    if (!m_controller)
+        return false;
+
+    bool ok = QMetaObject::invokeMethod(
+        m_controller,
+        "mixAudioInternal",
+        Qt::BlockingQueuedConnection,
+        Q_ARG(void*, (void*)dst),
+        Q_ARG(int, framesStereo)
+        );
+
+    return ok;
+}
+
+void SoundManager::pushAudioFromEmu(const int16_t* srcStereo, int framesStereo)
+{
+    if (!m_pcmHandle) return;
+    if (framesStereo <= 0) return;
+
+    const DWORD blockBytes = framesStereo * m_bytesPerFrame; // frames * 4 bytes
+
+    int err = snd_pcm_writei(m_pcmHandle, srcStereo, framesStereo);
+    if (err < 0) {
+        qWarning() << "[SoundManager] ALSA write failed: " << snd_strerror(err);
+        return;
+    }
+
+    // Update write position
+    m_lastWritePos = (m_lastWritePos + blockBytes) % m_bufferBytes;
+}
+#endif

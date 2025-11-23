@@ -15,5 +15,17 @@
         <file>images/wallpaper_coleco.png</file>
         <file>images/adamp_logo.png</file>
         <file>images/Adam_PrinterBG.png</file>
+        <file>images/roms.png</file>
+        <file>images/dsk.png</file>
+        <file>images/ddp.png</file>
+        <file>images/CLOSE.png</file>
+        <file>images/REFRESH.png</file>
+        <file>images/BREAK.png</file>
+        <file>images/RUN.png</file>
+        <file>images/CANCEL.png</file>
+        <file>images/OK.png</file>
+        <file>images/SSTEP.png</file>
+        <file>images/GOTO.png</file>
+        <file>images/STEP.png</file>
     </qresource>
 </RCC>

@@ -52,6 +52,8 @@
 #include <QFont>
 #include <QMap>
 #include <QDateTime>
+#include <QDesktopServices>
+#include <QUrl>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -69,10 +71,20 @@ MainWindow::MainWindow(QWidget *parent)
     m_actToggleSmoothing(nullptr),
     m_diskMenuA(nullptr),
     m_diskMenuB(nullptr),
-    m_tapeMenu(nullptr),
+    m_diskMenuC(nullptr),
+    m_diskMenuD(nullptr),
+    m_tapeMenuA(nullptr),
+    m_tapeMenuB(nullptr),
+    m_tapeMenuC(nullptr),
+    m_tapeMenuD(nullptr),
     m_isDiskLoadedA(false),
     m_isDiskLoadedB(false),
-    m_isTapeLoaded(false),
+    m_isDiskLoadedC(false),
+    m_isDiskLoadedD(false),
+    m_isTapeLoadedA(false),
+    m_isTapeLoadedB(false),
+    m_isTapeLoadedC(false),
+    m_isTapeLoadedD(false),
     m_scalingMode(1),
     m_startFullScreen(false),
     m_adamInputGroup(nullptr),
@@ -86,7 +98,10 @@ MainWindow::MainWindow(QWidget *parent)
     QCoreApplication::setOrganizationName("DVdHSoft");
     QCoreApplication::setApplicationName("ADAMP_EMU");
 
-    setWindowTitle("ADAM+ Emulator");
+    // Hier kun je de versie eenvoudig wijzigen
+    appVersion = "0.2.1125";
+
+    setWindowTitle(QString("ADAM+ Emulator - v%1").arg(appVersion));
 
     // --- VOEG DE WALLPAPER-LABEL TOE ---
     m_wallpaperLabel = new QLabel(this);
@@ -156,6 +171,8 @@ MainWindow::MainWindow(QWidget *parent)
     this->setFixedWidth(770);
     this->setFixedHeight(700);
 
+    configurePlatformSettings();
+
     setStatusBar();
 
     loadSettings();
@@ -201,11 +218,11 @@ MainWindow::MainWindow(QWidget *parent)
     m_kbWidget->setController(m_colecoController); // m_colecoController is nu geldig
 
     // --- Connecteer de nieuwe media-signalen ---
-    connect(m_colecoController, &ColecoController::diskStatusChanged,
-            this, &MainWindow::onDiskStatusChanged,
-            Qt::QueuedConnection);
     connect(m_colecoController, &ColecoController::tapeStatusChanged,
             this, &MainWindow::onTapeStatusChanged,
+            Qt::QueuedConnection);
+    connect(m_colecoController, &ColecoController::diskStatusChanged,
+            this, &MainWindow::onDiskStatusChanged,
             Qt::QueuedConnection);
 
     // 2. debugger
@@ -224,10 +241,6 @@ MainWindow::MainWindow(QWidget *parent)
             this,       &MainWindow::onDebuggerBreakCPU);
     connect(m_debuggerAction, &QAction::triggered,
             this, &MainWindow::onOpenDebugger);
-
-    // 3. Cart Info Dialoog (maken we hier al aan)
-    m_cartInfoDialog = new CartridgeInfoDialog(this);
-    m_cartInfoDialog->hide(); // Standaard verborgen
 
     // --- VOEG DIT BLOK TOE ---
     // Pas de geladen full-screen instelling toe bij het opstarten
@@ -257,7 +270,6 @@ MainWindow::~MainWindow()
         m_emulatorThread->wait(1000);
     }
 }
-
 
 // (We gebruiken deze nu niet meer direct, maar het is goed om hem te hebben)
 void MainWindow::setDebugger(DebuggerWindow *debugger)
@@ -369,9 +381,17 @@ void MainWindow::onOpenSettings()
 }
 
 // Laadt de instellingen
+// ---------------------------------------------------------
+// Vervang de bestaande loadSettings() door deze versie:
+// ---------------------------------------------------------
 void MainWindow::loadSettings()
 {
-    QSettings settings;
+    // Bepaal het pad naar settings.ini naast de executable
+    QString iniPath = QCoreApplication::applicationDirPath() + "/settings.ini";
+
+    // Gebruik IniFormat en geef het specifieke pad mee
+    QSettings settings(iniPath, QSettings::IniFormat);
+
     m_romPath      = settings.value("romPath", ".").toString();
     m_diskPath     = settings.value("diskPath", ".").toString();
     m_tapePath     = settings.value("tapePath", ".").toString();
@@ -393,6 +413,7 @@ void MainWindow::loadSettings()
     m_scalingMode = settings.value("video/scalingMode", 1).toInt();
     m_startFullScreen = settings.value("video/fullscreen", false).toBool();
 
+    qDebug() << "Loading settings from:" << iniPath;
     qDebug() << "Loaded settings:"
              << "machine="  << m_machineType
              << "palette="  << m_paletteIndex
@@ -407,7 +428,12 @@ void MainWindow::loadSettings()
 // Slaat de instellingen op
 void MainWindow::saveSettings()
 {
-    QSettings settings;
+    // Bepaal het pad naar settings.ini naast de executable
+    QString iniPath = QCoreApplication::applicationDirPath() + "/settings.ini";
+
+    // Gebruik IniFormat en geef het specifieke pad mee
+    QSettings settings(iniPath, QSettings::IniFormat);
+
     settings.setValue("romPath",        m_romPath);
     settings.setValue("diskPath",       m_diskPath);
     settings.setValue("tapePath",       m_tapePath);
@@ -428,7 +454,10 @@ void MainWindow::saveSettings()
     settings.setValue("video/scalingMode", m_scalingMode);
     settings.setValue("video/fullscreen", m_startFullScreen);
 
-    qDebug() << "Settings saved."
+    // Optioneel: Forceer schrijven naar schijf (gebeurt normaal ook bij destructor)
+    settings.sync();
+
+    qDebug() << "Settings saved to:" << iniPath
              << "palette=" << m_paletteIndex
              << "machine=" << m_machineType
              << "sgm="     << m_sgmEnabled
@@ -454,9 +483,18 @@ void MainWindow::setUpLogWindow()
 void MainWindow::setStatusBar()
 {
     statusBar()->setSizeGripEnabled(true);
-    setWindowFlags(windowFlags()
-                   & ~Qt::WindowMaximizeButtonHint
-                   & ~Qt::WindowMinimizeButtonHint);
+    Qt::WindowFlags flags = windowFlags();
+
+    // 1. Verwijder de knoppen (Maximize, Minimize, Close)
+    flags &= ~Qt::WindowMaximizeButtonHint;
+    flags &= ~Qt::WindowMinimizeButtonHint;
+    flags &= ~Qt::WindowCloseButtonHint; // <-- Verberg het sluitkruisje
+
+    // 2. Voeg de vlag toe die Qt toelaat de knoppen te customizen/verbergen
+    flags |= Qt::CustomizeWindowHint;
+
+    // 3. Wijs de nieuwe, correct getypete vlaggen toe
+    setWindowFlags(flags);
 
     this->setFixedWidth(770);
 
@@ -497,28 +535,70 @@ void MainWindow::setStatusBar()
     m_runLabel->setMinimumWidth(50);
     m_runLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
 
+    m_sepLabelMedia2a = new QLabel("|", this);
+    m_tapeLabelA = new QLabel("D1: -", this);
+    m_tapeLabelA->setObjectName("tapeLabel");
+    m_tapeLabelA->setMinimumWidth(50);
+
+    m_sepLabelMedia2b = new QLabel("|", this);
+    m_tapeLabelB = new QLabel("D2: -", this);
+    m_tapeLabelB->setObjectName("tapeLabel");
+    m_tapeLabelB->setMinimumWidth(50);
+
+    m_sepLabelMedia2c = new QLabel("|", this);
+    m_tapeLabelC = new QLabel("D3: -", this);
+    m_tapeLabelC->setObjectName("tapeLabel");
+    m_tapeLabelC->setMinimumWidth(50);
+
+    m_sepLabelMedia2d = new QLabel("|", this);
+    m_tapeLabelD = new QLabel("D4: -", this);
+    m_tapeLabelD->setObjectName("tapeLabel");
+    m_tapeLabelD->setMinimumWidth(50);
+
     m_sepLabelMedia1a = new QLabel("|", this);
-    m_diskLabelA = new QLabel("D0: -", this);
+    m_diskLabelA = new QLabel("D5: -", this);
     m_diskLabelA->setObjectName("diskLabel");
-    m_diskLabelA->setMinimumWidth(240); // Geef het wat ruimte
+    m_diskLabelA->setMinimumWidth(50); // Geef het wat ruimte
 
     m_sepLabelMedia1b = new QLabel("|", this);
-    m_diskLabelB = new QLabel("D1: -", this);
+    m_diskLabelB = new QLabel("D6: -", this);
     m_diskLabelB->setObjectName("diskLabel");
-    m_diskLabelB->setMinimumWidth(240); // Geef het wat ruimte
+    m_diskLabelB->setMinimumWidth(50); // Geef het wat ruimte
 
-    m_sepLabelMedia2 = new QLabel("|", this);
-    m_tapeLabel = new QLabel("T0: -", this);
-    m_tapeLabel->setObjectName("tapeLabel");
-    m_tapeLabel->setMinimumWidth(240);
+    m_sepLabelMedia1c = new QLabel("|", this);
+    m_diskLabelC = new QLabel("D7: -", this);
+    m_diskLabelC->setObjectName("diskLabel");
+    m_diskLabelC->setMinimumWidth(50); // Geef het wat ruimte
+
+    m_sepLabelMedia1d = new QLabel("|", this);
+    m_diskLabelD = new QLabel("D8: -", this);
+    m_diskLabelD->setObjectName("diskLabel");
+    m_diskLabelD->setMinimumWidth(50); // Geef het wat ruimte
 
     // Verberg ze standaard (worden getoond in ADAM-modus)
+    m_sepLabelMedia2a->hide();
+    m_tapeLabelA->hide();
+
+    m_sepLabelMedia2b->hide();
+    m_tapeLabelB->hide();
+
+    m_sepLabelMedia2c->hide();
+    m_tapeLabelC->hide();
+
+    m_sepLabelMedia2d->hide();
+    m_tapeLabelD->hide();
+
     m_sepLabelMedia1a->hide();
     m_diskLabelA->hide();
+
     m_sepLabelMedia1b->hide();
     m_diskLabelB->hide();
-    m_sepLabelMedia2->hide();
-    m_tapeLabel->hide();
+
+    m_sepLabelMedia1c->hide();
+    m_diskLabelC->hide();
+
+    m_sepLabelMedia1d->hide();
+    m_diskLabelD->hide();
 
     m_stdLabel = new QLabel(this);
 
@@ -536,12 +616,25 @@ void MainWindow::setStatusBar()
     statusBar()->addWidget(m_sysLabel);
     statusBar()->addWidget(m_sepLabelSGM);
     statusBar()->addWidget(m_sgmLabel);
+
+    statusBar()->addWidget(m_sepLabelMedia2a);
+    statusBar()->addWidget(m_tapeLabelA);
+    statusBar()->addWidget(m_sepLabelMedia2b);
+    statusBar()->addWidget(m_tapeLabelB);
+    statusBar()->addWidget(m_sepLabelMedia2c);
+    statusBar()->addWidget(m_tapeLabelC);
+    statusBar()->addWidget(m_sepLabelMedia2d);
+    statusBar()->addWidget(m_tapeLabelD);
+
     statusBar()->addWidget(m_sepLabelMedia1a);
     statusBar()->addWidget(m_diskLabelA);
     statusBar()->addWidget(m_sepLabelMedia1b);
     statusBar()->addWidget(m_diskLabelB);
-    statusBar()->addWidget(m_sepLabelMedia2);
-    statusBar()->addWidget(m_tapeLabel);
+    statusBar()->addWidget(m_sepLabelMedia1c);
+    statusBar()->addWidget(m_diskLabelC);
+    statusBar()->addWidget(m_sepLabelMedia1d);
+    statusBar()->addWidget(m_diskLabelD);
+
     statusBar()->addWidget(m_sepLabel1);
     statusBar()->addWidget(m_stdLabel);
     statusBar()->addWidget(m_sepLabel1);
@@ -559,12 +652,22 @@ void MainWindow::setStatusBar()
     m_sysLabel->setFont(statusFont);
     m_sgmLabel->setFont(statusFont);
     m_sepLabelSGM->setFont(statusFont);
+    m_tapeLabelA->setFont(statusFont);
+    m_tapeLabelB->setFont(statusFont);
+    m_tapeLabelC->setFont(statusFont);
+    m_tapeLabelD->setFont(statusFont);
     m_diskLabelA->setFont(statusFont);
     m_diskLabelB->setFont(statusFont);
-    m_tapeLabel->setFont(statusFont);
+    m_diskLabelC->setFont(statusFont);
+    m_diskLabelD->setFont(statusFont);
+    m_sepLabelMedia2a->setFont(statusFont);
+    m_sepLabelMedia2b->setFont(statusFont);
+    m_sepLabelMedia2c->setFont(statusFont);
+    m_sepLabelMedia2d->setFont(statusFont);
     m_sepLabelMedia1a->setFont(statusFont);
     m_sepLabelMedia1b->setFont(statusFont);
-    m_sepLabelMedia2->setFont(statusFont);
+    m_sepLabelMedia1c->setFont(statusFont);
+    m_sepLabelMedia1d->setFont(statusFont);
     m_stdLabel->setFont(statusFont);
     m_fpsLabel->setFont(statusFont);
     m_romLabel->setFont(statusFont);
@@ -588,43 +691,103 @@ void MainWindow::setupUI()
     // --- ADAM MEDIA SECTIE TOEVOEGEN ---
     fileMenu->addSeparator();
 
-    // 1a. Maak Disk A Submenu
-    m_diskMenuA = new QMenu(tr("Disk A"), this);
+    // drive 1. Maak Tape Submenu
+    m_tapeMenuA = new QMenu(tr("Tape D1"), this);
+    m_loadTapeActionA = new QAction(tr("Load"), this);
+    connect(m_loadTapeActionA, &QAction::triggered, this, [this]() { onLoadTape(0); });
+    m_tapeMenuA->addAction(m_loadTapeActionA);
+
+    m_ejectTapeActionA = new QAction(tr("Eject/Save"), this);
+    connect(m_ejectTapeActionA, &QAction::triggered, this, [this]() { onEjectTape(0); });
+    m_tapeMenuA->addAction(m_ejectTapeActionA);
+    fileMenu->addMenu(m_tapeMenuA); // Voeg het submenu toe aan File
+
+    // drive 2. Maak Tape Submenu
+    m_tapeMenuB = new QMenu(tr("Tape D2"), this);
+    m_loadTapeActionB = new QAction(tr("Load"), this);
+    connect(m_loadTapeActionB, &QAction::triggered, this, [this]() { onLoadTape(1); });
+    m_tapeMenuB->addAction(m_loadTapeActionB);
+
+    m_ejectTapeActionB = new QAction(tr("Eject/Save"), this);
+    connect(m_ejectTapeActionB, &QAction::triggered, this, [this]() { onEjectTape(1); });
+    m_tapeMenuB->addAction(m_ejectTapeActionB);
+    fileMenu->addMenu(m_tapeMenuB); // Voeg het submenu toe aan File
+
+    // drive 3. Maak Tape Submenu
+    m_tapeMenuC = new QMenu(tr("Tape D3"), this);
+    m_loadTapeActionC = new QAction(tr("Load"), this);
+    connect(m_loadTapeActionC, &QAction::triggered, this, [this]() { onLoadTape(2); });
+    m_tapeMenuC->addAction(m_loadTapeActionC);
+
+    m_ejectTapeActionC = new QAction(tr("Eject/Save"), this);
+    connect(m_ejectTapeActionC, &QAction::triggered, this, [this]() { onEjectTape(2); });
+    m_tapeMenuC->addAction(m_ejectTapeActionC);
+    fileMenu->addMenu(m_tapeMenuC); // Voeg het submenu toe aan File
+
+    // drive 4. Maak Tape Submenu
+    m_tapeMenuD = new QMenu(tr("Tape D4"), this);
+    m_loadTapeActionD = new QAction(tr("Load"), this);
+    connect(m_loadTapeActionD, &QAction::triggered, this, [this]() { onLoadTape(3); });
+    m_tapeMenuD->addAction(m_loadTapeActionD);
+
+    m_ejectTapeActionD = new QAction(tr("Eject/Save"), this);
+    connect(m_ejectTapeActionD, &QAction::triggered, this, [this]() { onEjectTape(3); });
+    m_tapeMenuD->addAction(m_ejectTapeActionD);
+    fileMenu->addMenu(m_tapeMenuD); // Voeg het submenu toe aan File
+
+    // drive 5. Maak Disk 5 Submenu
+    m_diskMenuA = new QMenu(tr("Disk  D5"), this);
     m_loadDiskActionA = new QAction(tr("Load"), this);
-    connect(m_loadDiskActionA, &QAction::triggered, this, &MainWindow::onLoadDiskA);
+    connect(m_loadDiskActionA, &QAction::triggered, this, [this]() { onLoadDisk(0); });
     m_diskMenuA->addAction(m_loadDiskActionA);
 
     m_ejectDiskActionA = new QAction(tr("Eject/Save"), this);
-    connect(m_ejectDiskActionA, &QAction::triggered, this, &MainWindow::onEjectDiskA);
+    connect(m_ejectDiskActionA, &QAction::triggered, this, [this]() { onEjectDisk(0); });
     m_diskMenuA->addAction(m_ejectDiskActionA);
     fileMenu->addMenu(m_diskMenuA); // Voeg het submenu toe aan File
 
-    // 1b. Maak Disk B Submenu
-    m_diskMenuB = new QMenu(tr("Disk B"), this);
+    // drive 6. Maak Disk 6 Submenu
+    m_diskMenuB = new QMenu(tr("Disk  D6"), this);
     m_loadDiskActionB = new QAction(tr("Load"), this);
-    connect(m_loadDiskActionB, &QAction::triggered, this, &MainWindow::onLoadDiskB);
+    connect(m_loadDiskActionB, &QAction::triggered, this, [this]() { onLoadDisk(1); });
     m_diskMenuB->addAction(m_loadDiskActionB);
 
     m_ejectDiskActionB = new QAction(tr("Eject/Save"), this);
-    connect(m_ejectDiskActionB, &QAction::triggered, this, &MainWindow::onEjectDiskB);
+    connect(m_ejectDiskActionB, &QAction::triggered, this, [this]() { onEjectDisk(1); });
     m_diskMenuB->addAction(m_ejectDiskActionB);
     fileMenu->addMenu(m_diskMenuB); // Voeg het submenu toe aan File
 
-    // 2. Maak Tape Submenu
-    m_tapeMenu = new QMenu(tr("Tape A"), this);
-    m_loadTapeAction = new QAction(tr("Load"), this);
-    connect(m_loadTapeAction, &QAction::triggered, this, &MainWindow::onLoadTape);
-    m_tapeMenu->addAction(m_loadTapeAction);
+    // drive 7. Maak Disk 7 Submenu
+    m_diskMenuC = new QMenu(tr("Disk  D7"), this);
+    m_loadDiskActionC = new QAction(tr("Load"), this);
+    connect(m_loadDiskActionC, &QAction::triggered, this,  [this]() { onLoadDisk(2); });
+    m_diskMenuC->addAction(m_loadDiskActionC);
 
-    m_ejectTapeAction = new QAction(tr("Eject/Save"), this);
-    connect(m_ejectTapeAction, &QAction::triggered, this, &MainWindow::onEjectTape);
-    m_tapeMenu->addAction(m_ejectTapeAction);
-    fileMenu->addMenu(m_tapeMenu); // Voeg het submenu toe aan File
+    m_ejectDiskActionC = new QAction(tr("Eject/Save"), this);
+    connect(m_ejectDiskActionC, &QAction::triggered, this, [this]() { onEjectDisk(2); });
+    m_diskMenuC->addAction(m_ejectDiskActionC);
+    fileMenu->addMenu(m_diskMenuC); // Voeg het submenu toe aan File
+
+    // drive 8. Maak Disk 8 Submenu
+    m_diskMenuD = new QMenu(tr("Disk  D8"), this);
+    m_loadDiskActionD = new QAction(tr("Load"), this);
+    connect(m_loadDiskActionD, &QAction::triggered, this,  [this]() { onLoadDisk(3); });
+    m_diskMenuD->addAction(m_loadDiskActionD);
+
+    m_ejectDiskActionD = new QAction(tr("Eject/Save"), this);
+    connect(m_ejectDiskActionD, &QAction::triggered, this, [this]() { onEjectDisk(3); });
+    m_diskMenuD->addAction(m_ejectDiskActionD);
+    fileMenu->addMenu(m_diskMenuD); // Voeg het submenu toe aan File
 
     // Standaard uitgeschakeld
     m_diskMenuA->setEnabled(false);
     m_diskMenuB->setEnabled(false);
-    m_tapeMenu->setEnabled(false);
+    m_diskMenuC->setEnabled(false);
+    m_diskMenuD->setEnabled(false);
+    m_tapeMenuA->setEnabled(false);
+    m_tapeMenuB->setEnabled(false);
+    m_tapeMenuC->setEnabled(false);
+    m_tapeMenuD->setEnabled(false);
 
     fileMenu->addSeparator();
 
@@ -673,10 +836,9 @@ void MainWindow::setupUI()
 
     QAction* actClearLog = new QAction(tr("Clear Logger"), this);
 
-    // 2. Verbind de actie met de clear() functie van de log editor
     connect(actClearLog, &QAction::triggered, this, [this]() {
-        if (m_logView && m_logView->editor()) {
-            m_logView->editor()->clear();
+        if (m_logView) {
+            m_logView->clear(); // <-- Roep de nieuwe slot aan op m_logView
         }
     });
     debugMenu->addAction(actClearLog);
@@ -793,12 +955,12 @@ void MainWindow::setupUI()
 
     // Help
     QMenu* helpMenu = menuBar()->addMenu(tr("Help"));
-    m_actWiki = new QAction(tr("Online Wiki"), this);
+    m_actWiki = new QAction(tr("Github page"), this);
     helpMenu->addAction(m_actWiki);
     m_actReport = new QAction(tr("Report a bug"), this);
     helpMenu->addAction(m_actReport);
-    m_actChat = new QAction(tr("Chat with community"), this);
-    helpMenu->addAction(m_actChat);
+    //m_actChat = new QAction(tr("Chat with community"), this);
+    //helpMenu->addAction(m_actChat);
     helpMenu->addSeparator();
     m_actDonate = new QAction(tr("Donate"), this);
     helpMenu->addAction(m_actDonate);
@@ -837,6 +999,21 @@ void MainWindow::setupUI()
     connect(m_actToggleSmoothing, &QAction::triggered, this, &MainWindow::onCycleScalingMode);
 
     connect(m_actSaveScreenshot, &QAction::triggered,this, &MainWindow::onSaveScreenshot);
+
+    connect(m_actWiki, &QAction::triggered, this, [](){
+        QString link = "https://github.com/dvdh1961/ADAMP";
+        QDesktopServices::openUrl(QUrl(link));
+    });
+
+    connect(m_actReport, &QAction::triggered, this, [](){
+        QString link = "https://github.com/dvdh1961/ADAMP/issues";
+        QDesktopServices::openUrl(QUrl(link));
+    });
+
+    connect(m_actDonate, &QAction::triggered, this, [](){
+        QString link = "https://www.paypal.com/donate?business=dannyvdh@pandora.be";
+        QDesktopServices::openUrl(QUrl(link));
+    });
 
     onEmuPausedChanged(false); // of true, afhankelijk van je default
 }
@@ -1064,9 +1241,14 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
 
     // Als we naar Coleco wisselen, eject alle media
     if (!isAdam) {
-        onEjectDiskA(); // Roep de lokale eject-functies aan
-        onEjectDiskB(); // Roep de lokale eject-functies aan
-        onEjectTape();
+        onEjectDisk(0);
+        onEjectDisk(1);
+        onEjectDisk(2);
+        onEjectDisk(3);
+        onEjectTape(0);
+        onEjectTape(1);
+        onEjectTape(2);
+        onEjectTape(3);
 
         m_adamInputModeJoystick = false;
         if (m_actAdamKeyboard) m_actAdamKeyboard->setChecked(true);
@@ -1084,7 +1266,7 @@ void MainWindow::showAboutDialog()
 {
     QDialog aboutDialog(this);
     aboutDialog.setWindowTitle("About ADAM+");
-    aboutDialog.setFixedSize(420, 360);
+    aboutDialog.setFixedSize(420, 560);
 
     QVBoxLayout *layout = new QVBoxLayout(&aboutDialog);
     layout->setAlignment(Qt::AlignCenter);
@@ -1096,32 +1278,37 @@ void MainWindow::showAboutDialog()
     logoLabel->setAlignment(Qt::AlignCenter);
     layout->addWidget(logoLabel);
 
-    // Tekst
     QLabel *textLabel = new QLabel(&aboutDialog);
-    textLabel->setText(
-        "Version 0.1.1025<br>"
-        "©2025 DannyVdH<br>"
-        "<a href='https://github.com/dvdh1961/ADAMP'>VDH Productions</a><br><br>"
-        "This program is released under the GNU GPL-3.0 license.<br>"
-        "Please see the attached <i>readme.md</i> and <i>license</i> file that should be included with this distribution.<br><br>"
-        "The goal is to go even deeper into my ADAM+ hardware project<br>"
-        " — this emulator — <br>"
-        "will go much further in integrating specific hardware components.<br><br>"
-        "Credits goes to.<br>"
-        "A lot of interfacing and parts of code based on the EmulTwo project.<br>"
-        "Parts of ADAM emulation code from Marat Fayzullin’s ColEm project.<br>"
-        "Wavemotion-dave, for improving compatibility issues.<br>"
-        "Parts of EightyOne created by Michael D Wynne.<br>"
-        "Z80 core taken from FUSE, the free UNIX emulator.<br>"
-        "AY8910 code from Z81 ©1995–2001 Russell Marks.<br>"
-        "And all the ones that were involved and that I forgot to mention.<br><br>"
-        );
+
+    // Tip: Zorg dat de HTML link ook echt klikbaar is in de browser
+    textLabel->setOpenExternalLinks(true);
+
+    textLabel->setText(QString(
+                           "Version %1<br>"  // %1 wordt vervangen door appVersion
+                           "©2025 DannyVdH<br>"
+                           "<a href='https://github.com/dvdh1961/ADAMP'>VDH Productions</a><br><br>"
+                           "This program is released under the GNU GPL-3.0 license.<br>"
+                           "Please see the attached <i>readme.md</i> and <i>license</i> file that should be included with this distribution.<br><br>"
+                           "The goal is to go even deeper into my ADAM+ hardware project<br>"
+                           " — this emulator — <br>"
+                           "will go much further in integrating specific hardware components.<br><br>"
+                           "Credits goes to.<br>"
+                           "A lot of interfacing and parts of code based on the EmulTwo project.<br>"
+                           "Parts of ADAM emulation code from Marat Fayzullin’s ColEm project.<br>"
+                           "Wavemotion-dave, for improving compatibility issues.<br>"
+                           "Parts of EightyOne created by Michael D Wynne.<br>"
+                           "Z80 core taken from FUSE, the free UNIX emulator.<br>"
+                           "AY8910 code from Z81 ©1995–2001 Russell Marks.<br>"
+                           "And all the ones that were involved and that I forgot to mention.<br><br>"
+                           ).arg(appVersion));
+
     textLabel->setOpenExternalLinks(true);
     textLabel->setWordWrap(true);
     textLabel->setAlignment(Qt::AlignCenter);
     QFont font("Roboto", 10);
     textLabel->setFont(font);
     layout->addWidget(textLabel);
+    layout->addStretch(1);
 
     // // OK-knop
     // QPushButton *okButton = new QPushButton("OK", &aboutDialog);
@@ -1233,7 +1420,7 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 
 void MainWindow::appendLog(const QString& line)
 {
-    m_logView->editor()->appendPlainText(line);
+   // m_logView->editor()->appendPlainText(line);
 }
 
 void MainWindow::onToggleSGM(bool checked)
@@ -1566,33 +1753,32 @@ void MainWindow::onRunStop()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    qDebug() << "Close Event: Applicatie afsluiten...";
+    qDebug() << "Close Event: Applicatie afsluiten.";
 
-    // Sla de instellingen altijd op bij het afsluiten
     saveSettings();
 
-    if (m_emulatorThread && m_emulatorThread->isRunning())
-    {
-        qDebug() << "Thread netjes stoppen...";
-        connect(m_emulatorThread, &QThread::finished, qApp, &QCoreApplication::quit);
-        QMetaObject::invokeMethod(m_colecoController, "stopEmulation", Qt::QueuedConnection);
+    if (m_emulatorThread && m_emulatorThread->isRunning()) {
+        qDebug() << "Thread netjes stoppen.";
+
+        // Emulatie in de worker stoppen
+        QMetaObject::invokeMethod(
+            m_colecoController,
+            "stopEmulation",
+            Qt::QueuedConnection
+            );
+
         m_emulatorThread->quit();
+
         if (!m_emulatorThread->wait(2000)) {
-            qDebug() << "Waarschuwing: Thread wilde niet stoppen, wordt geforceerd.";
+            qWarning() << "Thread wilde niet stoppen, wordt geforceerd.";
             m_emulatorThread->terminate();
             m_emulatorThread->wait();
-            qApp->quit();
-        } else {
-            qDebug() << "Thread netjes gestopt.";
         }
-        event->ignore();
-    }
-    else
-    {
-        qDebug() << "Geen thread actief, direct sluiten.";
-        event->accept();
     }
 
+    // Gewoon sluiten, geen qApp->quit() meer nodig
+    event->accept();
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::onEmuPausedChanged(bool paused)
@@ -1790,7 +1976,7 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
 
 // --- NIEUWE SLOTS VOOR MEDIA ---
 
-void MainWindow::onLoadDiskA()
+void MainWindow::onLoadDisk(int drive)
 {
     if (m_machineType != 1) return;
 
@@ -1814,39 +2000,11 @@ void MainWindow::onLoadDiskA()
     // Stuur naar controller-thread
     QMetaObject::invokeMethod(m_colecoController, "loadDisk",
                               Qt::QueuedConnection,
-                              Q_ARG(int, 0), // Drive 0
+                              Q_ARG(int, drive), // Drive 0
                               Q_ARG(QString, filePath));
 }
 
-void MainWindow::onLoadDiskB()
-{
-    if (m_machineType != 1) return;
-
-    QString absoluteDiskPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_diskPath);
-
-    const QString filePath = CustomFileDialog::getOpenFileName(
-    //const QString filePath = QFileDialog::getOpenFileName(
-        this,
-        tr("Open ADAM Disk Image"),
-        absoluteDiskPath, // Start in de Disk-map
-        tr("ADAM Disk (*.dsk *.img);;All Files (*.*)")
-        );
-
-    if (filePath.isEmpty()) return;
-
-    // Update m_diskPath naar de map van het zojuist geopende bestand
-    QFileInfo fileInfo(filePath);
-    QDir appDir(QCoreApplication::applicationDirPath());
-    m_diskPath = appDir.relativeFilePath(fileInfo.absolutePath());
-
-    // Stuur naar controller-thread
-    QMetaObject::invokeMethod(m_colecoController, "loadDisk",
-                              Qt::QueuedConnection,
-                              Q_ARG(int, 1), // Drive 1
-                              Q_ARG(QString, filePath));
-}
-
-void MainWindow::onLoadTape()
+void MainWindow::onLoadTape(int drive)
 {
     if (m_machineType != 1) return;
 
@@ -1869,54 +2027,72 @@ void MainWindow::onLoadTape()
 
     QMetaObject::invokeMethod(m_colecoController, "loadTape",
                               Qt::QueuedConnection,
-                              Q_ARG(int, 0), // Drive 0
+                              Q_ARG(int, drive), // Drive 0
                               Q_ARG(QString, filePath));
 }
 
-void MainWindow::onEjectDiskA()
+void MainWindow::onEjectDisk(int drive)
 {
     // Ejecten mag altijd (ook als de knop verborgen is)
     // om de save-logica te triggeren
-    qDebug() << "UI: Eject/Save Disk 0";
+    qDebug() << "UI: Eject/Save Disk " << drive + 5;
     QMetaObject::invokeMethod(m_colecoController, "ejectDisk",
                               Qt::QueuedConnection,
-                              Q_ARG(int, 0)); // Drive 0
+                              Q_ARG(int, drive)); // Drive 0
 }
 
-void MainWindow::onEjectDiskB()
+void MainWindow::onEjectTape(int drive)
 {
-    // Ejecten mag altijd (ook als de knop verborgen is)
-    // om de save-logica te triggeren
-    qDebug() << "UI: Eject/Save Disk 1";
-    QMetaObject::invokeMethod(m_colecoController, "ejectDisk",
-                              Qt::QueuedConnection,
-                              Q_ARG(int, 1)); // Drive 1
-}
-
-
-void MainWindow::onEjectTape()
-{
-    qDebug() << "UI: Eject/Save Tape 0";
+    qDebug() << "UI: Eject/Save Tape " << drive;
     QMetaObject::invokeMethod(m_colecoController, "ejectTape",
                               Qt::QueuedConnection,
-                              Q_ARG(int, 0)); // Drive 0
+                              Q_ARG(int, drive)); // Drive 0
 }
 
 void MainWindow::onDiskStatusChanged(int drive, const QString& fileName)
 {
+    // Haal een standaard vinkje-icoon op uit de huidige stijl
+    QIcon checkIcon = style()->standardIcon(QStyle::SP_DialogApplyButton);
+
     if (drive == 0) {
         m_isDiskLoadedA = !fileName.isEmpty();
+        // Zet icoon als geladen, anders leeg icoon
+        if (m_diskMenuA) m_diskMenuA->setIcon(m_isDiskLoadedA ? checkIcon : QIcon());
+
         if (m_diskLabelA) {
-            const QString label = "D0: " + (fileName.isEmpty() ? "-" : fileName);
+            const QString label = "D5: " + (fileName.isEmpty() ? "-" : fileName);
             QFontMetrics fm(m_diskLabelA->font());
             m_diskLabelA->setText(fm.elidedText(label, Qt::ElideRight, m_diskLabelA->width()));
         }
-    } else if (drive == 1) {
+    }
+    if (drive == 1) {
         m_isDiskLoadedB = !fileName.isEmpty();
+        if (m_diskMenuB) m_diskMenuB->setIcon(m_isDiskLoadedB ? checkIcon : QIcon());
+
         if (m_diskLabelB) {
-            const QString label = "D1: " + (fileName.isEmpty() ? "-" : fileName);
+            const QString label = "D6: " + (fileName.isEmpty() ? "-" : fileName);
             QFontMetrics fm(m_diskLabelB->font());
             m_diskLabelB->setText(fm.elidedText(label, Qt::ElideRight, m_diskLabelB->width()));
+        }
+    }
+    if (drive == 2) {
+        m_isDiskLoadedC = !fileName.isEmpty();
+        if (m_diskMenuC) m_diskMenuC->setIcon(m_isDiskLoadedC ? checkIcon : QIcon());
+
+        if (m_diskLabelC) {
+            const QString label = "D7: " + (fileName.isEmpty() ? "-" : fileName);
+            QFontMetrics fm(m_diskLabelC->font());
+            m_diskLabelC->setText(fm.elidedText(label, Qt::ElideRight, m_diskLabelC->width()));
+        }
+    }
+    if (drive == 3) {
+        m_isDiskLoadedD = !fileName.isEmpty();
+        if (m_diskMenuD) m_diskMenuD->setIcon(m_isDiskLoadedD ? checkIcon : QIcon());
+
+        if (m_diskLabelD) {
+            const QString label = "D8: " + (fileName.isEmpty() ? "-" : fileName);
+            QFontMetrics fm(m_diskLabelD->font());
+            m_diskLabelD->setText(fm.elidedText(label, Qt::ElideRight, m_diskLabelD->width()));
         }
     }
 
@@ -1926,15 +2102,59 @@ void MainWindow::onDiskStatusChanged(int drive, const QString& fileName)
 
 void MainWindow::onTapeStatusChanged(int drive, const QString& fileName)
 {
+    // Haal een standaard vinkje-icoon op uit de huidige stijl
+    QIcon checkIcon = style()->standardIcon(QStyle::SP_DialogApplyButton);
+
     if (drive == 0) {
-        m_isTapeLoaded = !fileName.isEmpty();
+        m_isTapeLoadedA = !fileName.isEmpty();
+        if (m_tapeMenuA) m_tapeMenuA->setIcon(m_isTapeLoadedA ? checkIcon : QIcon());
+
         updateMediaMenuState();
-        if (m_tapeLabel) {
-        QString label = "T0: " + (fileName.isEmpty() ? "-" : fileName);
-        QFontMetrics metrics(m_tapeLabel->font());
-        QString elidedText = metrics.elidedText(label, Qt::ElideRight, m_tapeLabel->width());
-        m_tapeLabel->setText(elidedText);
-        updateMediaStatusLabels();
+        if (m_tapeLabelA) {
+            QString label = "D1: " + (fileName.isEmpty() ? "-" : fileName);
+            QFontMetrics metrics(m_tapeLabelA->font());
+            QString elidedText = metrics.elidedText(label, Qt::ElideRight, m_tapeLabelA->width());
+            m_tapeLabelA->setText(elidedText);
+            updateMediaStatusLabels();
+        }
+    }
+    if (drive == 1) {
+        m_isTapeLoadedB = !fileName.isEmpty();
+        if (m_tapeMenuB) m_tapeMenuB->setIcon(m_isTapeLoadedB ? checkIcon : QIcon());
+
+        updateMediaMenuState();
+        if (m_tapeLabelB) {
+            QString label = "D2: " + (fileName.isEmpty() ? "-" : fileName);
+            QFontMetrics metrics(m_tapeLabelB->font());
+            QString elidedText = metrics.elidedText(label, Qt::ElideRight, m_tapeLabelB->width());
+            m_tapeLabelB->setText(elidedText);
+            updateMediaStatusLabels();
+        }
+    }
+    if (drive == 2) {
+        m_isTapeLoadedC = !fileName.isEmpty();
+        if (m_tapeMenuC) m_tapeMenuC->setIcon(m_isTapeLoadedC ? checkIcon : QIcon());
+
+        updateMediaMenuState();
+        if (m_tapeLabelC) {
+            QString label = "D3: " + (fileName.isEmpty() ? "-" : fileName);
+            QFontMetrics metrics(m_tapeLabelC->font());
+            QString elidedText = metrics.elidedText(label, Qt::ElideRight, m_tapeLabelC->width());
+            m_tapeLabelC->setText(elidedText);
+            updateMediaStatusLabels();
+        }
+    }
+    if (drive == 3) {
+        m_isTapeLoadedD = !fileName.isEmpty();
+        if (m_tapeMenuD) m_tapeMenuD->setIcon(m_isTapeLoadedD ? checkIcon : QIcon());
+
+        updateMediaMenuState();
+        if (m_tapeLabelD) {
+            QString label = "D4: " + (fileName.isEmpty() ? "-" : fileName);
+            QFontMetrics metrics(m_tapeLabelD->font());
+            QString elidedText = metrics.elidedText(label, Qt::ElideRight, m_tapeLabelD->width());
+            m_tapeLabelD->setText(elidedText);
+            updateMediaStatusLabels();
         }
     }
 }
@@ -1947,22 +2167,27 @@ void MainWindow::updateMediaStatusLabels()
     bool showTape = false;
 
     if (isAdam) {
-        if (m_isDiskLoadedA || m_isDiskLoadedB) {
-            showDisk = true;
-            showTape = false;
-        } else if (m_isTapeLoaded) {
-            showDisk = false;
-            showTape = true;
-        }
+         showDisk = true;
+         showTape = true;
     }
+
+    if (m_tapeLabelA)       m_tapeLabelA->setVisible(showTape);
+    if (m_sepLabelMedia2a)  m_sepLabelMedia2a->setVisible(showTape);
+    if (m_tapeLabelB)       m_tapeLabelB->setVisible(showTape);
+    if (m_sepLabelMedia2b)  m_sepLabelMedia2b->setVisible(showTape);
+    if (m_tapeLabelC)       m_tapeLabelC->setVisible(showTape);
+    if (m_sepLabelMedia2c)  m_sepLabelMedia2c->setVisible(showTape);
+    if (m_tapeLabelD)       m_tapeLabelD->setVisible(showTape);
+    if (m_sepLabelMedia2d)  m_sepLabelMedia2d->setVisible(showTape);
 
     if (m_diskLabelA)      m_diskLabelA->setVisible(showDisk);
     if (m_sepLabelMedia1a) m_sepLabelMedia1a->setVisible(showDisk);
     if (m_diskLabelB)      m_diskLabelB->setVisible(showDisk);
     if (m_sepLabelMedia1b) m_sepLabelMedia1b->setVisible(showDisk);
-
-    if (m_tapeLabel)       m_tapeLabel->setVisible(showTape);
-    if (m_sepLabelMedia2)  m_sepLabelMedia2->setVisible(showTape);
+    if (m_diskLabelC)      m_diskLabelC->setVisible(showDisk);
+    if (m_sepLabelMedia1c) m_sepLabelMedia1c->setVisible(showDisk);
+    if (m_diskLabelD)      m_diskLabelD->setVisible(showDisk);
+    if (m_sepLabelMedia1d) m_sepLabelMedia1d->setVisible(showDisk);
 }
 
 void MainWindow::updateMediaMenuState()
@@ -1970,26 +2195,68 @@ void MainWindow::updateMediaMenuState()
     const bool isAdam = (m_machineType == 1);
 
     if (!isAdam) {
+        if (m_tapeMenuA) m_tapeMenuA->setEnabled(false);
+        if (m_tapeMenuB) m_tapeMenuB->setEnabled(false);
+        if (m_tapeMenuC) m_tapeMenuC->setEnabled(false);
+        if (m_tapeMenuD) m_tapeMenuD->setEnabled(false);
         if (m_diskMenuA) m_diskMenuA->setEnabled(false);
         if (m_diskMenuB) m_diskMenuB->setEnabled(false);
-        if (m_tapeMenu)  m_tapeMenu->setEnabled(false);
+        if (m_diskMenuC) m_diskMenuC->setEnabled(false);
+        if (m_diskMenuD) m_diskMenuD->setEnabled(false);
 
+        if (m_loadTapeActionA)  m_loadTapeActionA->setEnabled(false);
+        if (m_ejectTapeActionA) m_ejectTapeActionA->setEnabled(false);
+        if (m_loadTapeActionB)  m_loadTapeActionB->setEnabled(false);
+        if (m_ejectTapeActionB) m_ejectTapeActionB->setEnabled(false);
+        if (m_loadTapeActionC)  m_loadTapeActionC->setEnabled(false);
+        if (m_ejectTapeActionC) m_ejectTapeActionC->setEnabled(false);
+        if (m_loadTapeActionD)  m_loadTapeActionD->setEnabled(false);
+        if (m_ejectTapeActionD) m_ejectTapeActionD->setEnabled(false);
         if (m_loadDiskActionA)  m_loadDiskActionA->setEnabled(false);
         if (m_ejectDiskActionA) m_ejectDiskActionA->setEnabled(false);
         if (m_loadDiskActionB)  m_loadDiskActionB->setEnabled(false);
         if (m_ejectDiskActionB) m_ejectDiskActionB->setEnabled(false);
-        if (m_loadTapeAction)   m_loadTapeAction->setEnabled(false);
-        if (m_ejectTapeAction)  m_ejectTapeAction->setEnabled(false);
+        if (m_loadDiskActionC)  m_loadDiskActionC->setEnabled(false);
+        if (m_ejectDiskActionC) m_ejectDiskActionC->setEnabled(false);
+        if (m_loadDiskActionD)  m_loadDiskActionD->setEnabled(false);
+        if (m_ejectDiskActionD) m_ejectDiskActionD->setEnabled(false);
         return;
     }
 
     // Tape ↔ Disk exclusie
-    const bool canUseDisk = !m_isTapeLoaded;
-    const bool canUseTape = !m_isDiskLoadedA && !m_isDiskLoadedB;
+    const bool canUseTape = true;//!m_isDiskLoadedA && !m_isDiskLoadedB && !m_isDiskLoadedC && !m_isDiskLoadedD;
+    const bool canUseDisk = true;//!m_isTapeLoadedA && !m_isTapeLoadedB && !m_isTapeLoadedC && !m_isTapeLoadedD;
+
+    // Tape
+    if (m_tapeMenuA) m_tapeMenuA->setEnabled(canUseTape);
+    if (m_tapeMenuB) m_tapeMenuB->setEnabled(canUseTape);
+    if (m_tapeMenuC) m_tapeMenuC->setEnabled(canUseTape);
+    if (m_tapeMenuD) m_tapeMenuD->setEnabled(canUseTape);
+    if (canUseTape) {
+        if (m_loadTapeActionA)  m_loadTapeActionA->setEnabled(!m_isTapeLoadedA);
+        if (m_ejectTapeActionA) m_ejectTapeActionA->setEnabled(m_isTapeLoadedA);
+        if (m_loadTapeActionB)  m_loadTapeActionB->setEnabled(!m_isTapeLoadedB);
+        if (m_ejectTapeActionB) m_ejectTapeActionB->setEnabled(m_isTapeLoadedB);
+        if (m_loadTapeActionC)  m_loadTapeActionC->setEnabled(!m_isTapeLoadedC);
+        if (m_ejectTapeActionC) m_ejectTapeActionC->setEnabled(m_isTapeLoadedC);
+        if (m_loadTapeActionD)  m_loadTapeActionD->setEnabled(!m_isTapeLoadedD);
+        if (m_ejectTapeActionD) m_ejectTapeActionD->setEnabled(m_isTapeLoadedD);
+    } else {
+        if (m_loadTapeActionA)  m_loadTapeActionA->setEnabled(false);
+        if (m_ejectTapeActionA) m_ejectTapeActionA->setEnabled(false);
+        if (m_loadTapeActionB)  m_loadTapeActionB->setEnabled(false);
+        if (m_ejectTapeActionB) m_ejectTapeActionB->setEnabled(false);
+        if (m_loadTapeActionC)  m_loadTapeActionC->setEnabled(false);
+        if (m_ejectTapeActionC) m_ejectTapeActionC->setEnabled(false);
+        if (m_loadTapeActionD)  m_loadTapeActionD->setEnabled(false);
+        if (m_ejectTapeActionD) m_ejectTapeActionD->setEnabled(false);
+    }
 
     // Disks
     if (m_diskMenuA) m_diskMenuA->setEnabled(canUseDisk);
     if (m_diskMenuB) m_diskMenuB->setEnabled(canUseDisk);
+    if (m_diskMenuC) m_diskMenuC->setEnabled(canUseDisk);
+    if (m_diskMenuD) m_diskMenuD->setEnabled(canUseDisk);
 
     if (canUseDisk) {
         if (m_loadDiskActionA)  m_loadDiskActionA->setEnabled(!m_isDiskLoadedA);
@@ -1997,22 +2264,23 @@ void MainWindow::updateMediaMenuState()
 
         if (m_loadDiskActionB)  m_loadDiskActionB->setEnabled(!m_isDiskLoadedB);
         if (m_ejectDiskActionB) m_ejectDiskActionB->setEnabled(m_isDiskLoadedB);
+
+        if (m_loadDiskActionC)  m_loadDiskActionC->setEnabled(!m_isDiskLoadedC);
+        if (m_ejectDiskActionC) m_ejectDiskActionC->setEnabled(m_isDiskLoadedC);
+
+        if (m_loadDiskActionD)  m_loadDiskActionD->setEnabled(!m_isDiskLoadedD);
+        if (m_ejectDiskActionD) m_ejectDiskActionD->setEnabled(m_isDiskLoadedD);
     } else {
         if (m_loadDiskActionA)  m_loadDiskActionA->setEnabled(false);
         if (m_ejectDiskActionA) m_ejectDiskActionA->setEnabled(false);
         if (m_loadDiskActionB)  m_loadDiskActionB->setEnabled(false);
         if (m_ejectDiskActionB) m_ejectDiskActionB->setEnabled(false);
+        if (m_loadDiskActionC)  m_loadDiskActionC->setEnabled(false);
+        if (m_ejectDiskActionC) m_ejectDiskActionC->setEnabled(false);
+        if (m_loadDiskActionD)  m_loadDiskActionD->setEnabled(false);
+        if (m_ejectDiskActionD) m_ejectDiskActionD->setEnabled(false);
     }
 
-    // Tape
-    if (m_tapeMenu) m_tapeMenu->setEnabled(canUseTape);
-    if (canUseTape) {
-        if (m_loadTapeAction)  m_loadTapeAction->setEnabled(!m_isTapeLoaded);
-        if (m_ejectTapeAction) m_ejectTapeAction->setEnabled(m_isTapeLoaded);
-    } else {
-        if (m_loadTapeAction)  m_loadTapeAction->setEnabled(false);
-        if (m_ejectTapeAction) m_ejectTapeAction->setEnabled(false);
-    }
 }
 
 void MainWindow::onAdamInputModeChanged()
@@ -2189,4 +2457,15 @@ void MainWindow::onLoadState()
         Qt::QueuedConnection,
         Q_ARG(QString, filePath)
         );
+}
+
+void MainWindow::configurePlatformSettings()
+{
+#if defined(Q_OS_WIN)
+    qDebug() << "Running on Windows.";
+#elif defined(Q_OS_LINUX)
+    qDebug() << "Running on Linux.";
+#else
+    qDebug() << "Running on an unknown platform.";
+#endif
 }

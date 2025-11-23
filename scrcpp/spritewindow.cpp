@@ -238,7 +238,7 @@ void SpriteWindow::closeEvent(QCloseEvent *event)
 
 void SpriteWindow::showEvent(QShowEvent *event)
 {
-    if (!emul2) return;
+    if (!emulator) return;
     onRefresh();
 
     // Selecteer de eerste rij en geef de tabel de focus
@@ -294,7 +294,7 @@ void SpriteWindow::onCopyToClipboard()
 
 void SpriteWindow::onRefresh()
 {
-    if (!emul2) return;
+    if (!emulator) return;
     updateChanges();
 }
 
@@ -331,7 +331,7 @@ void SpriteWindow::refreshSprite(int spriteIndex, QPixmap &pixmap)
     QRgb fgcol, bgcol;
 
     pixmap.fill(Qt::transparent); // Begin met een transparante pixmap
-    if (!emul2) return;
+    if (!emulator) return;
 
     int address = spriteIndex * 4;
     int spriteWidth = m_is8x8 ? 8 : 16;
@@ -388,7 +388,7 @@ void SpriteWindow::refreshSprite(int spriteIndex, QPixmap &pixmap)
 
 void SpriteWindow::updateSpriteList()
 {
-    if (!emul2) return;
+    if (!emulator) return;
 
     // Bepaal sprite-eigenschappen
     BYTE R1 = tms.VR[1];
@@ -430,7 +430,7 @@ void SpriteWindow::updateSpriteList()
 
 void SpriteWindow::updateSpriteTable()
 {
-    if (!emul2) return;
+    if (!emulator) return;
 
     m_spriteTablePixmap.fill(Qt::black);
     QPainter painter(&m_spriteTablePixmap);
@@ -457,7 +457,7 @@ void SpriteWindow::updateSpriteTable()
 
 void SpriteWindow::updateSpriteView()
 {
-    if (!emul2 || m_selectedSprite == -1) {
+    if (!emulator || m_selectedSprite == -1) {
         m_spriteViewPixmap.fill(Qt::black);
         m_attrAddrLabel->setText("$----");
         m_tileAddrLabel->setText("$----");

@@ -1,32 +1,26 @@
-// logwidget.h
+// logwindow.h
 #ifndef LOGWINDOW_H
 #define LOGWINDOW_H
 
 #include <QWidget>
-#include <QPlainTextEdit>
 #include <QMutex>
+#include <QTableWidget>
+#include <QFont>
+#include <QColor>
 
 class LogWidget : public QWidget
 {
     Q_OBJECT
 public:
     explicit LogWidget(QWidget *parent = nullptr);
-
-    // toegang tot de editor voor manueel toevoegen (optioneel)
-    QPlainTextEdit* editor() const { return m_editor; }
-
-    // globale singleton-binding zodat we overal kunnen loggen
     static void bindTo(LogWidget *inst);
-
-    // roep deze op om een regel manueel te loggen
     static void log(const QString &line);
-
-    // installeer globale Qt message handler (qDebug/qWarning/...),
-    // aan te roepen eenmaal in main() nadat bindTo() gebeurd is
     static void installQtHandler();
 
+public slots:
+    void clear();
+
 signals:
-    // wordt gebruikt om vanuit eender welke thread veilig in de GUI-thread te schrijven
     void appendRequested(const QString &line);
 
 private slots:
@@ -36,7 +30,13 @@ private:
     static LogWidget *s_instance;
     static QMutex     s_mutex;
 
-    QPlainTextEdit *m_editor;
+    QTableWidget *m_table = nullptr;
+    QFont         m_monoFont;
+
+    // Kleuren voor zebra-effect (zoals in PrintWindow)
+    QColor   m_rowLight = QColor(0x1D,0X1D,0X1D);
+    QColor   m_rowDark  = QColor(0X2D,0X2D,0X2D);
+    QColor   m_textColor = QColor(0XA5,0XA3,0XAE); // <-- Dit is de kleur die nu gebruikt zal worden.
 };
 
 #endif // LOGWIDGET_H

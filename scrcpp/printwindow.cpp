@@ -22,6 +22,10 @@
 #include <QResizeEvent>
 #include <QFrame>
 #include <QStyledItemDelegate>
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QContextMenuEvent>
+#include <algorithm>
 
 extern "C" {
 #include "tms9928a.h"
@@ -29,7 +33,7 @@ extern tTMS9981A tms;
 }
 extern BYTE VDP_Memory[0x10000];
 
-// ===== Delegates voor 3-koloms look =====
+// ===== Delegates (Standaard weergave) =====
 class TextZebraDelegate : public QStyledItemDelegate
 {
 public:
@@ -53,6 +57,8 @@ public:
         o.backgroundBrush = Qt::NoBrush;
         o.palette.setColor(QPalette::Text, Qt::black);
         o.palette.setColor(QPalette::WindowText, Qt::black);
+        o.textElideMode = Qt::ElideRight;
+
         QStyledItemDelegate::paint(p, o, idx);
     }
 
@@ -110,7 +116,7 @@ void PrintWindow::setAsSink(PrintWindow* w)
     s_instance = w;
 }
 
-// ====== C-bridge: AdamNet → UI (linker-definitie) ======
+// ====== C-bridge: AdamNet → UI ======
 extern "C" void adam_printer_chunk(const uint8_t* data, int len)
 {
     if (!data || len <= 0) return;
@@ -134,7 +140,7 @@ PrintWindow::PrintWindow(QWidget* parent)
     setFixedWidth(550);
     setFixedHeight(700);
 
-    // ===== statusbar (zelfde look/hoogte als MainWindow) =====
+    // ===== statusbar =====
     m_status   = new QStatusBar(this);
     m_status->setFixedHeight(21);
     m_statLeft = new QLabel(this);
@@ -160,10 +166,9 @@ PrintWindow::PrintWindow(QWidget* parent)
     m_paperLabel = new QLabel(this);
     m_paperLabel->setObjectName("paperLabel");
     m_paperLabel->setFrameShape(QFrame::NoFrame);
-    //m_paperLabel->setStyleSheet("#paperLabel { background: rgb(70,70,20); }"); // neutrale backplate
     m_paperLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
-    // QTableWidget (3 kolommen) als kind van m_paperLabel
+    // QTableWidget (3 kolommen)
     m_table = new QTableWidget(m_paperLabel);
     m_table->setColumnCount(3);
     m_table->setStyleSheet(
@@ -174,10 +179,17 @@ PrintWindow::PrintWindow(QWidget* parent)
     m_table->horizontalHeader()->setVisible(false);
     m_table->verticalHeader()->setVisible(false);
     m_table->setShowGrid(false);
-    m_table->setSelectionMode(QAbstractItemView::NoSelection);
+
+    // Selectie
+    m_table->setSelectionMode(QAbstractItemView::ContiguousSelection);
+    m_table->setSelectionBehavior(QAbstractItemView::SelectItems);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+
+    // UI Settings
     m_table->setWordWrap(false);
+    m_table->setTextElideMode(Qt::ElideRight);
     m_table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+
     m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
     m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
@@ -189,11 +201,11 @@ PrintWindow::PrintWindow(QWidget* parent)
     m_table->setItemDelegateForColumn(0, new HoleDelegate(m_rowLight, m_rowDark, m_holeDiameter, m_holePadding, m_table));
     m_table->setItemDelegateForColumn(2, new HoleDelegate(m_rowLight, m_rowDark, m_holeDiameter, m_holePadding, m_table));
 
-    // Monospace font in de tabel
+    // Font
     m_monoFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     applyTextFont(m_monoFont);
 
-    // Layout IN de m_posterLabel (boven)
+    // Layout
     {
         auto *paperLay = new QVBoxLayout(m_paperLabel);
         paperLay->setContentsMargins(0,0,0,0);
@@ -201,7 +213,7 @@ PrintWindow::PrintWindow(QWidget* parent)
         paperLay->addWidget(m_table);
     }
 
-    // ===== ONDER: bitmap QLabel (fixed height 73) =====
+    // ===== ONDER: bitmap =====
     m_bitmapLabel = new QLabel(this);
     m_bitmapLabel->setFixedSize(600,168);
     m_bitmapLabel->setContentsMargins(0,0,0,0);
@@ -211,31 +223,39 @@ PrintWindow::PrintWindow(QWidget* parent)
         "QHeaderView::section{background:#1e1e1e; border:0;}"
         );
 
-    // Eventueel default bitmap uit resources
     {
-        QPixmap logo(":/images/images/Adam_PrinterBG.png"); // laat zo als je dit bestand hebt
+        QPixmap logo(":/images/images/Adam_PrinterBG.png");
         if (!logo.isNull())
             m_bitmapLabel->setPixmap(logo);
     }
 
     // ===== Menu =====
     QMenu* menuFont   = menuBar()->addMenu(tr("&Font"));
-    QMenu* menuExport = menuBar()->addMenu(tr("&Export"));
-    QMenu* menuView   = menuBar()->addMenu(tr("&View"));
+    QMenu* menuView   = menuBar()->addMenu(tr("&Options"));
 
-    QAction* actChooseFont = menuFont->addAction(tr("Choose Font..."));
+    QAction* actChooseFont = menuFont->addAction(tr("Choose workspace Font..."));
     connect(actChooseFont, &QAction::triggered, this, &PrintWindow::chooseFont);
 
-    QAction* actClear = menuView->addAction(tr("Clear"));
+    QAction* actClear = menuView->addAction(tr("Clear workspace"));
     connect(actClear, &QAction::triggered, this, &PrintWindow::clearText);
 
-    QAction* actExportPdf = menuExport->addAction(tr("Naar PDF..."));
+    menuView->addSeparator();
+    QAction* actRemoveFirstChar = menuView->addAction(tr("Remove ']' first char"));
+    actRemoveFirstChar->setCheckable(true);
+    connect(actRemoveFirstChar, &QAction::toggled, this, &PrintWindow::toggleRemoveFirstChar);
+
+    menuView->addSeparator();
+
+    QAction* actExportPdf = menuView->addAction(tr("Workspace to PDF"));
     connect(actExportPdf, &QAction::triggered, this, &PrintWindow::saveAsPdf);
 
-    QAction* actExportTxt = menuExport->addAction(tr("Naar TXT..."));
+    QAction* actExportTxt = menuView->addAction(tr("Workspace to TXT"));
     connect(actExportTxt, &QAction::triggered, this, &PrintWindow::saveAsTxt);
 
-    // ===== Centrale lay-out (zonder splitter): boven-label en onder-label gestapeld =====
+    QAction* actCopyAll = menuView->addAction(tr("Copy workspace to clipboard"));
+    connect(actCopyAll, &QAction::triggered, this, &PrintWindow::copyAllToClipboard);
+
+    // ===== Centrale lay-out =====
     QWidget* c = new QWidget(this);
     auto *mainLay = new QVBoxLayout(c);
     mainLay->setContentsMargins(0,0,0,0);
@@ -248,10 +268,6 @@ PrintWindow::PrintWindow(QWidget* parent)
 
     updateTopContainerMaxHeight();
     updateStatus();
-    // flushCurrentLine(true);
-    // flushCurrentLine(true);
-    // flushCurrentLine(true);
-    // flushCurrentLine(true);
 }
 
 PrintWindow::~PrintWindow()
@@ -268,10 +284,8 @@ void PrintWindow::resizeEvent(QResizeEvent* ev)
 {
     QMainWindow::resizeEvent(ev);
 
-    // Bovenste container maximaal resthoogte laten innemen
     updateTopContainerMaxHeight();
 
-    // bitmap meeschalen (ratio behouden)
     if (m_bitmapLabel && !m_bitmapLabel->pixmap(Qt::ReturnByValue).isNull()) {
         QPixmap px = m_bitmapLabel->pixmap(Qt::ReturnByValue);
         m_bitmapLabel->setPixmap(px.scaled(m_bitmapLabel->size(),
@@ -279,6 +293,21 @@ void PrintWindow::resizeEvent(QResizeEvent* ev)
                                            Qt::SmoothTransformation));
     }
 }
+
+void PrintWindow::contextMenuEvent(QContextMenuEvent* event)
+{
+    if (!m_table) {
+        QMainWindow::contextMenuEvent(event);
+        return;
+    }
+
+    QMenu menu(this);
+    QAction* copyAction = menu.addAction(tr("Copy Selection to clipboard"));
+    connect(copyAction, &QAction::triggered, this, &PrintWindow::copySelection);
+    copyAction->setEnabled(!m_table->selectedItems().isEmpty());
+    menu.exec(event->globalPos());
+}
+
 
 // ---------------- helpers ----------------
 void PrintWindow::updateTopContainerMaxHeight()
@@ -288,6 +317,11 @@ void PrintWindow::updateTopContainerMaxHeight()
     int topMax = height() - chrome - m_bitmapLabel->height();
     if (topMax < 0) topMax = 0;
     m_paperLabel->setMaximumHeight(topMax);
+}
+
+void PrintWindow::toggleRemoveFirstChar(bool checked)
+{
+    m_removeFirstChar = checked;
 }
 
 void PrintWindow::applyTextFont(const QFont& f)
@@ -309,7 +343,6 @@ void PrintWindow::updateStatus()
     if (!m_status) return;
     if (m_statLeft)  m_statLeft ->setText(QStringLiteral("Lines: %1").arg(m_totalLines));
     if (m_statMid)   m_statMid  ->setText(QStringLiteral("Bytes: %1").arg(m_totalBytes));
-    // Right = hint
 }
 
 void PrintWindow::ensureLastRowVisible()
@@ -325,6 +358,17 @@ void PrintWindow::flushCurrentLine(bool forceEmpty)
     if (m_currentLine.isEmpty() && !forceEmpty)
         return;
 
+    QString lineToDisplay = m_currentLine;
+
+    // 1. ']' verwijderen
+    if (m_removeFirstChar && !lineToDisplay.isEmpty() && lineToDisplay.at(0) == QLatin1Char(']')) {
+        lineToDisplay.remove(0, 1);
+    }
+
+    // 2. Clean data
+    lineToDisplay.replace('\n', ' ');
+    lineToDisplay.replace('\r', ' ');
+
     const int row = m_table->rowCount();
     m_table->insertRow(row);
 
@@ -334,8 +378,10 @@ void PrintWindow::flushCurrentLine(bool forceEmpty)
     m_table->setItem(row, 0, l);
 
     // center text
-    auto* t = new QTableWidgetItem(m_currentLine);
+    auto* t = new QTableWidgetItem(lineToDisplay);
     t->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    t->setToolTip(lineToDisplay);
+
     m_table->setItem(row, 1, t);
 
     // right hole
@@ -350,50 +396,92 @@ void PrintWindow::flushCurrentLine(bool forceEmpty)
     updateStatus();
 }
 
+void PrintWindow::copySelection()
+{
+    if (!m_table || m_table->selectedItems().isEmpty()) return;
+
+    QModelIndexList selection = m_table->selectionModel()->selectedIndexes();
+
+    if (selection.isEmpty()) return;
+
+    std::sort(selection.begin(), selection.end(), [](const QModelIndex& a, const QModelIndex& b) {
+        if (a.row() != b.row()) return a.row() < b.row();
+        return a.column() < b.column();
+    });
+
+    QString text;
+    int currentRow = -1;
+
+    for (const QModelIndex& index : selection) {
+        if (index.row() != currentRow) {
+            if (currentRow != -1) text += QLatin1Char('\n');
+            currentRow = index.row();
+        } else {
+            text += QLatin1Char('\t');
+        }
+        text += index.data().toString();
+    }
+
+    QClipboard* clipboard = QGuiApplication::clipboard();
+    clipboard->setText(text);
+}
+
 // ---------------- Public slots ----------------
+
+// --- DE OPLOSSING VOOR HET VASTLOPEN ---
 void PrintWindow::appendPrinterBytes(const QByteArray& bytes)
 {
     QMutexLocker lk(&m_appendMutex);
 
-    // tel bytes
     m_totalBytes += std::uint64_t(bytes.size());
     updateStatus();
 
-    for (unsigned char c : bytes) {
-        unsigned char b = c & 0x7F;  // <-- high-bit strippen (SmartWriter zet soms bit7)
+    for (unsigned char raw_c : bytes) {
+        if (raw_c == 0x8D) continue; // hardware wrap negeren
 
-        switch (b) {
-        case 0x0D: // CR
+        unsigned char b = raw_c & 0x7F;
+
+        if (b == 0x0D || b == 0x0A) {
+            int len = m_currentLine.length();
+
+            // HIER IS DE FIX:
+            // We negeren de Enter ALLEEN als de regel 'precies vol' is (veelvoud van 80).
+            // Dus: 80, 160, 240... -> Negeren.
+            // Maar: 150, 45, 90... -> NIET negeren, gewoon printen!
+            // We gebruiken een kleine marge (79-81) voor veiligheid.
+
+            int remainder = len % 80;
+            bool isWrapPoint = (remainder == 0 || remainder == 1 || remainder == 79);
+
+            if (len >= 79 && isWrapPoint) {
+                // Dit is waarschijnlijk een auto-wrap. Negeren.
+                continue;
+            }
+
+            // Anders: Echte Enter (ook al is de regel lang, hij is niet 'precies' vol)
             flushCurrentLine();
             m_atLineStart = true;
-            break;
+            continue;
+        }
 
-        case 0x0A: // LF
-            flushCurrentLine();
-            m_atLineStart = true;
-            break;
-
-        case 0x0C: // FF – page break
+        if (b == 0x0C) { // FF
             flushCurrentLine(true);
             m_currentLine = QStringLiteral("-----[Page Break]-----");
             flushCurrentLine();
             flushCurrentLine(true);
             m_atLineStart = true;
-            break;
+            continue;
+        }
 
-        case 0x09: // TAB (optioneel): 4 spaties
+        if (b == 0x09) { // TAB
             m_currentLine.append(QString(4, QLatin1Char(' ')));
             m_atLineStart = false;
-            break;
+            continue;
+        }
 
-        default:
-            // printables ook op 7-bit testen
-            if (b >= 0x20 && b <= 0x7E) {
-                m_currentLine.append(QChar::fromLatin1(char(b)));
-                m_atLineStart = false;
-            }
-            // alle andere codes negeren
-            break;
+        if (b >= 0x20 && b <= 0x7E) {
+            m_currentLine.append(QChar::fromLatin1(char(b)));
+            m_atLineStart = false;
         }
     }
 }
@@ -405,7 +493,6 @@ void PrintWindow::saveAsPdf()
     const QString path = QFileDialog::getSaveFileName(this, tr("Opslaan als PDF"), def, "PDF (*.pdf)");
     if (path.isEmpty()) return;
 
-    // concat alle center-kolom regels
     QString all;
     all.reserve(m_table->rowCount() * 32);
     for (int r = 0; r < m_table->rowCount(); ++r) {
@@ -447,6 +534,26 @@ void PrintWindow::saveAsTxt()
     ts.flush();
 }
 
+void PrintWindow::copyAllToClipboard()
+{
+    if (!m_table) return;
+
+    QString allText;
+    allText.reserve(m_table->rowCount() * 40);
+
+    for (int r = 0; r < m_table->rowCount(); ++r) {
+        if (auto* it = m_table->item(r, 1)) {
+            allText += it->text();
+        }
+        if (r + 1 < m_table->rowCount()) {
+            allText += QLatin1Char('\n');
+        }
+    }
+
+    QClipboard* clipboard = QGuiApplication::clipboard();
+    clipboard->setText(allText);
+}
+
 void PrintWindow::chooseFont()
 {
     bool ok=false;
@@ -483,6 +590,5 @@ void PrintWindow::clearText()
     m_totalBytes = 0;
     m_totalLines = 0;
     updateStatus();
-
-    //clearBitmap();
 }
+
