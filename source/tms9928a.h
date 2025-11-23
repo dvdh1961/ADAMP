@@ -110,6 +110,7 @@ extern "C" unsigned char tms9918_readctrl(void);
 
 extern "C" int ScanSprites(unsigned char Y,unsigned int *Mask);
 extern "C" unsigned char CheckSprites(void);
+extern "C" BYTE ReadStatus9918(void);
 
 #else
 extern void tms9918_reset(void);
@@ -122,8 +123,8 @@ extern unsigned char tms9918_readctrl(void);
 
 extern int ScanSprites(unsigned char Y,unsigned int *Mask);
 extern unsigned char CheckSprites(void);
+extern BYTE ReadStatus9918(void);
 #endif
 
-BYTE ReadStatus9918(void);
 
 #endif

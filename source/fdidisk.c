@@ -11,7 +11,7 @@
 /**     commercially. Please, notify me, if you make any    **/
 /**     changes to this file.                               **/
 /*************************************************************/
-#include "FDIDisk.h"
+#include "fdidisk.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

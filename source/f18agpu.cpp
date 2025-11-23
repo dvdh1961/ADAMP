@@ -23,6 +23,7 @@
  */
 //---------------------------------------------------------------------------
 #include <cstdlib>
+#include <cstdint>
 //#include <vcl.h>
 #pragma hdrstop
 
@@ -1869,7 +1870,7 @@ void f18agpu_stcr(void)
 void f18agpu_mpy(void)
 {
     //unsigned short x1,x3;
-    unsigned __int32 x3;
+    uint32_t x3;
     unsigned short x1;
 
     F18AGPUFORMATIX;
@@ -1937,7 +1938,7 @@ void f18agpu_mpy(void)
     // TODO: We should be able to prove on real hardware that the early out works like this (greater than, and not 0) with a few choice test cases
 void f18agpu_div(void)
 {
-    unsigned __int32 x3;
+    uint32_t x3;
     unsigned short x1,x2;
     //unsigned short x1,x2,x3;
 
@@ -1965,8 +1966,8 @@ void f18agpu_div(void)
 #else
         // lets try it the iterative way, should be able to afford it
         // tested with 10,000,000 random combinations, should be accurate :)
-        unsigned __int32 mask = (0xFFFF8000);   // 1 extra bit, as noted above
-        unsigned __int32 divisor = (x2<<15);    // slide up into place
+        uint32_t mask = (0xFFFF8000);   // 1 extra bit, as noted above
+        uint32_t divisor = (x2<<15);    // slide up into place
         int cnt = 16;                           // need to fill 16 bits
         x1 = 0;                                 // initialize quotient, remainder will end up in x3 LSW
         while (x2 <= x3) {
