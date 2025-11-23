@@ -19,6 +19,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ## 🚀 Features
 
+Version 0.1.10.25
 - 🎮 **ColecoVision** game support (`.rom`, `.bin`, `.col`)
 - 🪛 **Built-in Debugging Tools**
   - Tile, Sprite, VRAM, RAM, and Disassembly viewers  
