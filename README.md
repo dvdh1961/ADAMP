@@ -62,7 +62,7 @@ Version 0.2.11.25
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/AdamPpic1.png)
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/AdamPpic2.png)
 ## Smartbasic list to Clipboard
-![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/Animatie.gif)
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_PRINTER.gif)
 ## Debugger breakpoint
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_DEBUG.gif)
 
