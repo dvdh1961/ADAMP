@@ -69,12 +69,13 @@ Version 0.2.11.25
 ## Credits
 
 Thanks to everyone who shared their knowledge and inspiration — without them, this project would never have come to life.
-- E.mul T.wo       (https://github.com/alekmaul/emultwo)
-- Marat Fayzullin  (https://fms.komkon.org/ColEm/)
-- wavemotion-dave  (https://github.com/wavemotion-dave/ColecoDS)
-- Fuse             (https://fuse-emulator.sourceforge.net/)
-- EightyOne        (https://sourceforge.net/projects/eightyone-sinclair-emulator/)
-- Russell Marks    (https://sz81.sourceforge.net/)
+- E.mul T.wo           (https://github.com/alekmaul/emultwo)
+- Marat Fayzullin      (https://fms.komkon.org/ColEm/)
+- wavemotion-dave      (https://github.com/wavemotion-dave/ColecoDS)
+- Fuse                 (https://fuse-emulator.sourceforge.net/)
+- EightyOne            (https://sourceforge.net/projects/eightyone-sinclair-emulator/)
+- Russell Marks        (https://sz81.sourceforge.net/)
+- Juergen Buchmueller  (z80 code)
 
 ## Support ADAM+
 
