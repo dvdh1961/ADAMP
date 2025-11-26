@@ -22,7 +22,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 ![Current Release](https://img.shields.io/badge/Version-V0.2.1125-yellow)
 ![Total Downloads](https://img.shields.io/github/downloads/dvdh1961/ADAMP/total.svg)
 [![YouTube](https://img.shields.io/badge/YouTube-FF0000?logo=youtube&logoColor=white)](https://youtu.be/vobLE2F9Cc0)
-[![License: GPL-2.0](https://img.shields.io/badge/License-PolyForm%20Noncommercial%20License%201.0.0-blue.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0/)
+[![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%20License%201.0.0-blue.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0/)
 
 ![Commits](https://img.shields.io/github/commits-since/dvdh1961/ADAMP/latest)
 [![Contributors](https://img.shields.io/github/contributors/dvdh1961/ADAMP)](https://github.com/dvdh1961/ADAMP/graphs/contributors)
