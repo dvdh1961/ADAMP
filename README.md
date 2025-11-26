@@ -1,5 +1,6 @@
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP.png)
 
+
 This software is free to use for personal, educational, and non-profit purposes under the PolyForm Noncommercial License 1.0.0.
 
 "Certain portions of the software are subject to third-party copyright, prohibiting the commercial use of this compilation. 
