@@ -23,6 +23,7 @@ SOURCES += \
            $$PWD/scrcpp/screenwidget.cpp \
            $$PWD/scrcpp/setbreakpointdialog.cpp \
            $$PWD/scrcpp/settingswindow.cpp \
+           $$PWD/scrcpp/simplejoystick.cpp \
            $$PWD/scrcpp/soundmanager.cpp \
            $$PWD/scrcpp/spritewindow.cpp
 
@@ -46,6 +47,7 @@ HEADERS += \
            $$PWD/scrcpp/screenwidget.h \
            $$PWD/scrcpp/setbreakpointdialog.h \
            $$PWD/scrcpp/settingswindow.h \
+           $$PWD/scrcpp/simplejoystick.h \
            $$PWD/scrcpp/soundmanager.h \
            $$PWD/scrcpp/spritewindow.h
 
