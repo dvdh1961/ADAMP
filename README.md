@@ -33,6 +33,22 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ## 🚀 Features
 
+Version 0.3.11.15 (Soon available)
+- LICENSE changed to PolyForm Noncommercial License 1.0.0 (because some software issues with licensing rules)
+- Added USB joystick support
+- Added resizing application to any format
+- Added switch bezels on/off
+- Added snap windows on/off
+- Added saving geometry
+- Changed installation path (windows --> no program files anymore)
+- Media map now standard configured into working directory (No save issues anymore)
+
+Version 0.2.11.25
+- LINUX VERSION x86-64 added
+- Added 4 tapes / 4 disks support
+- Added printer clipboard and removed some bugs with PR#1
+- Updated logging
+
 Version 0.1.10.25
 - 🎮 **ColecoVision** game support (`.rom`, `.bin`, `.col`)
 - 🪛 **Built-in Debugging Tools**
@@ -47,12 +63,6 @@ Version 0.1.10.25
 - 🖥️ **Full screen option with buildin bezels 
 - ✒️ **LOAD & SAVE on your media!
 - 💾 **Save / Load Game State**
-
-Version 0.2.11.25
-- LINUX VERSION x86-64 added
-- Added 4 tapes / 4 disks support
-- Added printer clipboard and removed some bugs with PR#1
-- Updated logging
 
 ## 💡Info
 - You need the free community QT Creator to build the project.
