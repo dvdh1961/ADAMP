@@ -84,5 +84,5 @@ ADAM+ is free but you can donate to support its development
 
 ## License
 
-ADAM+ is licensed under the [GNU General Public License v3.0](https://github.com/dvdh1961/ADAMP/blob/master/LICENSE), see [LICENSE](https://github.com/dvdh1961/ADAMP/blob/master/LICENSE) for more information.
+ADAM+ is licensed under the [GNU General Public License v2.0](https://github.com/dvdh1961/ADAMP/blob/master/LICENSE), see [LICENSE](https://github.com/dvdh1961/ADAMP/blob/master/LICENSE) for more information.
 
