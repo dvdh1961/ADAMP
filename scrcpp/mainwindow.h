@@ -2,11 +2,12 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QTimer> // QTimer wordt niet meer gebruikt, maar mag blijven staan
+#include <QTimer>
 #include <QThread>
 #include <QMoveEvent>
 #include <QSettings>
 #include <QMap>
+#include "simplejoystick.h"
 
 class ColecoController;
 class ScreenWidget;
@@ -51,6 +52,7 @@ public slots:
     void onShowPatternTable(bool checked);
     void onShowSpriteTable(bool checked);
     void onShowPrinterWindow();
+    void onToggleSnap(bool checked);
 
     // callbacks van emulator / thread
     void onThreadFinished();
@@ -74,6 +76,8 @@ public slots:
     void onSaveState();
     void onLoadState();
     void onSaveScreenshot();
+    void onResetWindowSize();
+    void onOpenJoypadMapper();
 
 private slots:
     void onLoadDisk(int drive);
@@ -87,6 +91,7 @@ private slots:
     void onToggleFullScreen(bool checked);
     void onFrameReceived(const QImage &frame);
     void onCycleScalingMode();
+    void onToggleBezels(bool checked);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -109,7 +114,6 @@ private:
     void loadSettings();
     void showAboutDialog();
     void applyHardwareConfig(const HardwareConfig& cfg);
-    void onOpenJoypadMapper();
     void updateFullScreenWallpaper();
 
 private:
@@ -120,6 +124,7 @@ private:
     PatternWindow    *m_patternWindow = nullptr;
     SpriteWindow     *m_spriteWindow = nullptr;
     SettingsWindow   *m_settingsWindow = nullptr;
+    SimpleJoystick *m_joystick = nullptr;
 
     // hoofd UI elementen
     ScreenWidget *m_screenWidget = nullptr;
@@ -194,6 +199,9 @@ private:
 
     QAction* m_actSaveState       = nullptr;
     QAction* m_actLoadState       = nullptr;
+    QAction* m_actResetSize       = nullptr;
+    QAction* m_actToggleBezels    = nullptr;
+    QAction* m_actToggleSnap = nullptr;
 
     // --- MEDIA STATUSBALK LABELS ---
     QLabel *m_diskLabelA          = nullptr;
@@ -232,6 +240,8 @@ private:
     bool m_isTapeLoadedD;
     int  m_scalingMode; // 0=Sharp, 1=Smooth, 2=EPX
     bool m_startFullScreen;
+    bool m_useBezels;
+    bool m_snapWindows;
 
     QActionGroup* m_adamInputGroup;
     QMenu* m_adamInputMenu;

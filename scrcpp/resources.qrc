@@ -11,8 +11,6 @@
         <file>images/machine_coleco.png</file>
         <file>images/joypad.png</file>
         <file>images/hw_printer.png</file>
-        <file>images/wallpaper_adamp.png</file>
-        <file>images/wallpaper_coleco.png</file>
         <file>images/adamp_logo.png</file>
         <file>images/Adam_PrinterBG.png</file>
         <file>images/roms.png</file>
@@ -27,5 +25,7 @@
         <file>images/SSTEP.png</file>
         <file>images/GOTO.png</file>
         <file>images/STEP.png</file>
+        <file>images/wallpaper_adam.png</file>
+        <file>images/wallpaper_coleco.png</file>
     </qresource>
 </RCC>

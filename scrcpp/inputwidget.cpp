@@ -453,3 +453,43 @@ void InputWidget::paintEvent(QPaintEvent *e)
     drawHud(p, hudRect());
 }
 
+void InputWidget::setJoystickDirection(bool up, bool down, bool left, bool right)
+{
+    m_pad0.up = up;
+    m_pad0.down = down;
+    m_pad0.left = left;
+    m_pad0.right = right;
+    coleco_setController(0, m_pad0);
+}
+
+void InputWidget::setJoystickFireL(bool pressed)
+{
+    m_pad0.fireL = pressed;
+    coleco_setController(0, m_pad0);
+}
+
+void InputWidget::setJoystickFireR(bool pressed)
+{
+    m_pad0.fireR = pressed;
+    coleco_setController(0, m_pad0);
+}
+
+void InputWidget::setJoystickStart(bool pressed)
+{
+    // Start knop -> Druk Keypad '1' in
+    if (pressed) { m_pad0.keypad = 1; }
+    else if (m_pad0.keypad == 1) { m_pad0.keypad = -1; }
+
+    ib_set_keypad_bit(1, pressed);
+    coleco_setController(0, m_pad0);
+}
+
+void InputWidget::setJoystickSelect(bool pressed)
+{
+    // Select knop -> Druk Keypad '*' (index 10) in
+    if (pressed) { m_pad0.keypad = 10; }
+    else if (m_pad0.keypad == 10) { m_pad0.keypad = -1; }
+
+    ib_set_keypad_bit(10, pressed);
+    coleco_setController(0, m_pad0);
+}

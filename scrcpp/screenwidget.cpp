@@ -268,4 +268,31 @@ void ScreenWidget::paintEvent(QPaintEvent *event)
 
     // 6. Teken het spel
     p.drawImage(targetRect, imageToDraw);
+
+    Q_UNUSED(event);
+
+    // ... (Hier staat je code die m_mutex lockt en frame ophaalt) ...
+    // ... (Hier staat je code die scaling berekent en de achtergrond vult) ...
+
+    // 5. Teken de achtergrond
+    p.fillRect(rect(), bgColor);
+
+    // 6. Teken het spel
+    p.drawImage(targetRect, imageToDraw);
+
+    // --- NIEUW: TEKEN ZWARTE BORDER (4px) ---
+    // We tekenen dit NA de image, zodat het er netjes omheen ligt.
+
+    QPen borderPen(Qt::black); // Kleur: Zwart
+    borderPen.setWidth(4);     // Dikte: 4 pixels
+
+    // MiterJoin zorgt voor scherpe, rechte hoeken in plaats van afgeronde
+    borderPen.setJoinStyle(Qt::MiterJoin);
+
+    p.setPen(borderPen);
+    p.setBrush(Qt::NoBrush); // Zorg dat we alleen de lijnen tekenen, niet vullen
+
+    // Teken de rechthoek precies op de rand van het spelbeeld
+    p.drawRect(targetRect);
+    // ----------------------------------------
 }

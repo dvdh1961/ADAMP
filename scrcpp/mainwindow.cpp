@@ -16,6 +16,7 @@
 #include "joypadwindow.h"
 #include "kbwidget.h"
 #include "printwindow.h"
+#include "simplejoystick.h"
 
 // Qt includes
 #include <QMenuBar>
@@ -98,23 +99,18 @@ MainWindow::MainWindow(QWidget *parent)
     QCoreApplication::setOrganizationName("DVdHSoft");
     QCoreApplication::setApplicationName("ADAMP_EMU");
 
-    // Hier kun je de versie eenvoudig wijzigen
-    appVersion = "0.2.1125";
+    // Version
+    appVersion = "0.3.1125";
 
     setWindowTitle(QString("ADAM+ Emulator - v%1").arg(appVersion));
 
-    // --- VOEG DE WALLPAPER-LABEL TOE ---
     m_wallpaperLabel = new QLabel(this);
-    // BELANGRIJK: U moet zelf een .png of .jpg toevoegen aan uw resources (qrc)
-    // en hier het pad ernaartoe opgeven.
     QPixmap wallpaper(":/images/images/wallpaper_coleco.png");
     m_wallpaperLabel->setPixmap(wallpaper);
-    m_wallpaperLabel->setScaledContents(true); // Rek de afbeelding uit
-    m_wallpaperLabel->hide(); // Verberg standaard
-    // --- EINDE TOEVOEGING ---
+    m_wallpaperLabel->setScaledContents(true);
+    m_wallpaperLabel->hide();
 
     m_screenWidget = new ScreenWidget(this);
-    //m_screenWidget->setScale(2.9);
 
     m_logoLabel = new QLabel(this);
     QPixmap logoPixmap(":/images/images/adamp_logo.png");
@@ -125,19 +121,15 @@ MainWindow::MainWindow(QWidget *parent)
     m_logoLabel->setAttribute(Qt::WA_TranslucentBackground);
 
     QVBoxLayout *mainLayout = new QVBoxLayout;
-    mainLayout->setContentsMargins(0, 0, 0, 0); // Geen witruimte rondom
+    mainLayout->setContentsMargins(0, 0, 0, 0);
 
-    // 1. Voeg het spelscherm toe met een stretch factor van 1
-    //    Dit betekent dat het alle beschikbare verticale ruimte zal innemen.
     mainLayout->addWidget(m_screenWidget, 1);
 
-    // 2. Voeg het logo toe met een stretch factor van 0
-    //    en lijn het onderaan en in het midden uit.
     mainLayout->addWidget(m_logoLabel, 0, Qt::AlignHCenter | Qt::AlignBottom);
 
 
     m_ntableWindow = new NTableWindow(this);
-    m_ntableWindow->hide(); // Zorg dat het verborgen start
+    m_ntableWindow->hide();
 
     m_patternWindow = new PatternWindow(this);
     m_patternWindow->hide();
@@ -147,14 +139,11 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_settingsWindow = new SettingsWindow(this);
 
-    // 4. Maak een container-widget
     QWidget *centralContainer = new QWidget(this);
     centralContainer->setLayout(mainLayout);
 
-    // Maak de *hele* centrale container transparant
-    centralContainer->setAttribute(Qt::WA_TranslucentBackground); // <-- VOEG DIT TOE
+    centralContainer->setAttribute(Qt::WA_TranslucentBackground);
 
-    // 5. Stel de container in als de central widget
     setCentralWidget(centralContainer);
 
     m_wallpaperLabel->lower();
@@ -162,21 +151,39 @@ MainWindow::MainWindow(QWidget *parent)
     m_inputWidget = new InputWidget(this);
     m_inputWidget->attachTo(m_screenWidget);
     m_inputWidget->setFocusPolicy(Qt::NoFocus);
-    m_inputWidget->setOverlayVisible(false); // Verberg de overlay...
-    m_inputWidget->show();                   // ...maar toon de (transparante) widget
+    m_inputWidget->setOverlayVisible(false);
+    m_inputWidget->show();
     m_inputWidget->raise();
+
+    m_joystick = new SimpleJoystick(this);
+
+    // Verbind de 'schone' signalen naar de 'schone' slots
+    connect(m_joystick, &SimpleJoystick::directionChanged,
+            m_inputWidget, &InputWidget::setJoystickDirection);
+
+    connect(m_joystick, &SimpleJoystick::fireLeftChanged,
+            m_inputWidget, &InputWidget::setJoystickFireL);
+
+    connect(m_joystick, &SimpleJoystick::fireRightChanged,
+            m_inputWidget, &InputWidget::setJoystickFireR);
+
+    connect(m_joystick, &SimpleJoystick::startPressed,
+            m_inputWidget, &InputWidget::setJoystickStart);
+
+    connect(m_joystick, &SimpleJoystick::selectPressed,
+            m_inputWidget, &InputWidget::setJoystickSelect);
+
+    m_joystick->startPolling(0);
 
     setUpLogWindow();
 
-    this->setFixedWidth(770);
-    this->setFixedHeight(700);
+    this->setMinimumSize(770, 700);
 
     configurePlatformSettings();
 
     setStatusBar();
 
     loadSettings();
-    // Menu's/acties
     setupUI();
 
     m_screenWidget->setScalingMode(static_cast<ScalingMode>(m_scalingMode));
@@ -185,7 +192,6 @@ MainWindow::MainWindow(QWidget *parent)
         m_sysLabel->setText(m_machineType ? "ADAM" : "COLECO");
     }
 
-    // Pas de geladen instellingen toe op de UI bij het opstarten ---
     HardwareConfig initialConfig;
     initialConfig.machine = (m_machineType ? MACHINE_ADAM : MACHINE_COLECO);
     initialConfig.palette = m_paletteIndex;
@@ -195,7 +201,6 @@ MainWindow::MainWindow(QWidget *parent)
     initialConfig.rollerCtrl = m_ctrlRoller;
     initialConfig.superAction = m_ctrlSuperAction;
 
-    // Deze functie zal nu de menu-items correct instellen (enabled/disabled)
     applyHardwareConfig(initialConfig);
 
     connect(m_actShowLog, &QAction::toggled, this, [this](bool on){
@@ -210,14 +215,11 @@ MainWindow::MainWindow(QWidget *parent)
         }
     });
 
-    // 1. controller + thread klaarzetten
     setupEmulatorThread();
 
-    // (Moet NA setupEmulatorThread() komen)
     m_kbWidget = new KbWidget(this);
-    m_kbWidget->setController(m_colecoController); // m_colecoController is nu geldig
+    m_kbWidget->setController(m_colecoController);
 
-    // --- Connecteer de nieuwe media-signalen ---
     connect(m_colecoController, &ColecoController::tapeStatusChanged,
             this, &MainWindow::onTapeStatusChanged,
             Qt::QueuedConnection);
@@ -225,12 +227,9 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onDiskStatusChanged,
             Qt::QueuedConnection);
 
-    // 2. debugger
-    // --- Koppel de controller aan de debugger ---
     m_debugWin = new DebuggerWindow(this);
     m_debugWin->setController(m_colecoController);
 
-    // Zorg ervoor dat de debugger het pad kent *direct na het aanmaken*.
     m_debugWin->setBreakpointPath(m_breakpointPath);
 
     connect(m_debugWin, &DebuggerWindow::requestStepCPU,
@@ -242,16 +241,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_debuggerAction, &QAction::triggered,
             this, &MainWindow::onOpenDebugger);
 
-    // --- VOEG DIT BLOK TOE ---
-    // Pas de geladen full-screen instelling toe bij het opstarten
     if (m_startFullScreen) {
-        // Gebruik een timer om dit te doen nadat het venster
-        // volledig is getoond en de event loop draait.
         QTimer::singleShot(0, this, [this]() {
-            // We hoeven de actie niet te 'checken', we roepen de functie
-            // gewoon direct aan die de full-screen logica uitvoert.
             onToggleFullScreen(true);
-            // Zorg dat de actie-knop zelf ook 'checked' is
             if(m_actFullScreen) m_actFullScreen->setChecked(true);
         });
     }
@@ -260,8 +252,13 @@ MainWindow::MainWindow(QWidget *parent)
         if (m_screenWidget) {
             m_screenWidget->setFocus(Qt::OtherFocusReason);
         }
+
+        QResizeEvent re(size(), size());
+        resizeEvent(&re);
+        // -------------------------
     });
 }
+
 
 MainWindow::~MainWindow()
 {
@@ -271,7 +268,6 @@ MainWindow::~MainWindow()
     }
 }
 
-// (We gebruiken deze nu niet meer direct, maar het is goed om hem te hebben)
 void MainWindow::setDebugger(DebuggerWindow *debugger)
 {
     m_debugWin        = debugger;
@@ -280,7 +276,6 @@ void MainWindow::setDebugger(DebuggerWindow *debugger)
 void MainWindow::onCycleScalingMode()
 {
     // 0=Sharp, 1=Smooth, 2=EPX
-    // Fiets naar de volgende modus: 0 -> 1 -> 2 -> 0
     m_scalingMode = (m_scalingMode + 1) % 3;
 
     QString scaleText;
@@ -292,54 +287,38 @@ void MainWindow::onCycleScalingMode()
         scaleText = "Scaling: EPX";
     }
 
-    // 1. Update de menu tekst
     m_actToggleSmoothing->setText(scaleText);
 
-    // 2. Stuur de wijziging door naar de widget
     if (m_screenWidget) {
         m_screenWidget->setScalingMode(static_cast<ScalingMode>(m_scalingMode));
     }
 
-    // 3. Sla de nieuwe instelling op
     saveSettings();
 }
 
-// In mainwindow.cpp
-
 void MainWindow::onOpenSettings()
 {
-    // 1. Laad de huidige instellingen in het dialoogvenster
-    //    We geven nog steeds de (mogelijk relatieve) paden mee
     m_settingsWindow->setRomPath(m_romPath);
     m_settingsWindow->setDiskPath(m_diskPath);
     m_settingsWindow->setTapePath(m_tapePath);
     m_settingsWindow->setStatePath(m_statePath);
     m_settingsWindow->setBreakpointPath(m_breakpointPath);
 
-    // 2. Toon het dialoogvenster modaal
     if (m_settingsWindow->exec() == QDialog::Accepted) {
 
-        // 3. Haal de waarden op (dit zijn waarschijnlijk absolute paden
-        //    als de gebruiker een "Browse" knop heeft gebruikt)
         QString newRomPath = m_settingsWindow->romPath();
         QString newDiskPath = m_settingsWindow->diskPath();
         QString newTapePath = m_settingsWindow->tapePath();
         QString newStatePath = m_settingsWindow->statePath();
         QString newBreakpointPath = m_settingsWindow->breakpointPath();
 
-        // --- HIER IS DE FIX ---
-        // Converteer deze paden terug naar relatieve paden
-        // (relatief aan de .exe-map) voordat we ze opslaan.
-
         QDir appDir(QCoreApplication::applicationDirPath());
 
-        // Zorg ervoor dat paden 'schoon' zijn (geen /../ of C://)
-        // en controleer of ze bestaan voordat we ze relativeren.
         QFileInfo romInfo(newRomPath);
         if (romInfo.exists() && romInfo.isDir()) {
             m_romPath = appDir.relativeFilePath(newRomPath);
         } else {
-            m_romPath = newRomPath; // Behoud de getypte waarde (bv. ".")
+            m_romPath = newRomPath;
         }
 
         QFileInfo diskInfo(newDiskPath);
@@ -370,26 +349,18 @@ void MainWindow::onOpenSettings()
             m_breakpointPath = newBreakpointPath;
         }
 
-        // Update de debugger *live* met het nieuwe pad
         if (m_debugWin) {
             m_debugWin->setBreakpointPath(m_breakpointPath);
         }
 
-        // 4. Sla de (nu relatieve) paden op.
         saveSettings();
     }
 }
 
-// Laadt de instellingen
-// ---------------------------------------------------------
-// Vervang de bestaande loadSettings() door deze versie:
-// ---------------------------------------------------------
 void MainWindow::loadSettings()
 {
-    // Bepaal het pad naar settings.ini naast de executable
     QString iniPath = QCoreApplication::applicationDirPath() + "/settings.ini";
 
-    // Gebruik IniFormat en geef het specifieke pad mee
     QSettings settings(iniPath, QSettings::IniFormat);
 
     m_romPath      = settings.value("romPath", ".").toString();
@@ -401,17 +372,16 @@ void MainWindow::loadSettings()
     m_paletteIndex = settings.value("video/palette", 0).toInt();
     m_machineType  = settings.value("machine/type", 0).toInt();
 
-    // Nieuw: Additional Hardware
     m_sgmEnabled  = settings.value("hardware/sgm",  false).toBool();
     m_f18aEnabled = settings.value("hardware/f18a", false).toBool();
 
-    // Nieuw: Additional Controllers
     m_ctrlSteering    = settings.value("controller/steering",    false).toBool();
     m_ctrlRoller      = settings.value("controller/roller",      false).toBool();
     m_ctrlSuperAction = settings.value("controller/superaction", false).toBool();
 
     m_scalingMode = settings.value("video/scalingMode", 1).toInt();
     m_startFullScreen = settings.value("video/fullscreen", false).toBool();
+    m_useBezels = settings.value("video/useBezels", true).toBool();
 
     qDebug() << "Loading settings from:" << iniPath;
     qDebug() << "Loaded settings:"
@@ -423,15 +393,22 @@ void MainWindow::loadSettings()
              << "roller="   << m_ctrlRoller
              << "saction="  << m_ctrlSuperAction
              << "bppath="   << m_breakpointPath;
+
+    QByteArray geometry = settings.value("window/geometry").toByteArray();
+
+    if (!geometry.isEmpty()) {
+        restoreGeometry(geometry);
+    } else {
+        this->resize(770, 700);
+    }
+
+    m_snapWindows = settings.value("window/snap", true).toBool();
 }
 
-// Slaat de instellingen op
 void MainWindow::saveSettings()
 {
-    // Bepaal het pad naar settings.ini naast de executable
     QString iniPath = QCoreApplication::applicationDirPath() + "/settings.ini";
 
-    // Gebruik IniFormat en geef het specifieke pad mee
     QSettings settings(iniPath, QSettings::IniFormat);
 
     settings.setValue("romPath",        m_romPath);
@@ -442,19 +419,17 @@ void MainWindow::saveSettings()
     settings.setValue("video/palette",  m_paletteIndex);
     settings.setValue("machine/type",   m_machineType);
 
-    // Nieuw: Additional Hardware
     settings.setValue("hardware/sgm",   m_sgmEnabled);
     settings.setValue("hardware/f18a",  m_f18aEnabled);
 
-    // Nieuw: Additional Controllers
     settings.setValue("controller/steering",    m_ctrlSteering);
     settings.setValue("controller/roller",      m_ctrlRoller);
     settings.setValue("controller/superaction", m_ctrlSuperAction);
 
     settings.setValue("video/scalingMode", m_scalingMode);
     settings.setValue("video/fullscreen", m_startFullScreen);
+    settings.setValue("video/useBezels", m_useBezels);
 
-    // Optioneel: Forceer schrijven naar schijf (gebeurt normaal ook bij destructor)
     settings.sync();
 
     qDebug() << "Settings saved to:" << iniPath
@@ -466,6 +441,9 @@ void MainWindow::saveSettings()
              << "roller="  << m_ctrlRoller
              << "saction=" << m_ctrlSuperAction
              << "bppath="  << m_breakpointPath;
+
+    settings.setValue("window/geometry", saveGeometry());
+    settings.setValue("window/snap", m_snapWindows);
 }
 
 void MainWindow::setUpLogWindow()
@@ -485,36 +463,28 @@ void MainWindow::setStatusBar()
     statusBar()->setSizeGripEnabled(true);
     Qt::WindowFlags flags = windowFlags();
 
-    // 1. Verwijder de knoppen (Maximize, Minimize, Close)
     flags &= ~Qt::WindowMaximizeButtonHint;
     flags &= ~Qt::WindowMinimizeButtonHint;
-    flags &= ~Qt::WindowCloseButtonHint; // <-- Verberg het sluitkruisje
+    flags &= ~Qt::WindowCloseButtonHint;
 
-    // 2. Voeg de vlag toe die Qt toelaat de knoppen te customizen/verbergen
     flags |= Qt::CustomizeWindowHint;
 
-    // 3. Wijs de nieuwe, correct getypete vlaggen toe
     setWindowFlags(flags);
 
-    this->setFixedWidth(770);
-
-    // --- NIEUWE LABEL: systeemnaam ---
     m_sysLabel = new QLabel("COLECO", this);
     m_sysLabel->setObjectName("sysLabel");
     m_sysLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     m_sysLabel->setMinimumWidth(80);
     m_sysLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
 
-    // --- NIEUWE LABELS: SGM ---
     m_sepLabelSGM = new QLabel("|", this);
     m_sgmLabel = new QLabel("SGM", this);
     m_sgmLabel->setObjectName("sgmLabel");
     m_sgmLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     m_sgmLabel->setMinimumWidth(40);
     m_sgmLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
-    m_sgmLabel->hide(); // Standaard verborgen
-    m_sepLabelSGM->hide(); // Standaard verborgen
-    // --- EINDE NIEUW ---
+    m_sgmLabel->hide();
+    m_sepLabelSGM->hide();
 
     m_stdLabel = new QLabel(this);
     m_stdLabel->setObjectName("stdLabel");
@@ -558,24 +528,23 @@ void MainWindow::setStatusBar()
     m_sepLabelMedia1a = new QLabel("|", this);
     m_diskLabelA = new QLabel("D5: -", this);
     m_diskLabelA->setObjectName("diskLabel");
-    m_diskLabelA->setMinimumWidth(50); // Geef het wat ruimte
+    m_diskLabelA->setMinimumWidth(50);
 
     m_sepLabelMedia1b = new QLabel("|", this);
     m_diskLabelB = new QLabel("D6: -", this);
     m_diskLabelB->setObjectName("diskLabel");
-    m_diskLabelB->setMinimumWidth(50); // Geef het wat ruimte
+    m_diskLabelB->setMinimumWidth(50);
 
     m_sepLabelMedia1c = new QLabel("|", this);
     m_diskLabelC = new QLabel("D7: -", this);
     m_diskLabelC->setObjectName("diskLabel");
-    m_diskLabelC->setMinimumWidth(50); // Geef het wat ruimte
+    m_diskLabelC->setMinimumWidth(50);
 
     m_sepLabelMedia1d = new QLabel("|", this);
     m_diskLabelD = new QLabel("D8: -", this);
     m_diskLabelD->setObjectName("diskLabel");
-    m_diskLabelD->setMinimumWidth(50); // Geef het wat ruimte
+    m_diskLabelD->setMinimumWidth(50);
 
-    // Verberg ze standaard (worden getoond in ADAM-modus)
     m_sepLabelMedia2a->hide();
     m_tapeLabelA->hide();
 
@@ -612,7 +581,6 @@ void MainWindow::setStatusBar()
     m_sepLabel3 = new QLabel("|", this);
     m_sepLabel4 = new QLabel("|", this);
 
-    // Volgorde in statusbar: systeem | std | fps | run | rom
     statusBar()->addWidget(m_sysLabel);
     statusBar()->addWidget(m_sepLabelSGM);
     statusBar()->addWidget(m_sgmLabel);
@@ -681,17 +649,14 @@ void MainWindow::setStatusBar()
 
 void MainWindow::setupUI()
 {
-    // File
     QMenu* fileMenu = menuBar()->addMenu(tr("File"));
     m_openRomAction = new QAction(tr("Cartridge"), this);
     m_openRomAction->setShortcut(QKeySequence::Open);
     connect(m_openRomAction, &QAction::triggered, this, &MainWindow::onOpenRom);
     fileMenu->addAction(m_openRomAction);
 
-    // --- ADAM MEDIA SECTIE TOEVOEGEN ---
     fileMenu->addSeparator();
 
-    // drive 1. Maak Tape Submenu
     m_tapeMenuA = new QMenu(tr("Tape D1"), this);
     m_loadTapeActionA = new QAction(tr("Load"), this);
     connect(m_loadTapeActionA, &QAction::triggered, this, [this]() { onLoadTape(0); });
@@ -700,9 +665,8 @@ void MainWindow::setupUI()
     m_ejectTapeActionA = new QAction(tr("Eject/Save"), this);
     connect(m_ejectTapeActionA, &QAction::triggered, this, [this]() { onEjectTape(0); });
     m_tapeMenuA->addAction(m_ejectTapeActionA);
-    fileMenu->addMenu(m_tapeMenuA); // Voeg het submenu toe aan File
+    fileMenu->addMenu(m_tapeMenuA);
 
-    // drive 2. Maak Tape Submenu
     m_tapeMenuB = new QMenu(tr("Tape D2"), this);
     m_loadTapeActionB = new QAction(tr("Load"), this);
     connect(m_loadTapeActionB, &QAction::triggered, this, [this]() { onLoadTape(1); });
@@ -711,9 +675,8 @@ void MainWindow::setupUI()
     m_ejectTapeActionB = new QAction(tr("Eject/Save"), this);
     connect(m_ejectTapeActionB, &QAction::triggered, this, [this]() { onEjectTape(1); });
     m_tapeMenuB->addAction(m_ejectTapeActionB);
-    fileMenu->addMenu(m_tapeMenuB); // Voeg het submenu toe aan File
+    fileMenu->addMenu(m_tapeMenuB);
 
-    // drive 3. Maak Tape Submenu
     m_tapeMenuC = new QMenu(tr("Tape D3"), this);
     m_loadTapeActionC = new QAction(tr("Load"), this);
     connect(m_loadTapeActionC, &QAction::triggered, this, [this]() { onLoadTape(2); });
@@ -722,9 +685,8 @@ void MainWindow::setupUI()
     m_ejectTapeActionC = new QAction(tr("Eject/Save"), this);
     connect(m_ejectTapeActionC, &QAction::triggered, this, [this]() { onEjectTape(2); });
     m_tapeMenuC->addAction(m_ejectTapeActionC);
-    fileMenu->addMenu(m_tapeMenuC); // Voeg het submenu toe aan File
+    fileMenu->addMenu(m_tapeMenuC);
 
-    // drive 4. Maak Tape Submenu
     m_tapeMenuD = new QMenu(tr("Tape D4"), this);
     m_loadTapeActionD = new QAction(tr("Load"), this);
     connect(m_loadTapeActionD, &QAction::triggered, this, [this]() { onLoadTape(3); });
@@ -733,9 +695,8 @@ void MainWindow::setupUI()
     m_ejectTapeActionD = new QAction(tr("Eject/Save"), this);
     connect(m_ejectTapeActionD, &QAction::triggered, this, [this]() { onEjectTape(3); });
     m_tapeMenuD->addAction(m_ejectTapeActionD);
-    fileMenu->addMenu(m_tapeMenuD); // Voeg het submenu toe aan File
+    fileMenu->addMenu(m_tapeMenuD);
 
-    // drive 5. Maak Disk 5 Submenu
     m_diskMenuA = new QMenu(tr("Disk  D5"), this);
     m_loadDiskActionA = new QAction(tr("Load"), this);
     connect(m_loadDiskActionA, &QAction::triggered, this, [this]() { onLoadDisk(0); });
@@ -744,9 +705,8 @@ void MainWindow::setupUI()
     m_ejectDiskActionA = new QAction(tr("Eject/Save"), this);
     connect(m_ejectDiskActionA, &QAction::triggered, this, [this]() { onEjectDisk(0); });
     m_diskMenuA->addAction(m_ejectDiskActionA);
-    fileMenu->addMenu(m_diskMenuA); // Voeg het submenu toe aan File
+    fileMenu->addMenu(m_diskMenuA);
 
-    // drive 6. Maak Disk 6 Submenu
     m_diskMenuB = new QMenu(tr("Disk  D6"), this);
     m_loadDiskActionB = new QAction(tr("Load"), this);
     connect(m_loadDiskActionB, &QAction::triggered, this, [this]() { onLoadDisk(1); });
@@ -755,9 +715,8 @@ void MainWindow::setupUI()
     m_ejectDiskActionB = new QAction(tr("Eject/Save"), this);
     connect(m_ejectDiskActionB, &QAction::triggered, this, [this]() { onEjectDisk(1); });
     m_diskMenuB->addAction(m_ejectDiskActionB);
-    fileMenu->addMenu(m_diskMenuB); // Voeg het submenu toe aan File
+    fileMenu->addMenu(m_diskMenuB);
 
-    // drive 7. Maak Disk 7 Submenu
     m_diskMenuC = new QMenu(tr("Disk  D7"), this);
     m_loadDiskActionC = new QAction(tr("Load"), this);
     connect(m_loadDiskActionC, &QAction::triggered, this,  [this]() { onLoadDisk(2); });
@@ -766,9 +725,8 @@ void MainWindow::setupUI()
     m_ejectDiskActionC = new QAction(tr("Eject/Save"), this);
     connect(m_ejectDiskActionC, &QAction::triggered, this, [this]() { onEjectDisk(2); });
     m_diskMenuC->addAction(m_ejectDiskActionC);
-    fileMenu->addMenu(m_diskMenuC); // Voeg het submenu toe aan File
+    fileMenu->addMenu(m_diskMenuC);
 
-    // drive 8. Maak Disk 8 Submenu
     m_diskMenuD = new QMenu(tr("Disk  D8"), this);
     m_loadDiskActionD = new QAction(tr("Load"), this);
     connect(m_loadDiskActionD, &QAction::triggered, this,  [this]() { onLoadDisk(3); });
@@ -777,9 +735,8 @@ void MainWindow::setupUI()
     m_ejectDiskActionD = new QAction(tr("Eject/Save"), this);
     connect(m_ejectDiskActionD, &QAction::triggered, this, [this]() { onEjectDisk(3); });
     m_diskMenuD->addAction(m_ejectDiskActionD);
-    fileMenu->addMenu(m_diskMenuD); // Voeg het submenu toe aan File
+    fileMenu->addMenu(m_diskMenuD);
 
-    // Standaard uitgeschakeld
     m_diskMenuA->setEnabled(false);
     m_diskMenuB->setEnabled(false);
     m_diskMenuC->setEnabled(false);
@@ -791,7 +748,6 @@ void MainWindow::setupUI()
 
     fileMenu->addSeparator();
 
-    // --- SAVE/LOAD STATE ---
     m_actSaveState = new QAction(tr("Save State..."), this);
     connect(m_actSaveState, &QAction::triggered, this, &MainWindow::onSaveState);
     fileMenu->addAction(m_actSaveState);
@@ -814,7 +770,6 @@ void MainWindow::setupUI()
     connect(m_quitAction, &QAction::triggered, this, &MainWindow::close);
     fileMenu->addAction(m_quitAction);
 
-    // Debug
     QMenu* debugMenu = menuBar()->addMenu(tr("Debug"));
     m_startAction = new QAction(tr("Run/Stop"), this);
     m_startAction->setShortcut(Qt::Key_F11);
@@ -838,23 +793,19 @@ void MainWindow::setupUI()
 
     connect(actClearLog, &QAction::triggered, this, [this]() {
         if (m_logView) {
-            m_logView->clear(); // <-- Roep de nieuwe slot aan op m_logView
+            m_logView->clear();
         }
     });
     debugMenu->addAction(actClearLog);
 
     debugMenu->addSeparator();
     m_debuggerAction = new QAction(tr("Debugger"), this);
-    //m_debuggerAction->setShortcut(Qt::Key_F10);
     debugMenu->addAction(m_debuggerAction);
 
-
-    // Tools
     QMenu* toolsMenu = menuBar()->addMenu(tr("Tools"));
     m_actToggleKeyboard = new QAction(tr("Keypad"), this);
     m_actToggleKeyboard->setCheckable(true);
     m_actToggleKeyboard->setChecked(false);
-    //m_actToggleKeyboard->setShortcut(Qt::Key_F10);
     toolsMenu->addAction(m_actToggleKeyboard);
     m_actJoypadMapper = new QAction(tr("Keypad mapper"), this);
     toolsMenu->addAction(m_actJoypadMapper);
@@ -862,7 +813,7 @@ void MainWindow::setupUI()
     m_actShowNameTable = new QAction(tr("Name Table Viewer"), this);
     m_actShowNameTable->setCheckable(true);
     connect(m_actShowNameTable, &QAction::toggled, this, &MainWindow::onShowNameTable);
-    toolsMenu->addAction(m_actShowNameTable); // Of een ander menu
+    toolsMenu->addAction(m_actShowNameTable);
     m_actShowPatternTable = new QAction(tr("Pattern Table Viewer"), this);
     m_actShowPatternTable->setCheckable(true);
     connect(m_actShowPatternTable, &QAction::toggled, this, &MainWindow::onShowPatternTable);
@@ -874,18 +825,14 @@ void MainWindow::setupUI()
     toolsMenu->addSeparator();
     m_cartInfoAction = new QAction(tr("Cart profile"), this);
     toolsMenu->addAction(m_cartInfoAction);
-    // Probeer bestaande "Tools" te vinden
     for (auto* m : menuBar()->findChildren<QMenu*>()) {
         if (m->title().contains("Tools", Qt::CaseInsensitive)) { toolsMenu = m; break; }
     }
-    // Of maak er één aan
     if (!toolsMenu) toolsMenu = menuBar()->addMenu("&Tools");
 
-    // Actie toevoegen
     m_actPrinterOutput = toolsMenu->addAction("Printer Output...", this, &MainWindow::onShowPrinterWindow);
     m_actPrinterOutput->setShortcut(QKeySequence("Ctrl+Shift+P"));
 
-    // Options
     QMenu* optionsMenu = menuBar()->addMenu(tr("Options"));
     QActionGroup* videoGroup = new QActionGroup(this);
     m_actToggleNTSC = new QAction(tr("NTSC (60Hz)"), this);
@@ -902,7 +849,6 @@ void MainWindow::setupUI()
     m_actToggleSmoothing = new QAction(this);
     m_actToggleSmoothing->setCheckable(false);
 
-    // Stel de initiële tekst in op basis van de geladen modus
     if (m_scalingMode == 0) { // ModeSharp
         m_actToggleSmoothing->setText("Scaling: Sharp");
     } else if (m_scalingMode == 2) { // ModeEPX
@@ -915,9 +861,20 @@ void MainWindow::setupUI()
     m_actFullScreen = new QAction(tr("Full Screen"), this);
     m_actFullScreen->setCheckable(true);
     m_actFullScreen->setChecked(m_startFullScreen);
-    // Use Alt+Enter as a common shortcut
     m_actFullScreen->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F));
     optionsMenu->addAction(m_actFullScreen);
+
+    m_actResetSize = new QAction(tr("Reset Window Size"), this);
+    connect(m_actResetSize, &QAction::triggered, this, &MainWindow::onResetWindowSize);
+    optionsMenu->addAction(m_actResetSize);
+
+    optionsMenu->addSeparator();
+
+    m_actToggleBezels = new QAction(tr("Show Bezels/Wallpaper"), this);
+    m_actToggleBezels->setCheckable(true);
+    m_actToggleBezels->setChecked(m_useBezels);
+    connect(m_actToggleBezels, &QAction::toggled, this, &MainWindow::onToggleBezels);
+    optionsMenu->addAction(m_actToggleBezels);
 
     optionsMenu->addSeparator();
     m_actSaveScreenshot = new QAction(tr("Save Screenshot..."), this);
@@ -931,13 +888,21 @@ void MainWindow::setupUI()
 
     optionsMenu->addSeparator();
 
+    m_actToggleSnap = new QAction(tr("Snap Debug/Print Windows"), this);
+    m_actToggleSnap->setCheckable(true);
+    m_actToggleSnap->setChecked(m_snapWindows);
+    connect(m_actToggleSnap, &QAction::toggled, this, &MainWindow::onToggleSnap);
+    optionsMenu->addAction(m_actToggleSnap);
+
+    optionsMenu->addSeparator();
+
     m_adamInputMenu = optionsMenu->addMenu(tr("ADAM Input Mode"));
     m_adamInputGroup = new QActionGroup(this);
     m_adamInputGroup->setExclusive(true);
 
     m_actAdamKeyboard = new QAction(tr("ADAM Keyboard (Typing)"), this);
     m_actAdamKeyboard->setCheckable(true);
-    m_actAdamKeyboard->setChecked(true); // Standaard
+    m_actAdamKeyboard->setChecked(true);
     m_adamInputGroup->addAction(m_actAdamKeyboard);
     m_adamInputMenu->addAction(m_actAdamKeyboard);
 
@@ -947,20 +912,18 @@ void MainWindow::setupUI()
     m_adamInputGroup->addAction(m_actAdamJoystick);
     m_adamInputMenu->addAction(m_actAdamJoystick);
 
-    // Schakel standaard uit (wordt ingeschakeld in ADAM-modus)
     m_adamInputMenu->setEnabled(false);
 
+
+    connect(m_actJoypadMapper, &QAction::triggered, this, &MainWindow::onOpenJoypadMapper);
     connect(m_actAdamKeyboard, &QAction::triggered, this, &MainWindow::onAdamInputModeChanged);
     connect(m_actAdamJoystick, &QAction::triggered, this, &MainWindow::onAdamInputModeChanged);
 
-    // Help
     QMenu* helpMenu = menuBar()->addMenu(tr("Help"));
     m_actWiki = new QAction(tr("Github page"), this);
     helpMenu->addAction(m_actWiki);
     m_actReport = new QAction(tr("Report a bug"), this);
     helpMenu->addAction(m_actReport);
-    //m_actChat = new QAction(tr("Chat with community"), this);
-    //helpMenu->addAction(m_actChat);
     helpMenu->addSeparator();
     m_actDonate = new QAction(tr("Donate"), this);
     helpMenu->addAction(m_actDonate);
@@ -969,20 +932,14 @@ void MainWindow::setupUI()
     helpMenu->addAction(m_actAbout);
 
 
-    // Connects
-    connect(m_actJoypadMapper, &QAction::triggered, this, &MainWindow::onOpenJoypadMapper);
-
     connect(m_actToggleSGM, &QAction::toggled, this, &MainWindow::onToggleSGM);
     connect(m_actToggleKeyboard, &QAction::toggled, this, &MainWindow::onToggleKeyboard);
 
-    // Connect de nieuwe acties
     connect(m_actToggleNTSC, &QAction::triggered, this, &MainWindow::onToggleVideoStandard);
     connect(m_actTogglePAL, &QAction::triggered, this, &MainWindow::onToggleVideoStandard);
 
     connect(m_cartInfoAction, &QAction::triggered, this, &MainWindow::onOpenCartInfo);
 
-
-    // Zorg ervoor dat de actie wordt uitgevinkt als het venster wordt gesloten
     connect(m_ntableWindow, &NTableWindow::windowClosed, this, [this]() {
         m_actShowNameTable->setChecked(false);
     });
@@ -1015,7 +972,7 @@ void MainWindow::setupUI()
         QDesktopServices::openUrl(QUrl(link));
     });
 
-    onEmuPausedChanged(false); // of true, afhankelijk van je default
+    onEmuPausedChanged(false);
 }
 
 void MainWindow::onSaveScreenshot()
@@ -1023,14 +980,12 @@ void MainWindow::onSaveScreenshot()
     if (!m_screenWidget)
         return;
 
-    // 1. Neem screenshot van alleen het spel-scherm
     QPixmap pix = m_screenWidget->grab();
     if (pix.isNull()) {
         qWarning() << "Screenshot: nothing to grab from m_screenWidget";
         return;
     }
 
-    // 2. Standaard map: <appdir>/screenshots
     QString absoluteShotPath =
         QDir::cleanPath(QCoreApplication::applicationDirPath() + "/screenshots");
 
@@ -1038,7 +993,6 @@ void MainWindow::onSaveScreenshot()
     if (!shotDir.exists())
         shotDir.mkpath(".");
 
-    // 3. Basisnaam: huidige ROM of "screen"
     QString baseName = m_currentRomName;
     if (baseName.isEmpty())
         baseName = "screen";
@@ -1046,13 +1000,10 @@ void MainWindow::onSaveScreenshot()
     QFileInfo fi(baseName);
     baseName = fi.completeBaseName();
 
-    // 4. Timestamp toevoegen
     QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
 
-    // 5. Volledige default bestandsnaam
     QString defaultFile = shotDir.filePath(baseName + "_" + timestamp + ".png");
 
-    // 6. Dialoog tonen (zelfde CustomFileDialog als bij Save State)
     const QString filePath = CustomFileDialog::getSaveFileName(
         this,
         tr("Save Screenshot"),
@@ -1067,7 +1018,6 @@ void MainWindow::onSaveScreenshot()
     if (!finalPath.endsWith(".png", Qt::CaseInsensitive))
         finalPath += ".png";
 
-    // 7. Bewaren
     if (!pix.save(finalPath, "PNG")) {
         qWarning() << "Failed to save screenshot to" << finalPath;
     } else {
@@ -1080,61 +1030,83 @@ void MainWindow::onToggleFullScreen(bool checked)
     m_startFullScreen = checked;
 
     if (checked) {
-        // --- GA NAAR GEMAXIMALISEERD VENSTER ---
-
-        // Verwijder de vaste grootte zodat maximaliseren werkt
         this->setMinimumSize(QSize(0, 0));
         this->setMaximumSize(QSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX));
-
-        // Maximaliseer het venster
         showMaximized();
         updateFullScreenWallpaper();
-        m_wallpaperLabel->show(); // <-- TOON DE WALLPAPER
-        m_screenWidget->setFullScreenMode(true); // <-- ZET SCREENWIDGET TRANSPARANT
+        m_wallpaperLabel->show();
+        m_screenWidget->setFullScreenMode(true);
     } else {
-        // --- TERUG NAAR NORMAAL VENSTER ---
-
-        // Herstel normale venstermodus
         showNormal();
-
-        m_wallpaperLabel->hide(); // <-- VERBERG DE WALLPAPER
-        m_screenWidget->setFullScreenMode(false); // <-- ZET SCREENWIDGET OPAAK
-        // Pas de vaste grootte opnieuw toe
-        this->setFixedWidth(770);
-        this->setFixedHeight(700);
+        m_wallpaperLabel->hide();
+        m_screenWidget->setFullScreenMode(false);
+        this->setMinimumSize(770, 700);
     }
+}
+
+void MainWindow::onResetWindowSize()
+{
+    if (isFullScreen() || (m_actFullScreen && m_actFullScreen->isChecked())) {
+        if (m_actFullScreen) m_actFullScreen->setChecked(false);
+        onToggleFullScreen(false);
+    }
+
+    this->resize(770, 700);
 }
 
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
-    // Zorg dat de wallpaper-label altijd de grootte van het hoofdvenster heeft
-    if (m_wallpaperLabel) {
-        m_wallpaperLabel->setGeometry(this->rect());
-    }
     QMainWindow::resizeEvent(event);
+
+    if (!m_screenWidget || m_screenWidget->height() == 0) return;
+    int currentHeight = m_screenWidget->height();
+    int gameScreenWidth = (currentHeight * 256) / 192;
+    int difference = this->width() - gameScreenWidth;
+
+    bool shouldShow = m_useBezels && (isFullScreen() || isMaximized() || (difference > 330));
+
+    if (shouldShow) {
+        // --- SHOW BEZELS ---
+        if (m_wallpaperLabel) {
+            updateFullScreenWallpaper();
+            m_wallpaperLabel->setGeometry(this->rect());
+            m_wallpaperLabel->show();
+            m_wallpaperLabel->lower();
+        }
+        if (m_screenWidget) {
+            m_screenWidget->setFullScreenMode(true);
+        }
+    } else {
+        // --- HIDE BEZELS ---
+        if (m_wallpaperLabel) {
+            m_wallpaperLabel->hide();
+        }
+        if (m_screenWidget) {
+            m_screenWidget->setFullScreenMode(false);
+        }
+    }
 }
 
-void MainWindow::onOpenJoypadMapper()
+void MainWindow::onToggleBezels(bool checked)
 {
-    JoypadWindow dlg(this);
-    if (dlg.exec() == QDialog::Accepted) {
-        if (m_inputWidget) m_inputWidget->reloadMappings(); // ⟵ hier updaten
-    }
+    m_useBezels = checked;
+
+    QResizeEvent re(size(), size());
+    resizeEvent(&re);
+
+    saveSettings();
 }
 
 void MainWindow::onOpenHardware()
 {
     HardwareConfig cur;
 
-    // Machine + Video
     cur.machine = (m_machineType ? MACHINE_ADAM : MACHINE_COLECO);
     cur.palette = m_paletteIndex;
 
-    // Additional Hardware (uit settings/members)
     cur.sgmEnabled  = m_sgmEnabled;
     cur.f18aEnabled = m_f18aEnabled;
 
-    // Additional Controllers (uit settings/members)
     cur.steeringWheel = m_ctrlSteering;
     cur.rollerCtrl    = m_ctrlRoller;
     cur.superAction   = m_ctrlSuperAction;
@@ -1145,17 +1117,13 @@ void MainWindow::onOpenHardware()
     if (dlg.exec() == QDialog::Accepted) {
         HardwareConfig chosen = dlg.config();
 
-        // --- Palette direct toepassen
         m_paletteIndex = chosen.palette;
         coleco_setpalette(m_paletteIndex);
 
-        // --- Alles doorgeven aan central apply (machine/hw/controllers)
         applyHardwareConfig(chosen);
 
-        // --- Bewaren
         saveSettings();
     } else {
-        // Cancel → palette preview ongedaan
         m_paletteIndex = prevPalette;
         coleco_setpalette(m_paletteIndex);
     }
@@ -1163,19 +1131,16 @@ void MainWindow::onOpenHardware()
 
 void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
 {
-    // 1) Machine type (0=Coleco, 1=ADAM)
     const int newMachineType = (cfg.machine == MACHINE_ADAM ? 1 : 0);
     if (m_machineType != newMachineType) {
         m_machineType = newMachineType;
 
-        // Alleen via de controller; die roept coleco_initialise() (zie patch 1)
         QMetaObject::invokeMethod(
             m_colecoController, "setMachineType",
             Qt::QueuedConnection, Q_ARG(int, m_machineType)
             );
     }
 
-    // 2) Palette doorzetten
     if (m_paletteIndex != cfg.palette) {
         m_paletteIndex = cfg.palette;
         if (m_colecoController) {
@@ -1187,8 +1152,6 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
         }
     }
 
-    // 3) Additional Hardware
-    //    SGM bestaat niet op ADAM → altijd uit & NIET togglen naar core
     const bool desiredSgm = (m_machineType == 0) ? cfg.sgmEnabled : false;
     m_f18aEnabled = cfg.f18aEnabled;
 
@@ -1196,11 +1159,9 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
         m_sgmEnabled = false;
         if (m_actToggleSGM) m_actToggleSGM->setChecked(false);
 
-        // BUGFIX: We MOETEN de core vertellen SGM uit te zetten,
-        // zodat de poorten correct gereset worden.
         QMetaObject::invokeMethod(
             m_colecoController, "setSGMEnabled",
-            Qt::QueuedConnection, Q_ARG(bool, false) // Altijd 'false' voor ADAM
+            Qt::QueuedConnection, Q_ARG(bool, false)
             );
     } else { // Coleco
         if (desiredSgm != m_sgmEnabled) {
@@ -1213,33 +1174,26 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
         }
     }
 
-    // 4) Controllers (UI state; core-calls optioneel)
     m_ctrlSteering    = cfg.steeringWheel;
     m_ctrlRoller      = cfg.rollerCtrl;
     m_ctrlSuperAction = cfg.superAction;
 
-    // 5) Status + bewaren
     if (m_sysLabel) m_sysLabel->setText(m_machineType ? "ADAM" : "COLECO");
     saveSettings();
 
     updateFullScreenWallpaper();
 
-    // --- UI UPDATE VOOR MEDIA ---
     bool isAdam = (m_machineType == 1);
 
     if (m_adamInputMenu) m_adamInputMenu->setEnabled(isAdam);
 
-    // Schakel "Open ROM..." uit in ADAM-modus
     if (m_openRomAction) m_openRomAction->setEnabled(!isAdam);
 
-    // Hide ROM label and its separator in ADAM mode
     if (m_romLabel) m_romLabel->setVisible(!isAdam);
     if (m_sepLabel4) m_sepLabel4->setVisible(!isAdam);
 
-    // Update de media labels (regelt ADAM-modus EN media lock)
     updateMediaStatusLabels();
 
-    // Als we naar Coleco wisselen, eject alle media
     if (!isAdam) {
         onEjectDisk(0);
         onEjectDisk(1);
@@ -1256,7 +1210,6 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
 
     updateMediaMenuState();
 
-    // Hide ROM label and its separator in ADAM mode
     if (m_romLabel) m_romLabel->setVisible(!isAdam);
     if (m_sepLabel4) m_sepLabel4->setVisible(!isAdam);
 
@@ -1271,7 +1224,6 @@ void MainWindow::showAboutDialog()
     QVBoxLayout *layout = new QVBoxLayout(&aboutDialog);
     layout->setAlignment(Qt::AlignCenter);
 
-    // Logo
     QLabel *logoLabel = new QLabel(&aboutDialog);
     QPixmap logo(":/images/images/ADAMP.png");
     logoLabel->setPixmap(logo.scaled(160, 160, Qt::KeepAspectRatio, Qt::SmoothTransformation));
@@ -1280,15 +1232,15 @@ void MainWindow::showAboutDialog()
 
     QLabel *textLabel = new QLabel(&aboutDialog);
 
-    // Tip: Zorg dat de HTML link ook echt klikbaar is in de browser
     textLabel->setOpenExternalLinks(true);
 
     textLabel->setText(QString(
-                           "Version %1<br>"  // %1 wordt vervangen door appVersion
+                           "Version %1<br>"  // %1 appVersion
                            "©2025 DannyVdH<br>"
                            "<a href='https://github.com/dvdh1961/ADAMP'>VDH Productions</a><br><br>"
-                           "This program is released under the GNU GPL-3.0 license.<br>"
-                           "Please see the attached <i>readme.md</i> and <i>license</i> file that should be included with this distribution.<br><br>"
+                           "This software is free to use for personal, educational, and non-profit purposes<br>"
+                           "under the PolyForm Noncommercial License 1.0.0.<br>"
+                           "Please see the attached <i>readme.md</i> file that should be included with this distribution.<br><br>"
                            "The goal is to go even deeper into my ADAM+ hardware project<br>"
                            " — this emulator — <br>"
                            "will go much further in integrating specific hardware components.<br><br>"
@@ -1297,7 +1249,7 @@ void MainWindow::showAboutDialog()
                            "Parts of ADAM emulation code from Marat Fayzullin’s ColEm project.<br>"
                            "Wavemotion-dave, for improving compatibility issues.<br>"
                            "Parts of EightyOne created by Michael D Wynne.<br>"
-                           "Z80 core taken from FUSE, the free UNIX emulator.<br>"
+                           "Z80 core taken from Juergen Buchmueller.<br>"
                            "AY8910 code from Z81 ©1995–2001 Russell Marks.<br>"
                            "And all the ones that were involved and that I forgot to mention.<br><br>"
                            ).arg(appVersion));
@@ -1310,35 +1262,23 @@ void MainWindow::showAboutDialog()
     layout->addWidget(textLabel);
     layout->addStretch(1);
 
-    // // OK-knop
-    // QPushButton *okButton = new QPushButton("OK", &aboutDialog);
-    // okButton->setFixedWidth(80);
-    // connect(okButton, &QPushButton::clicked, &aboutDialog, &QDialog::accept);
-    // layout->addWidget(okButton, 0, Qt::AlignCenter);
-
-    // 1. Laad icoon en pixmap
     QIcon okIcon(":/images/images/OK.png");
     QPixmap okPixmap(":/images/images/OK.png");
     if (okIcon.isNull()) {
         qWarning() << "AboutDialog: Kon OK.png niet laden.";
     }
 
-    // 2. Maak de knop aan
     QPushButton *okButton = new QPushButton(&aboutDialog);
 
-    // 3. Pas de stijl toe
     okButton->setIcon(okIcon);
     okButton->setIconSize(okPixmap.size());
-    okButton->setFixedSize(okPixmap.size()); // Grootte van de PNG
+    okButton->setFixedSize(okPixmap.size());
     okButton->setText("");
     okButton->setFlat(true);
     okButton->setStyleSheet(
         "QPushButton { border: none; background: transparent; }"
         "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }"
         );
-    // ==================================================
-    // --- EINDE AANPASSING ---
-    // ==================================================
 
     connect(okButton, &QPushButton::clicked, &aboutDialog, &QDialog::accept);
     layout->addWidget(okButton, 0, Qt::AlignCenter);
@@ -1346,7 +1286,6 @@ void MainWindow::showAboutDialog()
     aboutDialog.exec();
 }
 
-// Maak deze slot aan in MainWindow
 void MainWindow::onShowNameTable(bool checked)
 {
     if (checked) {
@@ -1380,7 +1319,6 @@ void MainWindow::onOpenCartInfo()
         m_cartInfoDialog = new CartridgeInfoDialog(this);
     }
 
-    // Zorg dat de data vers is *voordat* we het tonen
     m_cartInfoDialog->refreshData();
 
     m_cartInfoDialog->show();
@@ -1393,7 +1331,6 @@ void MainWindow::onToggleVideoStandard()
     bool isNTSC = m_actToggleNTSC->isChecked();
     qDebug() << "UI: Video standard set to" << (isNTSC ? "NTSC" : "PAL");
 
-    // Stuur commando naar de controller-thread
     QMetaObject::invokeMethod(m_colecoController, "setVideoStandard",
                               Qt::QueuedConnection,
                               Q_ARG(bool, isNTSC));
@@ -1401,10 +1338,9 @@ void MainWindow::onToggleVideoStandard()
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 {
-    // Vang een klik op het logo af om het hardware-venster te openen
     if (obj == m_logoLabel && event->type() == QEvent::MouseButtonPress) {
-        onOpenHardware(); // Roep de bestaande slot aan
-        return true;      // Event afgehandeld, niet doorsturen
+        onOpenHardware();
+        return true;
     }
 
     if (obj == m_logView && event->type() == QEvent::Close) {
@@ -1416,11 +1352,6 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
         return true;
     }
     return QMainWindow::eventFilter(obj, event);
-}
-
-void MainWindow::appendLog(const QString& line)
-{
-   // m_logView->editor()->appendPlainText(line);
 }
 
 void MainWindow::onToggleSGM(bool checked)
@@ -1436,14 +1367,11 @@ void MainWindow::onToggleSGM(bool checked)
 void MainWindow::onToggleKeyboard(bool on)
 {
     if (on) {
-        // De widget bestaat al, toon alleen de overlay
         m_inputWidget->setOverlayVisible(true);
         m_inputWidget->raise();
-        //m_inputWidget->setFocus(Qt::OtherFocusReason); // Geef focus aan de overlay
     } else {
-        // De widget blijft actief, verberg alleen de overlay
         m_inputWidget->setOverlayVisible(false);
-        if (m_screenWidget) m_screenWidget->setFocus(Qt::OtherFocusReason); // Geef focus terug
+        if (m_screenWidget) m_screenWidget->setFocus(Qt::OtherFocusReason);
     }
 }
 
@@ -1451,15 +1379,12 @@ void MainWindow::onFrameReceived(const QImage &frame)
 {
     if (!m_screenWidget || frame.isNull()) return;
 
-    // Stuur de ORIGINELE, KLEINE (256x192) frame
-    // direct door naar de widget.
-    // Alle schaal-logica, canvas, en painter zijn hier weg.
     m_screenWidget->setFrame(frame);
 }
 
 void MainWindow::setupEmulatorThread()
 {
-    qDebug() << "Thread setup: Aanmaken thread en controller...";
+    qDebug() << "Thread setup: Build thread and Controller...";
 
     m_emulatorThread = new QThread(this);
     m_colecoController = new ColecoController();
@@ -1469,9 +1394,6 @@ void MainWindow::setupEmulatorThread()
             this,               &MainWindow::onFrameReceived, // <-- NIEUW
             Qt::QueuedConnection);
 
-    // connect(m_colecoController, &ColecoController::frameReady,
-    //         m_screenWidget,     &ScreenWidget::setFrame,
-    //         Qt::QueuedConnection);
 
     connect(m_colecoController, &ColecoController::frameReady,
             this, &MainWindow::onFramePresented,
@@ -1481,12 +1403,10 @@ void MainWindow::setupEmulatorThread()
             this, SLOT(setVideoStandard(QString)),
             Qt::QueuedConnection);
 
-    // === NIEUWE FPS CONNECTIE ===
     connect(m_colecoController, &ColecoController::fpsUpdated,
             this, &MainWindow::onFpsUpdated,
             Qt::QueuedConnection);
 
-    // --- NIEUWE CONNECTIE VOOR SGM STATUS ---
     connect(m_colecoController, &ColecoController::sgmStatusChanged,
             this, &MainWindow::onSgmStatusChanged,
             Qt::QueuedConnection);
@@ -1495,7 +1415,6 @@ void MainWindow::setupEmulatorThread()
             this, &MainWindow::onEmuPausedChanged,
             Qt::QueuedConnection);
 
-    // start emulatie als thread start
     connect(m_emulatorThread, &QThread::started,
             m_colecoController, &ColecoController::startEmulation);
 
@@ -1513,19 +1432,14 @@ void MainWindow::setupEmulatorThread()
 
     m_emulatorThread->start();
 
-    // --- NIEUW: Stuur initiele hardware settings ---
-    // Stuur de SGM-status (geladen uit settings) door naar de core
     QMetaObject::invokeMethod(m_colecoController, "setSGMEnabled",
                               Qt::QueuedConnection,
                               Q_ARG(bool, m_sgmEnabled));
 
-    // Palette éénmalig toepassen zodra het 1e frame binnen is (VDP is init)
     connect(
         m_colecoController, &ColecoController::frameReady,
         this,
         [this](const QImage &) {
-            //qDebug() << "frameReady → applying saved palette:" << m_paletteIndex;
-            // Zet de call in de emulatorthread (voorkomt cross-thread issues)
             QMetaObject::invokeMethod(
                 m_colecoController,
                 [this]() { coleco_setpalette(m_paletteIndex); },
@@ -1534,44 +1448,35 @@ void MainWindow::setupEmulatorThread()
         Qt::QueuedConnection
         );
 
-    qDebug() << "Thread setup: Thread is gestart.";
+    qDebug() << "Thread setup: Thread started.";
 
 }
 
-// --- Slots ---
-
 void MainWindow::onOpenRom()
 {
-    // Gebruik het opgeslagen (relatieve) pad om een absoluut pad te maken
     QString absoluteRomPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_romPath);
 
     const QString filePath = CustomFileDialog::getOpenFileName(
-    //const QString filePath = QFileDialog::getOpenFileName(
         this,
         tr("Open ColecoVision ROM"),
         absoluteRomPath, // Start in de laatst gebruikte map
-        tr("ROM Bestanden (*.rom *.col *.bin);;Alle bestanden (*.*)")
+        tr("ROM files (*.rom *.col *.bin);;All files (*.*)")
         );
 
     if (filePath.isEmpty()) return;
 
-    // VVVV --- BELANGRIJKE TOEVOEGING --- VVVV
-    // Update m_romPath naar de map van het zojuist geopende bestand
     QFileInfo fileInfo(filePath);
     QDir appDir(QCoreApplication::applicationDirPath());
     m_romPath = appDir.relativeFilePath(fileInfo.absolutePath());
-    // ^^^^ --- EINDE TOEVOEGING --- ^^^^
 
-    qDebug() << "UI: Gevraagd om ROM te laden:" << filePath;
-    qDebug() << "Nieuw relatief ROM pad opgeslagen:" << m_romPath;
+    qDebug() << "UI: Asked to load ROM:" << filePath;
+    qDebug() << "New relatieve ROM path saved:" << m_romPath;
 
     m_currentRomName = fileInfo.fileName();
 
-    // --- NIEUW: Update en elide de ROM naam ---
     QFontMetrics metrics(m_romLabel->font());
     QString elidedText = metrics.elidedText(m_currentRomName, Qt::ElideRight, m_romLabel->width()); // width() is nu de 450px
     m_romLabel->setText(elidedText);
-    // --- EINDE NIEUW ---
 
     if (m_currentRomName.contains("ddp", Qt::CaseInsensitive) ||
         m_currentRomName.contains("dsk", Qt::CaseInsensitive))
@@ -1603,14 +1508,14 @@ void MainWindow::onSgmStatusChanged(bool enabled)
 
 void MainWindow::onReset()
 {
-    qDebug() << "UI: Gevraagd om machine te resetten.";
+    qDebug() << "UI: Asked to soft reset emulator.";
     QMetaObject::invokeMethod(m_colecoController, "resetMachine",
                               Qt::QueuedConnection);
 }
 
 void MainWindow::onhReset()
 {
-    qDebug() << "UI: Gevraagd om machine te resetten (hard).";
+    qDebug() << "UI: Asked to hard reset emulator.";
     m_romLabel->setText(QString("No cart"));
     QMetaObject::invokeMethod(m_colecoController, "resethMachine",
                               Qt::QueuedConnection);
@@ -1618,16 +1523,12 @@ void MainWindow::onhReset()
 
 void MainWindow::onThreadFinished()
 {
-    qDebug() << "MainWindow: 'emulationStopped' ontvangen.";
+    qDebug() << "MainWindow: 'emulationStopped' received.";
     m_emulatorThread->quit();
 }
 
-// Elke frame van de controller
 void MainWindow::onFramePresented()
 {
-    // VERWIJDERD: ++m_frameCounter;
-
-    // [DEBUGGER] live refresh als venster open is
     if (m_debugWin && m_debugWin->isVisible()) {
         m_debugWin->updateAllViews();
     }
@@ -1637,16 +1538,11 @@ void MainWindow::onFramePresented()
     }
 }
 
-// VERWIJDERD: onFpsTick()
-
-// === NIEUWE SLOT ===
-// Wordt 1x per seconde aangeroepen door de emulator-thread
 void MainWindow::onFpsUpdated(int fps)
 {
     m_fpsLabel->setText(QString("%1fps").arg(fps));
 
 }
-
 
 void MainWindow::setVideoStandard(const QString& standard)
 {
@@ -1668,7 +1564,6 @@ void MainWindow::onOpenDebugger()
                               Qt::QueuedConnection);
     m_debugWin->show();
 
-    // Gebruik de nieuwe helperfunctie om de positie te bepalen
     positionDebugger();
 
     m_debugWin->raise();
@@ -1678,32 +1573,50 @@ void MainWindow::onOpenDebugger()
 
 void MainWindow::positionDebugger()
 {
-    // Doe alleen iets als het debug-venster bestaat én zichtbaar is
-    if (m_debugWin && m_debugWin->isVisible()) {
-        const int gap = 10; // De gevraagde gleuf van 10 pixels
-        // Bereken de new X-positie:
-        // (X van mainwindow) + (breedte van mainwindow) + (gleuf)
+    if (!m_debugWin || !m_debugWin->isVisible()) return;
+
+    if (m_snapWindows) {
+        // --- SNAP AAN: Rechts ernaast plakken ---
+        const int gap = 10;
         int newX = this->x() + this->width() + gap;
-        // Gebruik de Y-positie van het mainwindow om ze bovenaan uit te lijnen
         int newY = this->y();
+
+        m_debugWin->move(newX, newY);
+
+    } else {
+        // --- SNAP UIT: Centreren op het hoofdvenster ---
+        // Formule: ParentX + (ParentWidth - ChildWidth) / 2
+        int newX = this->x() + (this->width() - m_debugWin->width()) / 2;
+        int newY = this->y() + (this->height() - m_debugWin->height()) / 2;
+
         m_debugWin->move(newX, newY);
     }
 }
 
 void MainWindow::moveEvent(QMoveEvent *event)
 {
-    // Roep altijd eerst de basis-implementatie aan
     QMainWindow::moveEvent(event);
 
-    // Alleen positioneren als we NIET gemaximaliseerd zijn
     if (isMaximized()) {
         return;
     }
 
-    // Roep onze helper aan om de debugger mee te schuiven
-    positionDebugger();
-    positionPrinter();
+    if (m_snapWindows) {
+        positionDebugger();
+        positionPrinter();
+    }
+}
 
+void MainWindow::onToggleSnap(bool checked)
+{
+    m_snapWindows = checked;
+
+    if (m_snapWindows) {
+        positionDebugger();
+        positionPrinter();
+    }
+
+    saveSettings();
 }
 
 void MainWindow::onDebuggerStepCPU()
@@ -1753,12 +1666,12 @@ void MainWindow::onRunStop()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    qDebug() << "Close Event: Applicatie afsluiten.";
+    qDebug() << "Close Event: close Application.";
 
     saveSettings();
 
     if (m_emulatorThread && m_emulatorThread->isRunning()) {
-        qDebug() << "Thread netjes stoppen.";
+        qDebug() << "Stop Thread nicely";
 
         // Emulatie in de worker stoppen
         QMetaObject::invokeMethod(
@@ -1770,7 +1683,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         m_emulatorThread->quit();
 
         if (!m_emulatorThread->wait(2000)) {
-            qWarning() << "Thread wilde niet stoppen, wordt geforceerd.";
+            qWarning() << "Thread cannot stop, force stop.";
             m_emulatorThread->terminate();
             m_emulatorThread->wait();
         }
@@ -2307,23 +2220,7 @@ void MainWindow::onShowPrinterWindow()
     w->raise();
     w->activateWindow();
 
-    // 2) Positioneer rechts naast het hoofdvenster (zoals debugger)
-    //    Houd 10px marge aan en voorkom dat we buiten het scherm vallen.
-    const QRect mainGeom = this->frameGeometry();           // inclusief vensterrand
-    const QRect avail    = screen()->availableGeometry();   // werkbare schermruimte
-
-    QPoint pos(mainGeom.right() + 10, mainGeom.top());
-    QSize  sz  = w->size();
-
-    // Als we buiten het scherm dreigen te gaan, schuif naar links of onder
-    if (pos.x() + sz.width() > avail.right())
-        pos.setX(qMax(avail.left(), mainGeom.left() - 10 - sz.width()));
-    if (pos.y() + sz.height() > avail.bottom())
-        pos.setY(qMax(avail.top(), avail.bottom() - sz.height()));
-
-    w->move(pos);
-
-    // 3) Abonneer (idempotent) op AdamNet-printer
+    positionPrinter();
 }
 
 void MainWindow::positionPrinter()
@@ -2331,10 +2228,19 @@ void MainWindow::positionPrinter()
     PrintWindow* w = PrintWindow::instance();
     if (!w->isVisible()) return;
 
-    const QRect mainGeom = this->frameGeometry();
-    QPoint pos(mainGeom.right() + 10, mainGeom.top());
-    // Eenvoudig: alleen X bijwerken (rechts blijven “plakken”)
-    w->move(pos);
+    if (m_snapWindows) {
+        // --- SNAP ON: paste at right side ---
+        const int gap = 10;
+        int newX = this->x() + this->width() + gap;
+        int newY = this->y();
+        w->move(newX, newY);
+
+    } else {
+        // --- SNAP OFF: Center on mainwindow ---
+        int newX = this->x() + (this->width() - w->width()) / 2;
+        int newY = this->y() + (this->height() - w->height()) / 2;
+        w->move(newX, newY);
+    }
 }
 
 void MainWindow::updateFullScreenWallpaper()
@@ -2345,7 +2251,7 @@ void MainWindow::updateFullScreenWallpaper()
 
     // m_machineType == 1 is ADAM
     if (m_machineType == 1) {
-        wallpaperPath = ":/images/images/wallpaper_adamp.png";
+        wallpaperPath = ":/images/images/wallpaper_adam.png";
     }
     // m_machineType == 0 is Coleco
     else {
@@ -2354,13 +2260,13 @@ void MainWindow::updateFullScreenWallpaper()
 
     QPixmap newWallpaper(wallpaperPath);
 
-    // Fallback voor als de afbeelding niet geladen kan worden
+    // Fallback if picture cannot be loaded
     if (newWallpaper.isNull()) {
         qWarning() << "Kan wallpaper niet laden:" << wallpaperPath;
         m_wallpaperLabel->clear();
         m_wallpaperLabel->setStyleSheet("background-color: black;");
     } else {
-        m_wallpaperLabel->setStyleSheet(""); // Verwijder eerdere stijl
+        m_wallpaperLabel->setStyleSheet(""); // remove previous style
         m_wallpaperLabel->setPixmap(newWallpaper);
     }
 }
@@ -2369,32 +2275,22 @@ void MainWindow::updateFullScreenWallpaper()
 
 void MainWindow::onSaveState()
 {
-    // 1. Gebruik HETZELFDE pad-logica als in onLoadState
-    // m_statePath is relatief (bv "."), dus maak het absoluut
     QString absoluteStatePath =
         QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_statePath);
 
-    // 2. Gebruik dit absolute pad voor QDir
     QDir statesDir(absoluteStatePath);
     if (!statesDir.exists())
-        statesDir.mkpath("."); // Maak de map aan (op het absolute pad)
+        statesDir.mkpath(".");
 
-    // Bestandsnaam gebaseerd op huidige ROM
     QString baseName = m_currentRomName;
     if (baseName.isEmpty())
         baseName = "state";
 
-    // Haal alleen de naam zonder extensie eruit
     QFileInfo fi(baseName);
     baseName = fi.completeBaseName();
 
-    // 3. Maak het standaard *volledige bestandspad*
-    // Dit is nu een absoluut pad, bv: "/app/pad/states/mijnrom.sta"
     QString defaultFile = statesDir.filePath(baseName + ".sta");
 
-    // 4. Geef dit volledige bestandspad door.
-    // CustomFileDialog::setInitialDirectory is ontworpen om dit
-    // te splitsen in een map (path) en een bestandsnaam (fileName).
     const QString filePath = CustomFileDialog::getSaveFileName(
         this,
         tr("Save State"),
@@ -2409,13 +2305,11 @@ void MainWindow::onSaveState()
     if (!finalPath.endsWith(".sta", Qt::CaseInsensitive))
         finalPath += ".sta";
 
-    // 5) Update m_statePath naar de map van het gekozen bestand (zoals bij ROM/Disk/Tape)
     QFileInfo outInfo(finalPath);
     QDir appDir(QCoreApplication::applicationDirPath());
     m_statePath = appDir.relativeFilePath(outInfo.absolutePath());
     saveSettings();   // nu wordt je nieuwe state map ook echt bewaard
 
-    // 6) Via de emu-thread laten uitvoeren
     QMetaObject::invokeMethod(
         m_colecoController,
         "saveState",
@@ -2427,7 +2321,6 @@ void MainWindow::onSaveState()
 
 void MainWindow::onLoadState()
 {
-    // Maak van de (relatieve) statePath een absoluut pad
     QString absoluteStatePath =
         QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_statePath);
 
@@ -2438,18 +2331,17 @@ void MainWindow::onLoadState()
     const QString filePath = CustomFileDialog::getOpenFileName(
         this,
         tr("Load State"),
-        statesDir.absolutePath(),                 // start in statesDir
+        statesDir.absolutePath(),
         tr("State files (*.sta);;All Files (*.*)")
         );
 
     if (filePath.isEmpty())
         return;
 
-    // Update m_statePath naar de gekozen map
     QFileInfo inInfo(filePath);
     QDir appDir(QCoreApplication::applicationDirPath());
     m_statePath = appDir.relativeFilePath(inInfo.absolutePath());
-    saveSettings(); // optioneel
+    saveSettings();
 
     QMetaObject::invokeMethod(
         m_colecoController,
@@ -2468,4 +2360,12 @@ void MainWindow::configurePlatformSettings()
 #else
     qDebug() << "Running on an unknown platform.";
 #endif
+}
+
+void MainWindow::onOpenJoypadMapper()
+{
+    JoypadWindow dlg(this);
+    if (dlg.exec() == QDialog::Accepted) {
+        if (m_inputWidget) m_inputWidget->reloadMappings(); // ⟵ hier updaten
+    }
 }

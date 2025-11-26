@@ -72,7 +72,7 @@ void KbWidget::reloadMappings()
         m_keyMap[mappedQtKey] = adamCode;
     }
 
-    qDebug() << "[KbWidget] Speciale toets-mappings herladen:" << m_keyMap.size() << "toetsen gemapt.";
+    qDebug() << "[KbWidget] Special key-mappings reloaded:" << m_keyMap.size() << "keys maped.";
 }
 
 /**
@@ -131,7 +131,7 @@ void KbWidget::handleKey(QKeyEvent *e, bool pressed)
         finalCode |= 0x80;
     }
 
-    qDebug() << "[KbWidget] Verzenden van SPECIALE Key Code:" << Qt::hex << finalCode;
+    qDebug() << "[KbWidget] sent of SPECIAL Key Code:" << Qt::hex << finalCode;
 
     QMetaObject::invokeMethod(
         m_controller,

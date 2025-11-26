@@ -32,6 +32,14 @@ protected:
     void keyReleaseEvent(QKeyEvent *e) override;
     void paintEvent(QPaintEvent *e) override;
 
+    // --- DE API VOOR DE JOYSTICK ---
+public slots:
+    void setJoystickDirection(bool up, bool down, bool left, bool right);
+    void setJoystickFireL(bool pressed);
+    void setJoystickFireR(bool pressed);
+    void setJoystickStart(bool pressed);  // Zal Keypad '1' indrukken
+    void setJoystickSelect(bool pressed); // Zal Keypad '*' indrukken
+
 private:
     QWidget *m_target = nullptr;
     QTimer   m_overlayTick;
