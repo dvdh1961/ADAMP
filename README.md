@@ -1,5 +1,7 @@
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP.png)
 
+This software is free to use for personal, educational, and non-profit purposes under the PolyForm Noncommercial License 1.0.0.
+
 A ColecoVision and ADAM Emulator & Debugging Suite for Windows & Linux.
 
 ADAM+ is a modern emulator and development toolkit for the ColecoVision and Coleco ADAM systems, built with Qt6 and inspired by the original EmulTwo project.
@@ -85,5 +87,4 @@ ADAM+ is free but you can donate to support its development
 
 ## License
 
-ADAM+ is licensed under the [GNU General Public License v2.0](https://github.com/dvdh1961/ADAMP/blob/master/LICENSE), see [LICENSE](https://github.com/dvdh1961/ADAMP/blob/master/LICENSE) for more information.
-
+ADAM+ software is free to use for personal, educational, and non-profit purposes under the PolyForm Noncommercial License 1.0.0.
