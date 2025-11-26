@@ -2,6 +2,9 @@
 
 This software is free to use for personal, educational, and non-profit purposes under the PolyForm Noncommercial License 1.0.0.
 
+"Certain portions of the software are subject to third-party copyright, prohibiting the commercial use of this compilation. 
+ All C++ code is 100% authored by me and is permitted for use for all purposes."
+
 A ColecoVision and ADAM Emulator & Debugging Suite for Windows & Linux.
 
 ADAM+ is a modern emulator and development toolkit for the ColecoVision and Coleco ADAM systems, built with Qt6 and inspired by the original EmulTwo project.
