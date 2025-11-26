@@ -1,6 +1,5 @@
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP.png)
 
-
 This software is free to use for personal, educational, and non-profit purposes under the PolyForm Noncommercial License 1.0.0.
 
 "Certain portions of the software are subject to third-party copyright, prohibiting the commercial use of this compilation. 
@@ -35,6 +34,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 ## 🚀 Features
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_C1.gif)
+
 Version 0.3.11.25 (Updated Linux version soon available)
 - LICENSE changed to PolyForm Noncommercial License 1.0.0 (because some software issues with licensing rules)
 - Added USB joystick support (Add usb joystick to computer before opening emulator)
