@@ -33,7 +33,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ## 🚀 Features
 
-Version 0.3.11.15 (Updated Linux version soon available)
+Version 0.3.11.25 (Updated Linux version soon available)
 - LICENSE changed to PolyForm Noncommercial License 1.0.0 (because some software issues with licensing rules)
 - Added USB joystick support (Add usb joystick to computer before opening emulator)
 - Added resizing application to any format
