@@ -67,7 +67,7 @@ Version 0.1.10.25
 - 💾 **Save / Load Game State**
 
 ## 💡Info
-- You need the free community QT Creator to build the project.
+- You need the free community QT6 Creator to build the project.
 
 ## 🚧 ToDo
 
