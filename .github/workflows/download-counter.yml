@@ -1,0 +1,82 @@
+name: Update custom download counter
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # elk uur
+  workflow_dispatch:       # manueel starten via Actions-tab
+
+jobs:
+  update-download-counter:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Fetch GitHub download stats and apply manual offset
+        env:
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN_DOWNLOADS }}
+        run: |
+          echo "Fetching releases for $REPO"
+
+          # Releases + assets ophalen
+          curl -s -H "Authorization: Bearer $GH_TOKEN" \
+               -H "Accept: application/vnd.github+json" \
+               "https://api.github.com/repos/$REPO/releases?per_page=100" > releases.json
+
+          # jq installeren
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+          # Huidige downloads (alle assets)
+          LIVE_TOTAL=$(jq '[.[].assets[].download_count] | add // 0' releases.json)
+          echo "Live total from GitHub assets: $LIVE_TOTAL"
+
+          mkdir -p stats
+
+          # Bestaande offset lezen (als bestand al bestaat)
+          if [ -f stats/downloads.json ]; then
+            OFFSET=$(jq '.offset // 0' stats/downloads.json 2>/dev/null || echo 0)
+          else
+            OFFSET=0
+          fi
+
+          echo "Manual offset: $OFFSET"
+
+          DISPLAY_TOTAL=$((LIVE_TOTAL + OFFSET))
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          cat > stats/downloads.json <<EOF
+          {
+            "repository": "$REPO",
+            "updated_at": "$TIMESTAMP",
+            "live_total": $LIVE_TOTAL,
+            "offset": $OFFSET,
+            "display_total": $DISPLAY_TOTAL
+          }
+          EOF
+
+          echo "Display total (live_total + offset) = $DISPLAY_TOTAL"
+
+          echo "Display total downloads: $DISPLAY_TOTAL (updated: $TIMESTAMP)" > stats/downloads.txt
+
+      - name: Commit and push changes
+        env:
+          GIT_AUTHOR_NAME: "github-actions"
+          GIT_AUTHOR_EMAIL: "github-actions@github.com"
+          GIT_COMMITTER_NAME: "github-actions"
+          GIT_COMMITTER_EMAIL: "github-actions@github.com"
+        run: |
+          if [[ -n "$(git status --porcelain stats/downloads.json stats/downloads.txt 2>/dev/null)" ]]; then
+            git add stats/downloads.json stats/downloads.txt
+            git commit -m "Update custom download counter"
+            git push
+          else
+            echo "No changes to commit"
+          fi
