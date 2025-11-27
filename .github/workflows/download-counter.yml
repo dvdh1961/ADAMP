@@ -1,10 +1,9 @@
-
 name: Update download counter
 
 on:
+  workflow_dispatch:    # handmatig starten via Actions-tab
   schedule:
-    - cron: "0 * * * *"   # elke uur
-  workflow_dispatch:      # ook handmatig uitvoerbaar
+    - cron: "0 * * * *" # elke uur
 
 jobs:
   update-counter:
@@ -23,7 +22,6 @@ jobs:
       - name: Calculate total downloads
         id: calc
         run: |
-          # Sommeer alle download_count waarden van alle assets
           total_downloads=$(jq '[.[].assets[].download_count] | add // 0' releases.json)
           echo "github_downloads=$total_downloads" >> $GITHUB_OUTPUT
 
