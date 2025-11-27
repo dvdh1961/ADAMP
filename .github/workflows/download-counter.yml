@@ -5,7 +5,7 @@ permissions:
 
 on:
   schedule:
-    - cron: "0 * * * *"   # elk uur
+    - cron: "0,10,20,30,40,50 * * * *"   # elk uur
   workflow_dispatch:       # handmatig starten via Actions-tab
 
 jobs:
