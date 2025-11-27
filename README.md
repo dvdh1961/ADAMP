@@ -74,6 +74,7 @@ Version 0.1.10.25
 - 🕹️ Hardware integration with ADAM+ console (connecting Hardware, Cartridges,Keyboard,Joypads,...)
 - 🕹️ Drag and Drop media
 - 🪛 Debugger patches, cheats add-ons, more breakpoint options
+- 🪛 Import custom bios files
 - 🖥️ Command line functionality
 - 🎨 Custom Palletes 
 
