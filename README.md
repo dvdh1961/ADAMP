@@ -72,6 +72,10 @@ Version 0.1.10.25
 ## 🚧 ToDo
 
 - 🕹️ Hardware integration with ADAM+ console (connecting Hardware, Cartridges,Keyboard,Joypads,...)
+- 🕹️ Drag and Drop media
+- 🪛 Debugger patches, cheats add-ons
+- 🖥️ Command line functionality
+- 🎨 Custom Palletes 
 
 ## ADAM+ The Emulated Computer Entertainment System
 
