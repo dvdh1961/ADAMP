@@ -19,7 +19,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 [![release](https://img.shields.io/badge/Latest%20release-windows64-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.3.11.25/WINDOWS_ADAMP_0.3.11.25.exe)
 [![release](https://img.shields.io/badge/Latest%20release-linux64-blue.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.3.11.25/LINUX_ADAMP_0.3.11.25.zip)
-![Current Release](https://img.shields.io/badge/Version-V0.2.11.25-yellow)
+![Current Release](https://img.shields.io/badge/Version-V0.3.11.25-yellow)
 ![Total Downloads](https://img.shields.io/github/downloads/dvdh1961/ADAMP/total.svg)
 [![YouTube](https://img.shields.io/badge/YouTube-FF0000?logo=youtube&logoColor=white)](https://youtu.be/vobLE2F9Cc0)
 [![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%20License%201.0.0-blue.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0/)
