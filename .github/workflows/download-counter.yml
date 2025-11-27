@@ -1,1 +1,76 @@
 
+name: Update download counter
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # elke uur
+  workflow_dispatch:      # ook handmatig uitvoerbaar
+
+jobs:
+  update-counter:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get releases from GitHub API
+        id: get_releases
+        run: |
+          curl -s "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100" > releases.json
+          echo "Releases JSON downloaded"
+
+      - name: Calculate total downloads
+        id: calc
+        run: |
+          # Sommeer alle download_count waarden van alle assets
+          total_downloads=$(jq '[.[].assets[].download_count] | add // 0' releases.json)
+          echo "github_downloads=$total_downloads" >> $GITHUB_OUTPUT
+
+      - name: Read manual offset
+        id: offset
+        run: |
+          if [ -f download_offset.json ]; then
+            offset=$(jq '.manual_offset // 0' download_offset.json)
+          else
+            offset=0
+          fi
+          echo "offset=$offset" >> $GITHUB_OUTPUT
+
+      - name: Compute corrected total
+        id: total
+        run: |
+          github_downloads=${{ steps.calc.outputs.github_downloads }}
+          offset=${{ steps.offset.outputs.offset }}
+          corrected_total=$((github_downloads + offset))
+          echo "corrected_total=$corrected_total" >> $GITHUB_OUTPUT
+
+      - name: Write endpoint JSON
+        run: |
+          corrected_total=${{ steps.total.outputs.corrected_total }}
+          mkdir -p .github/badges
+          cat > .github/badges/downloads.json <<EOF
+          {
+            "schemaVersion": 1,
+            "label": "Downloads total",
+            "message": "${corrected_total}",
+            "color": "blue"
+          }
+          EOF
+
+      - name: Commit badge data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add .github/badges/downloads.json
+          if [ -f download_offset.json ]; then
+            git add download_offset.json
+          fi
+
+          if git diff --cached --quiet; then
+            echo "No changes, nothing to commit."
+          else
+            git commit -m "Update download counter badge"
+            git push
+          fi
