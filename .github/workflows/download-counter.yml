@@ -72,7 +72,7 @@ jobs:
 
           echo "Display total downloads: $DISPLAY_TOTAL (updated: $TIMESTAMP)" > stats/downloads.txt
 
-      - name: Commit and pull/push changes
+      - name: Commit and push changes
         env:
           GIT_AUTHOR_NAME: "github-actions"
           GIT_AUTHOR_EMAIL: "github-actions@github.com"
@@ -80,12 +80,10 @@ jobs:
           GIT_COMMITTER_EMAIL: "github-actions@github.com"
         run: |
           if [[ -n "$(git status --porcelain stats/downloads.json stats/downloads.txt 2>/dev/null)" ]]; then
-            echo "Changes detected, preparing to commit and push..."
-
             git add stats/downloads.json stats/downloads.txt
             git commit -m "Update custom download counter" || echo "Nothing to commit"
 
-            # Zorg dat we eerst up-to-date zijn met origin/main
+            # >>> DEZE REGEL IS NIEUW <<<
             git pull --rebase origin main
 
             git push origin HEAD:main
