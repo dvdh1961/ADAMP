@@ -35,7 +35,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_C1.gif)
 
-Version 0.3.11.25 Windows64 & Linux64
+Version 0.3.11.25 x86_64 Windows & Linux
 - LICENSE changed to PolyForm Noncommercial License 1.0.0 (because some software issues with licensing rules)
 - Added USB joystick support (Add usb joystick to computer before opening emulator)
 - Added resizing application to any format
