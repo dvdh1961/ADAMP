@@ -17,7 +17,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ## 💾 Downloads
 
-[![release](https://img.shields.io/badge/Latest%20release-windows64-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.3.11.25/Setup_ADAMP_EMU_0.3.1125.exe)
+[![release](https://img.shields.io/badge/Latest%20release-windows64-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.3.11.25/WINDOWS_ADAMP_0.3.11.25.exe)
 [![release](https://img.shields.io/badge/Latest%20release-linux64-blue.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.2.11.25/LINUX_ADAMP_0.3.11.25.zip)
 ![Current Release](https://img.shields.io/badge/Version-V0.2.1125-yellow)
 ![Total Downloads](https://img.shields.io/github/downloads/dvdh1961/ADAMP/total.svg)
