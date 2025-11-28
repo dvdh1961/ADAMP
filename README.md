@@ -37,7 +37,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 Version 0.3.11.25 x86_64 Windows & Linux
 - Open source LICENSE removed (because some software issues with licensing rules) software is free to use for personal, educational, and non-profit purposes.
   All C++ code is 100% authored by me and is permitted for use for all purposes. 
-- Added USB joystick support (Add usb joystick to computer before opening emulator)
+- Added USB joystick support (Connect usb joystick to computer before opening emulator)
 - Added resizing application to any format
 - Added switch bezels on/off
 - Added snap windows on/off
