@@ -78,6 +78,7 @@ Version 0.1.10.25
 - 🖥️ Command line functionality
 - 🎨 Custom Palletes
 - 🖥️ Adam CPM
+- 🖥️ Adam cartridge select
 
 ## ADAM+ The Emulated Computer Entertainment System
 
