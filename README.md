@@ -76,7 +76,8 @@ Version 0.1.10.25
 - 🪛 Debugger patches, cheats add-ons, more breakpoint options
 - 🪛 Import custom bios files
 - 🖥️ Command line functionality
-- 🎨 Custom Palletes 
+- 🎨 Custom Palletes
+- 🖥️ Adam CPM
 
 ## ADAM+ The Emulated Computer Entertainment System
 
