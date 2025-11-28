@@ -99,7 +99,7 @@ Thanks to everyone who shared their knowledge and inspiration — without them, 
 - Fuse                 (https://fuse-emulator.sourceforge.net/)
 - EightyOne            (https://sourceforge.net/projects/eightyone-sinclair-emulator/)
 - Russell Marks        (https://sz81.sourceforge.net/)
-- Juergen Buchmueller  (z80 code)
+- Juergen Buchmueller  (R.I.P.) (z80 code)
 
 ## Support ADAM+
 
