@@ -1,6 +1,6 @@
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP.png)
 
-This software is free to use for personal, educational, and non-profit purposes under the PolyForm Noncommercial License 1.0.0.
+This software is free to use for personal, educational, and non-profit purposes.
 
 "Certain portions of the software are subject to third-party copyright, prohibiting the commercial use of this compilation. 
  All C++ code is 100% authored by me and is permitted for use for all purposes."
@@ -22,7 +22,6 @@ It serves as a central platform for integrating a wide range of hardware-related
 ![Current Release](https://img.shields.io/badge/Version-V0.3.11.25-yellow)
 ![Downloads](https://img.shields.io/badge/dynamic/json?url=https://raw.githubusercontent.com/dvdh1961/ADAMP/main/stats/downloads.json&label=Downloads&query=display_total&color=yellow)
 [![YouTube](https://img.shields.io/badge/YouTube-FF0000?logo=youtube&logoColor=white)](https://youtu.be/vobLE2F9Cc0)
-[![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%20License%201.0.0-blue.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0/)
 
 ![Commits](https://img.shields.io/github/commits-since/dvdh1961/ADAMP/latest)
 [![Contributors](https://img.shields.io/github/contributors/dvdh1961/ADAMP)](https://github.com/dvdh1961/ADAMP/graphs/contributors)
