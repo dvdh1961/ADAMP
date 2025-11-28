@@ -108,4 +108,4 @@ ADAM+ is free but you can donate to support its development
 
 ## License
 
-ADAM+ software is free to use for personal, educational, and non-profit purposes under the PolyForm Noncommercial License 1.0.0.
+ADAM+ software is free to use for personal, educational, and non-profit purposes.
