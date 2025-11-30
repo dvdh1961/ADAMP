@@ -32,6 +32,15 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ## 🚀 Features
 
+Version 0.4.11.25 x86_64 Windows (Linux will be in a couple of days)
+- Some software components are subject to licensing agreements held by the rightful owners
+  All C++ code is 100% authored by me and is permitted for use for all purposes.
+- Added more menues to the emulator with extra options
+- Added Adam rom card loading (still hard in development)
+- Joystick options
+- Folder options
+- Removed some bugs  
+
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_C1.gif)
 
 Version 0.3.11.25 x86_64 Windows & Linux
