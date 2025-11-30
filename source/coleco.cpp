@@ -1,6 +1,4 @@
-/* ADAMP_EMU  - A Windows Colecovision emulator.
- * Copyright (C) 2025 DannyVdH
- *
+/*
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -46,6 +44,7 @@
 
 // BIOS loader prototype
 static int loadBios(const char *filename, BYTE *memory, int sizerm);
+static void Out42(BYTE Val);
 
 int breakpoints[MAX_BREAKPOINTS];
 int breakpoint_count = 0;
@@ -130,6 +129,13 @@ int coleco_updatetms=0;
 
 FDIDisk Disks[MAX_DISKS] = {};
 FDIDisk Tapes[MAX_TAPES] = {};
+
+// In coleco.cpp (bij de globale variabelen, rond lijn 21)
+// --- Expansion RAM Variabelen (Definities) ---
+// Deze variabelen moeten vroeg gedefinieerd worden om zichtbaarheid te garanderen.
+BYTE RAMPages = 2;     // Standaard 2 pagina's = 128KB expansie (naast de 64KB basis)
+BYTE RAMPage = 0;      // Huidig geselecteerde Expansion RAM pagina (0 tot RAMPages-1)
+BYTE RAMMask = 0xFF;   // Masker voor RAMPages (0xFF om alle bits te maskeren voor de modulo-actie)
 
 static BYTE idleDataBus = 0xFF;
 
@@ -569,18 +575,18 @@ void coleco_setadammemory(bool resetAdamNet)
         adam_ram_hi_exp = 0;
     }
 
-    qDebug() << "[MAP] ADAM port60=0x" << Qt::hex << int(coleco_port60)
-             << " Map0->" << (void*)MemoryMap[0]
-             << " (expect BIOS_Memory+0x0000)";
+    // qDebug() << "[MAP] ADAM port60=0x" << Qt::hex << int(coleco_port60)
+    //          << " Map0->" << (void*)MemoryMap[0]
+    //          << " (expect BIOS_Memory+0x0000)";
 
-    qDebug().noquote()
-        << "[BASE] BIOS=" << static_cast<void*>(BIOS_Memory)
-        << " RAM=" << static_cast<void*>(RAM_Memory);
+    // qDebug().noquote()
+    //     << "[BASE] BIOS=" << static_cast<void*>(BIOS_Memory)
+    //     << " RAM=" << static_cast<void*>(RAM_Memory);
 
-    qDebug().noquote()
-        << "[MAP] port60=" << Qt::hex << int(coleco_port60)
-        << " Map0->" << static_cast<void*>(MemoryMap[0])
-        << " (expect BIOS+0x0000 when port60&3==0)";
+    // qDebug().noquote()
+    //     << "[MAP] port60=" << Qt::hex << int(coleco_port60)
+    //     << " Map0->" << static_cast<void*>(MemoryMap[0])
+    //     << " (expect BIOS+0x0000 when port60&3==0)";
 
     if (resetAdamNet)  ResetPCB(); // Nodig #include "adamnet.h"
 }
@@ -736,7 +742,6 @@ void coleco_reset(void)
 }
 
 //---------------------------------------------------------------------------
-
 void coleco_reset_and_restart_bios()
 {
     // 1) Defaults per machine
@@ -830,7 +835,6 @@ void coleco_hardreset(void)
     //    Als je “BIOS only” wil laten draaien:
     z80_reset();
     tms9918_reset();
-
     //coleco_reset_and_restart_bios();  // zet BIOS op 0x0000 + reset VDP/CPU/PSG
 }
 
@@ -1103,6 +1107,28 @@ BYTE coleco_readbyte(int Address) { // Vanuit Z80 met logging
 BYTE coleco_opcode_fetch(int Address) { return coleco_ReadByte(Address); } // Z80 Opcode
 
 //---------------------------------------------------------------------------
+// --- NIEUWE FUNCTIE: Out42 (Expansion RAM Page Select) ---
+static void Out42(BYTE Val)
+{
+    // Val is de gewenste pagina (bits 0-7)
+    BYTE a;
+    a = Val & RAMMask; // Maskeren met het ingestelde masker
+
+    // Controleer of de gevraagde pagina geldig is.
+    if (a >= RAMPages) {
+        a = 0xFF; // Ongeldig, 0xFF gebruiken als marker
+    }
+
+    if (a != RAMPage)
+    {
+        RAMPage = a;
+        // Bij wijziging moet de mapping onmiddellijk worden bijgewerkt
+        coleco_setadammemory(false); // Her-map het geheugen zonder ADAMNet te resetten
+
+        qDebug() << "[MEM] Expansion RAM page" << (RAMPage == 0xFF ? "INVALID" : QString::number(RAMPage)) << "selected.";
+    }
+}
+//---------------------------------------------------------------------------
 void coleco_writeport(int Address, int Data, int * /**tstates*/)
 {
     bool resetadam = 0;
@@ -1129,6 +1155,7 @@ void coleco_writeport(int Address, int Data, int * /**tstates*/)
 
     case 0x40: // 0x40-0x5F: Printer / SGM Sound / SGM Control
         if((emulator->currentMachineType == MACHINEADAM)&&(Address==0x40)) Printer(Data);
+        else if ((emulator->currentMachineType == MACHINEADAM)&&Address==0x42) Out42(Data); // <<< NIEUW: EXPANSION RAM PAGE SELECT
         else if(emulator->SGM)
         {
             if(Address==0x53) { coleco_port53 = Data; coleco_setupsgm(); }
@@ -1183,7 +1210,10 @@ BYTE coleco_readport(int Address, int * /*tstates*/) // Interne leesfunctie poor
             if (Address == 0x40) {
                 return 0xFF; // Printer = OK (Fix 7)
             }
-
+            if (Address == 0x42 || Address == 0x43) {
+                // RAM Page Select status/read (momenteel doen we niks teruggeven)
+                return coleco_port20; // teruggeven wat er op poort 0x20 staat, of een vaste waarde
+            }
             // Adam mag NOOIT de SGM-poorten lezen.
             // Blokkeer 0x52 (SGM Read) en alle andere
             // poorten in deze 0x40-0x5F range.

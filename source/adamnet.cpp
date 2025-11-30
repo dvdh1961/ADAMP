@@ -1,6 +1,4 @@
-/* ADAMP_EMU  - A Windows Colecovision emulator.
- * Copyright (C) 2025 DannyVdH
- *
+/*
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -428,20 +426,32 @@ static void ReportDevice(byte Dev,word MsgSize,byte IsBlock)
 /*************************************************************/
 void PutKBD(unsigned int Key)
 {
-    if (Key & 0x80) {
-        // release: 0xC1 voor 'A' → basis = 0x41
-        byte baseKey = (byte)(Key & 0x7F);
-        if (baseKey == LastKey) LastKey = 0x00;
-        return;
-    }
-    LastKey = (byte)Key;    // press
+//     if (Key & 0x80) {
+//         // release: 0xC1 voor 'A' → basis = 0x41
+//         byte baseKey = (byte)(Key & 0x7F);
+//         if (baseKey == LastKey) LastKey = 0x00;
+//         return;
+//     }
+//     LastKey = (byte)Key;    // press
+// KBDStatus = (byte)(RSP_STATUS | 0x0C);
+
+// We gebruiken de bestaande logica om de "LastKey" status te beheren
+// voor backward compatibility in GetKBD, maar sturen ook naar de queue.
+
+// --- OUDE LASTKEY LOGICA ---
+// Dit deel is puur voor ASCII-toetsen (A-Z, 0-9, enz.).
+
+if (Key & 0x80) {
+    // release: 0xC1 voor 'A' → basis = 0x41
+    byte baseKey = (byte)(Key & 0x7F);
+    if (baseKey == LastKey) LastKey = 0x00;
+} else {
+    // press: 0x41 voor 'A'
+    LastKey = (byte)Key;
+}
+
+// De KBDStatus moet worden bijgewerkt, maar de queue wordt hier niet gevuld.
 KBDStatus = (byte)(RSP_STATUS | 0x0C);
-
-    // // We sturen alles, press en release, naar de queue
-    // adamnet_queue_key((uint8_t)Key);
-
-    // // Signaleer eventueel data available (optioneel, maar schaadt niet)
-    // KBDStatus = (byte)(RSP_STATUS | 0x0C);
 }
 
 /** GetKBD() *************************************************/
@@ -458,6 +468,8 @@ static byte GetKBD()
     {
         return adamnet_dequeue_key();
     }
+
+    //return 0x00;
 
     // 2. Als die leeg is, check de ASCII LastKey (voor '9', 'A', etc.)
     byte Result = LastKey;
@@ -477,17 +489,22 @@ static void UpdateKBD(byte Dev,int V)
     case -1:
         SetDCB(Dev,DCB_CMD_STAT,KBDStatus);
         break;
-    case CMD_STATUS:
+    case CMD_STATUS:        
     case CMD_SOFT_RESET:
     {
         // Is er een key?
-        //const int ready = (LastKey != 0);
-        const int ready = adamnet_is_key_available() || (LastKey != 0); // <-- NIEUWE LIJN
+        const int ready = adamnet_is_key_available() || (LastKey != 0);
+        KBDStatus = (byte)(RSP_STATUS | (ready ? 0x0C : 0x00));
+
+        qDebug() << "[KBD_STATUS] Rdy:" << ready
+                 << " Status:" << Qt::hex << KBDStatus
+                 << " Queue Size:" << (g_key_buffer_head - g_key_buffer_tail);
 
         ReportDevice(Dev,0x0001,0);
 
         // KBDStatus = status + "data available" indien ready
         KBDStatus = (byte)(RSP_STATUS | (ready ? 0x0C : 0x00));
+        SetDCB(Dev,DCB_CMD_STAT, KBDStatus);
     }
     break;
     case CMD_WRITE:
@@ -796,6 +813,14 @@ static void UpdateDCB(byte Dev,int V)
     /* When writing, ignore invalid commands */
     if(!V || (V>=0x80)) return;
 
+    // if(V<0)
+    // {
+    //     // Lees de status, roept UpdateKBD aan met V=-1 (of een andere negatieve code)
+    //     // en UpdateKBD (-1) zet de status in DCB-RAM.
+    //     SetDCB(Dev,DCB_CMD_STAT,KBDStatus);
+    //     return;
+    // }
+
     /* Compute device ID */
     DevID = (GetDCB(Dev,DCB_DEV_NUM)<<4) + (GetDCB(Dev,DCB_ADD_CODE)&0x0F);
 
@@ -856,6 +881,7 @@ void ReadPCB(word A)
     //qDebug() << "ReadPCB at" << Qt::hex << A;
 }
 
+
 /** WritePCB() ***********************************************/
 /** Write value to a given PCB or DCB address.              **/
 /*************************************************************/
@@ -913,7 +939,7 @@ void ResetPCB(void)
     MovePCB(0xFEC0,15);
 
     /* Reset keyboard state */
-    KBDStatus = RSP_STATUS;
+    KBDStatus = (byte)(RSP_STATUS | 0x00); // Set op 0x80 (Ready, No data)
     LastKey   = 0x00; // Reset oude buffer
 
     // Reset de *nieuwe* buffer

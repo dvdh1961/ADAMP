@@ -1,6 +1,4 @@
-/* ADAMP_EMU  - A Windows ColecoVision emulator.
- * Copyright (C) 2025 DannyVdH
- *
+/*
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -86,6 +84,11 @@ extern FDIDisk Tapes[MAX_TAPES];                        // Adam tape drives
 
 extern BYTE sgm_enable;
 extern BYTE coleco_port60; // Deze kan ook nuttig zijn
+
+// --- Expansion RAM Variabelen (NIEUW) ---
+extern BYTE RAMPages;     // Totaal aantal 64K expansiepagina's
+extern BYTE RAMPage;      // Huidig geselecteerde Expansion RAM pagina
+extern BYTE RAMMask;      // Masker voor RAMPages
 //---------------------------------------------------------------------------
 extern unsigned short coleco_gettmsaddr(BYTE whichaddr, BYTE mode, BYTE y);
 extern BYTE coleco_gettmsval(BYTE whichaddr, unsigned short addr, BYTE mode, BYTE y);
