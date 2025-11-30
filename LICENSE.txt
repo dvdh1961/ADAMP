@@ -1,0 +1,24 @@
+ADAM+ Emulator - Version 0.4.11.25
+©2025 DannyVdH - VDH Productions
+
+https://github.com/dvdh1961/ADAMP
+
+This software is free to use for personal, educational, and non-profit purposes
+Some software components are subject to licensing agreements held by the rightful owners
+The ADAM+ emulator is built using the latest available techniques and technologies
+obtainable in 2025. Leveraging deep expertise and the assistance of advanced
+Language Models (LLMs), we can achieve the full potential of our programming
+skills with exceptional speed and accuracy
+
+The goal is to go even deeper into my ADAM+ hardware project
+— this ADAM+ emulator —
+will go much further in integrating specific hardware components
+
+Credits goes to all the brilliant coders worldwide!
+A lot of interfacing and parts of code based on the EmulTwo project.
+Parts of ADAM emulation code from Marat Fayzullin’s ColEm project.
+Wavemotion-dave, for improving compatibility issues.
+Parts of EightyOne created by Michael D Wynne.
+Z80 core taken from Juergen Buchmueller.
+AY8910 code from Z81 ©1995–2001 Russell Marks.
+And all the ones that were involved and that I forgot to mention.

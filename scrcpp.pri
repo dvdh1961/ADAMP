@@ -29,7 +29,7 @@ SOURCES += \
 
 # Headers voor de Qt-interface
 HEADERS += \
-           $$PWD/scrcpp/Customfiledialog.h \
+           $$PWD/scrcpp/customfiledialog.h \
            $$PWD/scrcpp/customiconprovider.h \
            $$PWD/scrcpp/gotoaddressdialog.h \
            $$PWD/scrcpp/hardwarewindow.h \
