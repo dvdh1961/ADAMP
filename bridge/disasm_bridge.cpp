@@ -3,7 +3,6 @@
 #include <QString>
 #include <QVector>
 
-// Deze zijn nodig voor de bridge-logica
 #include "debuggerwindow.h" // Heeft de C++ klasse definitie
 #include "emu.h"            // Heeft de 'emulator' globale struct
 #include <QMetaObject>
@@ -515,44 +514,6 @@ static QString disasm_ddfd(unsigned short addr,int &oplen,bool iy)
         return QString("DB $%1,$%2").arg(iy?"FD":"DD").arg(B(op1));
     }
 }
-
-// ============================================================
-// --- IMPLEMENTATIE VAN DE BREAKPOINT VERWERKING ---
-// ============================================================
-
-/**
- * @brief Wordt aangeroepen vanuit C++ (bv. main.cpp) om de C++ Debugger
- * instantie op te slaan in een static pointer.
- */
-// void debug_register_debugger(void* debugger_instance)
-// {
-//     g_debugger = static_cast<DebuggerWindow*>(debugger_instance);
-//     if (g_debugger) {
-//         qDebug() << "Debugger registered to bridge.";
-//     } else {
-//         qDebug() << "Debugger unregistered from bridge.";
-//     }
-// }
-
-// /**
-//  * @brief Wordt aangeroepen vanuit de C-core (via DebugUpdate) om de C++
-//  * debugger te vragen of de huidige PC een breakpoint raakt.
-//  */
-// extern "C" int debug_check_breakpoint(unsigned short pc)
-// {
-//     // Als de C++ debugger niet geregistreerd is, doe niets.
-//     if (!g_debugger) {
-//         return 0; // 0 = geen hit
-//     }
-
-//     // Roep de C++ member functie aan
-//     // Deze C++ functie is verantwoordelijk voor het zetten van emulator->stop
-//     if (g_debugger->checkHitBreakpoint(pc)) {
-//         return 1; // 1 = HIT
-//     }
-
-//     return 0; // 0 = geen hit
-// }
 
 void debug_sync_breakpoints(ColecoController* controller, const QStringList &list)
 {

@@ -4,17 +4,12 @@
 #include <QString>
 #include "z80.h"
 
-class ColecoController; // <-- Forward declaration
+class ColecoController;
 
 // --- C++ functies ---
 QString disasmOneAt(unsigned short addr, int &oplen);
 
-/**
- * @brief Registreert de C++ DebuggerWindow instantie bij de C-bridge.
- * @param debugger_instance Een void pointer naar de DebuggerWindow.
- */
-//void debug_register_debugger(void* debugger_instance);
-void debug_sync_breakpoints(ColecoController* controller, const QStringList &list); // <-- NIEUW
+void debug_sync_breakpoints(ColecoController* controller, const QStringList &list);
 
 // --- C-Linkable functies ---
 #ifdef __cplusplus
@@ -42,16 +37,6 @@ inline unsigned char  z80_get_im()   { return Z80.im; }
 inline unsigned char  z80_get_iff1() { return Z80.iff1; }
 inline unsigned char  z80_get_iff2() { return Z80.iff2; }
 inline unsigned char  z80_get_halt() { return Z80.halt; }
-
-
-// --- NIEUWE FUNCTIE (voor de C-core) ---
-/**
- * @brief Wordt aangeroepen door de Z80-loop (via DebugUpdate) om te checken op breakpoints.
- * @param pc De huidige Program Counter.
- * @return 1 als een breakpoint is geraakt, anders 0.
- */
-//int debug_check_breakpoint(unsigned short pc);
-// --- EINDE NIEUW ---
 
 #ifdef __cplusplus
 } // extern "C"

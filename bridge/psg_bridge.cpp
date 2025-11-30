@@ -1,5 +1,5 @@
 #include "psg_bridge.h"
-#include <cstring>      // Voor memset
+#include <cstring>
 
 // Tijdelijke buffers voor de mixer (groot genoeg voor 1 frame PAL, 882 samples)
 static short sn_buffer[882];

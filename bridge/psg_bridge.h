@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-           // De C-headers voor BEIDE chips
+    // De C-headers voor BEIDE chips
            extern "C" {
     // --- Standaard SN-chip (van sn76489.c) ---
     void sn76489_init(int clock, int sample_rate);
@@ -18,15 +18,12 @@
     void ay8910_write(int a, int data);
 }
 
-// --- Nette C++ wrapper (alleen declaraties) ---
 namespace PsgBridge {
 
 void init(int clockHz = 3579545, int sampleRate = 44100);
 void reset(int clockHz = 3579545, int sampleRate = 44100);
 void getSamples(int16_t* dstMono16, unsigned int frames);
 
-// Opmerking: 'write'-functies zijn hier niet nodig,
-// 'coleco.cpp' roept ze al direct aan via 'coleco_writeport'.
+}
+#endif
 
-} // namespace PsgBridge
-#endif // PSG_BRIDGE_H
