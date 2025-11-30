@@ -11,7 +11,7 @@ ADAM+ is a modern emulator and development toolkit for the ColecoVision and Cole
 The software has been completely redesigned from the ground up, focusing on stability, performance, and expandability.
 
 The ADAM+ emulator is built using the latest available techniques and technologies obtainable in 2025. Leveraging deep expertise and the assistance of advanced
-Language Models (LLMs), we can achieve the full potential of our programming skills with exceptional speed and accuracy
+Language Models (LLMs), we can achieve the full potential of our programming skills with exceptional speed and accuracy.
 
 It serves as a central platform for integrating a wide range of hardware-related devices, all developed as part of the broader ADAM+ hardware project.
 
