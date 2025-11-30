@@ -15,13 +15,6 @@ class GotoAddressDialog : public QDialog
 public:
     explicit GotoAddressDialog(QWidget *parent = nullptr);
 
-    /**
-     * Eenvoudige helper:
-     * - toont dialoog
-     * - pre-filled met currentPC
-     * - geeft true terug bij OK, false bij Cancel
-     * - outAddr bevat het gekozen adres
-     */
     static bool getAddress(QWidget *parent,
                            uint16_t currentPC,
                            uint16_t &outAddr);
@@ -40,4 +33,4 @@ private:
     uint16_t     m_resultAddr = 0;
 };
 
-#endif // GOTOADDRESSDIALOG_H
+#endif

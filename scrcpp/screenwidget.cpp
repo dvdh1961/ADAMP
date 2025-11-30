@@ -1,6 +1,6 @@
 #include "screenwidget.h"
 #include <QMutexLocker>
-#include <cstring> // voor std::memcpy
+#include <cstring>
 
 
 ScreenWidget::ScreenWidget(QWidget *parent)
@@ -9,12 +9,9 @@ ScreenWidget::ScreenWidget(QWidget *parent)
     m_backgroundColor(QColor("#323232")),
     m_smoothScaling(true),
     m_isFullScreen(false),
-    m_scalingMode(ModeSmooth), // Begin met Smooth
+    m_scalingMode(ModeSmooth),
     m_epxBuffer()
 {
-    // Start met 2x zoom zoals je al deed, maar via helper
-    //applyFixedSize();
-
     // Begin met een zwart scherm
     m_frame.fill(Qt::black);
 }
@@ -23,17 +20,17 @@ ScreenWidget::~ScreenWidget()
 {
 }
 
-void ScreenWidget::setScalingMode(ScalingMode mode)
+void ScreenWidget::setScalingMode(ScreenWidget::ScalingMode mode)
 {
     if (m_scalingMode == mode) return;
     m_scalingMode = mode;
-    update(); // Forceer repaint
+    update();
 }
 
 // Deze functie implementeert het complete Scale2x/EPX (4-regels) algoritme
 void ScreenWidget::applyEPX(const QImage& source)
 {
-    // 1. Zorg dat buffer de juiste (2x) grootte heeft
+    // Zorg dat buffer de juiste (2x) grootte heeft
     const int w = source.width();
     const int h = source.height();
     const QSize targetSize(w * 2, h * 2);
@@ -44,14 +41,12 @@ void ScreenWidget::applyEPX(const QImage& source)
 
     // Valideer bronformaat (moet 32-bit zijn voor quint32 pointers)
     if (source.format() != QImage::Format_RGB32 && source.format() != QImage::Format_ARGB32) {
-        // Converteer naar 32-bit als het een ander formaat is
         QImage convertedSource = source.convertToFormat(QImage::Format_RGB32);
         if (convertedSource.isNull()) {
             qWarning() << "EPX: Kan bron-image niet converteren naar 32-bit.";
             m_epxBuffer.fill(Qt::magenta); // Fout
             return;
         }
-        // Roep onszelf opnieuw aan met de geconverteerde image
         applyEPX(convertedSource);
         return;
     }
@@ -68,25 +63,20 @@ void ScreenWidget::applyEPX(const QImage& source)
         const quint32* srcLine = src + y * srcPitch;
 
         // Lijnen voor buren (met grenscontrole)
-        const quint32* lineA = (y > 0)   ? (src + (y - 1) * srcPitch) : srcLine; // Boven
-        const quint32* lineD = (y < h - 1) ? (src + (y + 1) * srcPitch) : srcLine; // Onder
+        const quint32* lineA = (y > 0)   ? (src + (y - 1) * srcPitch) : srcLine;
+        const quint32* lineD = (y < h - 1) ? (src + (y + 1) * srcPitch) : srcLine;
 
         quint32* dstLine0 = dst + (y * 2) * dstPitch;
         quint32* dstLine1 = dst + (y * 2 + 1) * dstPitch;
 
         for (int x = 0; x < w; ++x) {
-            // 1. Haal P en buren op
             const quint32 P = srcLine[x];
             const quint32 A = lineA[x];
             const quint32 B = (x < w - 1) ? srcLine[x + 1] : P;
             const quint32 C = (x > 0)   ? srcLine[x - 1] : P;
             const quint32 D = lineD[x];
 
-            // 2. Stel de 2x2 uitvoerpixels (p1, p2, p3, p4) in op de standaard (P)
             quint32 p1 = P, p2 = P, p3 = P, p4 = P;
-
-            // --- DE VOLLEDIGE 4 REGELS ---
-            // Dit was de fout in mijn vorige code.
 
             // Regel 1: Links & Boven
             if (C == A && C != D && A != B) p1 = A;
@@ -96,13 +86,109 @@ void ScreenWidget::applyEPX(const QImage& source)
             if (C == D && C != A && D != B) p3 = C;
             // Regel 4: Rechts & Onder
             if (B == D && B != C && D != A) p4 = B;
-            // --- EINDE CORRECTIE ---
 
             // 4. Schrijf naar de 2x2 doelbuffer
             dstLine0[x * 2]     = p1;
             dstLine0[x * 2 + 1] = p2;
             dstLine1[x * 2]     = p3;
             dstLine1[x * 2 + 1] = p4;
+        }
+    }
+}
+
+void ScreenWidget::applyLCDizeFilter(QImage& image)
+{
+    const int W = image.width();
+    const int H = image.height();
+
+    // Lcdize werkt op 2x2 blokken.
+    // De originele code dimt de ene helft van de 2x2 blokken en verheldert de andere.
+    // De logica is: Dimmen op oneven kolommen, verhelderen op even kolommen, voor alle rijen.
+    const quint32 BRIGHTNESS_MASK = 0x000F0F0F;
+
+    // LcdizeImage (in Image.c) werkt met paren (W&=~1)
+
+    for (int y = 0; y < H; ++y)
+    {
+        quint32* P = reinterpret_cast<quint32*>(image.scanLine(y));
+
+        for (int x = 0; x < W; ++x)
+        {
+            if (x & 1) // Oneven kolommen: Brighten
+            {
+                // P[X]+=(~P[X]>>4)&0x000F0F0F
+                P[x] += (~P[x] >> 4) & BRIGHTNESS_MASK;
+            }
+            else // Even kolommen: Darken
+            {
+                // P[X]-=(P[X]>>4)&0x000F0F0F
+                P[x] -= (P[x] >> 4) & BRIGHTNESS_MASK;
+            }
+        }
+    }
+}
+
+void ScreenWidget::applyRasterizeFilter(QImage& image)
+{
+    const int W = image.width();
+    const int H = image.height();
+    const quint32 BRIGHTNESS_MASK = 0x000F0F0F;
+
+    for (int y = 0; y < H; ++y)
+    {
+        quint32* P = reinterpret_cast<quint32*>(image.scanLine(y));
+
+        if (y & 1) // Oneven rijen: Dim de hele rij (zoals TV Scanlines)
+        {
+            // P[X]-=(P[X]>>4)&0x000F0F0F
+            for (int x = 0; x < W; ++x) {
+                P[x] -= (P[x] >> 4) & BRIGHTNESS_MASK;
+            }
+        }
+        else // Even rijen: Dim/verhelder per kolom (zoals LCD)
+        {
+            for (int x = 0; x < W; ++x) {
+                if (x & 1) {
+                    // Oneven kolommen: Brighten
+                    // P[X]+=(~P[X]>>4)&0x000F0F0F
+                    P[x] += (~P[x] >> 4) & BRIGHTNESS_MASK;
+                } else {
+                    // Even kolommen: Darken
+                    // P[X]-=(P[X]>>4)&0x000F0F0F
+                    P[x] -= (P[x] >> 4) & BRIGHTNESS_MASK;
+                }
+            }
+        }
+    }
+}
+
+// Pas de oude TV-filter aan de nieuwe naam aan
+void ScreenWidget::applyTVScanlinesFilter(QImage& image)
+{
+    const int W = image.width();
+    const int H = image.height();
+
+    // Masker voor snelle manipulatie van R, G en B componenten.
+    // Dit maskeer 4 bits (een factor 16) van elke R/G/B component.
+    const quint32 BRIGHTNESS_MASK = 0x000F0F0F;
+
+    for (int y = 0; y < H; ++y)
+    {
+        quint32* P = reinterpret_cast<quint32*>(image.scanLine(y));
+
+        if (y & 1) // Oneven lijnen: Darken (Scanline OFF)
+        {
+            for (int x = 0; x < W; ++x) {
+                // P[X] -= (P[X] >> 4) & 0x000F0F0F;
+                P[x] -= (P[x] >> 4) & BRIGHTNESS_MASK;
+            }
+        }
+        else // Even lijnen: Brighten (Scanline ON - optionele versterking)
+        {
+            for (int x = 0; x < W; ++x) {
+                // P[X] += (~P[X] >> 4) & 0x000F0F0F;
+                P[x] += (~P[x] >> 4) & BRIGHTNESS_MASK;
+            }
         }
     }
 }
@@ -122,8 +208,16 @@ void ScreenWidget::setFullScreenMode(bool enabled)
 {
     if (m_isFullScreen == enabled) return;
     m_isFullScreen = enabled;
-    update(); // Forceer repaint
+    update();
 }
+
+void ScreenWidget::setScanlinesMode(ScanlinesMode mode)
+{
+    if (m_scanlinesMode == mode) return;
+    m_scanlinesMode = mode;
+    update();
+}
+
 #endif
 #if defined(Q_OS_LINUX)
 void ScreenWidget::setFullScreenMode(bool enabled)
@@ -151,54 +245,42 @@ void ScreenWidget::setFullScreenMode(bool enabled)
 }
 #endif
 
-
-// Dit slot wordt aangeroepen vanuit de EMULATOR THREAD
 void ScreenWidget::updateFrame(const QImage &frame)
 {
     {
-        // Vergrendel de mutex, want we schrijven naar m_frame
         QMutexLocker locker(&m_mutex);
-        m_frame = frame.copy(); // Kopieer de data
+        m_frame = frame.copy();
     }
-
-    // Vraag Qt om de widget opnieuw te tekenen (in UI-thread).
     update();
 }
 
 void ScreenWidget::setFrame(const QImage &img)
 {
     QMutexLocker locker(&m_mutex);
-    // Accepteer ELKE image. De grootte-controle is weg.
-    // De schaal-logica is weg.
-    m_frame = img.copy(); // Sla de (al geschaalde) image op
+    m_frame = img.copy();
 
     locker.unlock();
-    update(); // Vraag om repaint
+    update();
 }
 
 void ScreenWidget::setSmoothScaling(bool enabled)
 {
-    if (m_smoothScaling == enabled) return; // Geen wijziging
+    if (m_smoothScaling == enabled) return;
 
     m_smoothScaling = enabled;
-    update(); // Forceer een repaint om de nieuwe instelling toe te passen
+    update();
 }
 
 void ScreenWidget::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter p(this);
-    // VERWIJDERD: QColor m_backgroundColor = "#323232";
-    // Dit moet de member 'm_backgroundColor' zijn, ingesteld in de constructor.
-
-    // Pak de kleine 256x192 frame
     QImage frameCopy;
     {
         QMutexLocker lock(&m_mutex);
         frameCopy = m_frame;
     }
 
-    // Bepaal de achtergrondkleur (zoals voorheen)
     QColor bgColor = m_isFullScreen ? Qt::transparent : m_backgroundColor;
 
     if (frameCopy.isNull() || frameCopy.width() == 0 || frameCopy.height() == 0) {
@@ -206,82 +288,82 @@ void ScreenWidget::paintEvent(QPaintEvent *event)
         return;
     }
 
-    // --- NIEUWE EPX SCHAAL-LOGICA ---
-
-    QImage imageToDraw; // De image die we *echt* gaan schalen
+    QImage imageToDraw;
     bool useSmoothFinalScale;
 
-    // We gaan ervan uit dat m_scalingMode nu een enum is (zie stap 3)
     switch (m_scalingMode)
     {
     case ModeEPX:
-        // 1. Genereer de 2x (512x384) EPX image
-        //    (Vereist applyEPX() en m_epxBuffer in deze class)
         applyEPX(frameCopy);
         imageToDraw = m_epxBuffer;
-
-        // 2. EPX ziet er het beste uit als het *daarna* vloeiend
-        //    naar de eindresolutie wordt geschaald.
         useSmoothFinalScale = true;
         break;
 
     case ModeSmooth:
-        imageToDraw = frameCopy; // Schaal de 256x192 image
+        imageToDraw = frameCopy;
         useSmoothFinalScale = true;
         break;
 
     case ModeSharp:
     default:
-        imageToDraw = frameCopy; // Schaal de 256x192 image
+        imageToDraw = frameCopy;
         useSmoothFinalScale = false;
         break;
     }
 
-    // Stel de *definitieve* schaalmodus in
+    if (m_scanlinesMode != ScanlinesOff)
+    {
+        QImage filteredImage = imageToDraw.copy();
+
+        switch (m_scanlinesMode) {
+        case ScanlinesTV:
+            applyTVScanlinesFilter(filteredImage);
+            break;
+        case ScanlinesLCD:
+            applyLCDizeFilter(filteredImage);
+            break;
+        case ScanlinesRaster:
+            applyRasterizeFilter(filteredImage);
+            break;
+        default:
+            break;
+        }
+
+        imageToDraw = filteredImage;
+    }
+
     p.setRenderHint(QPainter::SmoothPixmapTransform, useSmoothFinalScale);
     p.setRenderHint(QPainter::Antialiasing, false);
 
-    // --- EINDE NIEUWE LOGICA ---
-
-
-    // --- UW BESTAANDE "VUL HOOGTE" LOGICA ---
-    // (Deze wordt nu toegepast op 'imageToDraw')
-
     QSize widgetSize = this->size();
 
-    // 1. Bepaal de doelhoogte (volledige widget-hoogte)
+    // Bepaal de doelhoogte (volledige widget-hoogte)
     int targetHeight = widgetSize.height();
 
-    // 2. Bereken de doelbreedte met behoud van aspect ratio
+    // Bereken de doelbreedte met behoud van aspect ratio
     if (imageToDraw.height() == 0) return; // Voorkom delen door nul
     int targetWidth = (targetHeight * imageToDraw.width()) / imageToDraw.height();
 
-    // 3. Bepaal de x-positie om horizontaal te centreren
+    // Bepaal de x-positie om horizontaal te centreren
     int x = (widgetSize.width() - targetWidth) / 2;
     int y = 0; // Altijd 0, want we vullen de hoogte
 
-    // 4. Maak de doel-rechthoek
+    // Maak de doel-rechthoek
     QRect targetRect(x, y, targetWidth, targetHeight);
 
-    // 5. Teken de achtergrond (vult het hele venster)
+    // Teken de achtergrond (vult het hele venster)
     p.fillRect(rect(), bgColor);
 
-    // 6. Teken het spel
+    // Teken het spel
     p.drawImage(targetRect, imageToDraw);
 
     Q_UNUSED(event);
 
-    // ... (Hier staat je code die m_mutex lockt en frame ophaalt) ...
-    // ... (Hier staat je code die scaling berekent en de achtergrond vult) ...
-
-    // 5. Teken de achtergrond
+    // Teken de achtergrond
     p.fillRect(rect(), bgColor);
 
-    // 6. Teken het spel
+    // Teken het spel
     p.drawImage(targetRect, imageToDraw);
-
-    // --- NIEUW: TEKEN ZWARTE BORDER (4px) ---
-    // We tekenen dit NA de image, zodat het er netjes omheen ligt.
 
     QPen borderPen(Qt::black); // Kleur: Zwart
     borderPen.setWidth(4);     // Dikte: 4 pixels
@@ -290,7 +372,7 @@ void ScreenWidget::paintEvent(QPaintEvent *event)
     borderPen.setJoinStyle(Qt::MiterJoin);
 
     p.setPen(borderPen);
-    p.setBrush(Qt::NoBrush); // Zorg dat we alleen de lijnen tekenen, niet vullen
+    p.setBrush(Qt::NoBrush);
 
     // Teken de rechthoek precies op de rand van het spelbeeld
     p.drawRect(targetRect);

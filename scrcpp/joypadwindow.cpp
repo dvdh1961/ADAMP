@@ -14,10 +14,8 @@
 #include <QDebug>
 #include <QTimer>
 
-// Helper function to make key codes readable
 static QString vkPretty(int vk) {
     if (vk == 0) return "none";
-    // Check for our custom internal ID for joystick buttons (simple visualization)
     if (vk >= 0x10000) {
         return QString("Joy Btn %1").arg(vk - 0x10000);
     }
@@ -38,12 +36,9 @@ static QString vkPretty(int vk) {
 
 JoypadWindow::JoypadWindow(QWidget* parent) : QDialog(parent)
 {
-    // Removed m_isWaitingForInput init because we use m_capturing now
-
     setWindowTitle("Keypad mapper");
     setModal(true);
 
-    // Fixed size
     setFixedSize(680, 460);
 
     buildUi();
@@ -63,7 +58,6 @@ void JoypadWindow::buildUi()
     m_tabs->addTab(m_p1.page, "Player 1");
     m_tabs->addTab(m_p2.page, "Player 2");
 
-    // --- Buttons ---
     QIcon okIcon(":/images/images/OK.png");
     QIcon cancelIcon(":/images/images/CANCEL.png");
     QPixmap okPixmap(":/images/images/OK.png");
@@ -159,7 +153,7 @@ void JoypadWindow::buildPlayerPage(PlayerUI& ui, const QString& title)
 
         cap->setFocusPolicy(Qt::NoFocus);
         clr->setFocusPolicy(Qt::NoFocus);
-        edit->setFocusPolicy(Qt::NoFocus); // Ook het tekstvak niet focussen
+        edit->setFocusPolicy(Qt::NoFocus);
 
         int idx = ui.edits.size();
         edit->setProperty("idx", idx);
@@ -232,8 +226,6 @@ bool JoypadWindow::eventFilter(QObject*, QEvent* ev)
         auto* ke=static_cast<QKeyEvent*>(ev);
         int vk=ke->key();
 
-        // Safety check to ensure we are focused on the capture button
-        // or just apply to the active capture state
         PlayerUI& P=(m_capturePlayer==0)?m_p1:m_p2;
         if(m_captureIndex>=0 && m_captureIndex<P.edits.size()){
             P.keys[m_captureIndex]=vk;
@@ -247,7 +239,6 @@ bool JoypadWindow::eventFilter(QObject*, QEvent* ev)
 
 void JoypadWindow::onCaptureClicked()
 {
-    // Als we al bezig zijn, negeer de klik
     if (m_capturing) return;
 
     auto* b = qobject_cast<QPushButton*>(sender());
@@ -256,17 +247,13 @@ void JoypadWindow::onCaptureClicked()
     m_captureIndex = b->property("idx").toInt();
     m_capturePlayer = b->property("player").toInt();
 
-    // 1. HAAL DE FOCUS WEG VAN DE KNOP
-    // Dit voorkomt dat Qt de focus doorschuift naar de 'Clear' knop ernaast
     b->clearFocus();
 
-    // 2. Update UI
     auto& P = (m_capturePlayer == 0) ? m_p1 : m_p2;
     if (m_captureIndex >= 0 && m_captureIndex < P.edits.size()) {
         P.edits[m_captureIndex]->setText("...");
     }
 
-    // 3. Wacht even voordat we luisteren (tegen dubbelklikken/enter)
     m_capturing = false;
 
     QTimer::singleShot(250, this, [this, &P]() {
@@ -276,7 +263,6 @@ void JoypadWindow::onCaptureClicked()
             P.edits[m_captureIndex]->setText("Press button...");
         }
 
-        // Zet focus op het venster, zodat toetsaanslagen binnenkomen
         this->activateWindow();
         this->setFocus();
     });
@@ -316,31 +302,23 @@ void JoypadWindow::saveMappingsToSettings(const int (&p1)[20], const int (&p2)[2
     }
 }
 
-// THIS IS THE FIXED FUNCTION
 void JoypadWindow::onJoystickButtonDetected(int btnId)
 {
-    // Use the existing m_capturing flag logic
     if (!m_capturing) {
         return;
     }
 
     qDebug() << "Joystick Button detected:" << btnId;
 
-    // Determine which player we are capturing for
     PlayerUI& P = (m_capturePlayer == 0) ? m_p1 : m_p2;
 
     if(m_captureIndex >= 0 && m_captureIndex < P.edits.size()){
-        // To distinguish Joystick buttons from Keyboard keys (Qt::Key_),
-        // we can add a magic number (offset) or negative numbers.
-        // Here I add 0x10000 (65536) to indicate it's a Joystick Button ID.
-        // You must handle this offset in your InputWidget/Controller logic when reading keys!
         int storedValue = 0x10000 + btnId;
 
         P.keys[m_captureIndex] = storedValue;
         P.edits[m_captureIndex]->setText(vkPretty(storedValue));
     }
 
-    // Stop capturing
     m_capturing = false;
 }
 

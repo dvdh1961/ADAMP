@@ -1,6 +1,5 @@
 #include "patternwindow.h"
 
-// Qt includes
 #include <QApplication>
 #include <QLayout>
 #include <QGroupBox>
@@ -18,12 +17,9 @@
 #include <QPainter>
 #include <QImage>
 
-// Globale emulatorvariabelen
 #include <QPainter>
 #include <QImage>
 
-// Emulator core includes
-// Zorg ervoor dat deze headers in je .pro-bestand (INCLUDEPATH) staan
 #include "coleco.h"
 
 extern "C" {
@@ -33,35 +29,31 @@ extern "C" {
 
 extern int coleco_updatetms;
 
-// Constanten uit het origineel
 #define ROWCNT 256
 #define LINECNT 256
 
 PatternWindow::PatternWindow(QWidget *parent)
     : QMainWindow(parent),
-    m_vramPixmap(512, 512), // Origineel was 256x256, maar UI schaalt het naar 512
+    m_vramPixmap(512, 512),
     m_tilePixmap(8, 8),
     m_baseVram(0),
     m_vramTile(0)
 {
     setWindowTitle("Pattern Table Viewer");
-    setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint); // Vergelijkbaar met bsToolWindow
-    setFixedSize(800, 620); // Aangepaste grootte
+    setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint);
+    setFixedSize(800, 620);
 
-    // Vul de pixmaps met een standaardkleur
     m_vramPixmap.fill(Qt::black);
     m_tilePixmap.fill(Qt::black);
 
     setupUI();
     setupMenus();
 
-    // Laad instellingen (oorspronkelijk uit TIniFile)
     m_autoRefreshAction->setChecked(true);
 }
 
 PatternWindow::~PatternWindow()
 {
-    // Geen handmatige 'delete' nodig
 }
 
 void PatternWindow::setupUI()
@@ -114,7 +106,7 @@ void PatternWindow::setupUI()
     QVBoxLayout *rightLayout = new QVBoxLayout();
     rightLayout->setSpacing(15);
 
-    // 1. Tile Info Box
+    // Tile Info Box
     m_tileInfoBox = new QGroupBox("Tile Info");
     m_tileInfoBox->setStyleSheet("QGroupBox { color: white; } QLabel { color: white; }");
     QFormLayout *infoLayout = new QFormLayout(m_tileInfoBox);
@@ -127,7 +119,7 @@ void PatternWindow::setupUI()
 
     rightLayout->addWidget(m_tileInfoBox);
 
-    // 2. Tile View Box
+    // Tile View Box
     m_tileViewBox = new QGroupBox("Tile 8x8 pixels");
     m_tileViewBox->setStyleSheet("QGroupBox { color: white; } QLabel { color: white; }");
     QHBoxLayout *tileLayout = new QHBoxLayout(m_tileViewBox);
@@ -153,7 +145,7 @@ void PatternWindow::setupUI()
     tileLayout->addLayout(hexLayout);
     rightLayout->addWidget(m_tileViewBox);
 
-    // 3. Options Box
+    // Options Box
     QGroupBox *optionsBox = new QGroupBox("Options");
     optionsBox->setStyleSheet("QGroupBox { color: white; } QCheckBox { color: white; } QRadioButton { color: white; }");
     QVBoxLayout *optionsLayout = new QVBoxLayout(optionsBox);
@@ -170,13 +162,11 @@ void PatternWindow::setupUI()
     rightLayout->addWidget(optionsBox);
     rightLayout->addStretch();
 
-    // Layout samenstellen
     mainLayout->addLayout(leftLayout);
     mainLayout->addLayout(rightLayout);
-    mainLayout->setStretch(0, 1); // Linker layout (grid) mag meer rekken
+    mainLayout->setStretch(0, 1);
     setCentralWidget(centralWidget);
 
-    // Slots verbinden
     connect(m_gridCheck, &QCheckBox::toggled, this, &PatternWindow::onOptionToggled);
     connect(m_colorRadio, &QRadioButton::toggled, this, &PatternWindow::onOptionToggled);
     connect(m_bwRadio, &QRadioButton::toggled, this, &PatternWindow::onOptionToggled);
@@ -217,8 +207,6 @@ void PatternWindow::setupMenus()
     setMenuBar(m_menuBar);
 }
 
-// --- Event Overrides ---
-
 void PatternWindow::closeEvent(QCloseEvent *event)
 {
     emit windowClosed();
@@ -242,8 +230,6 @@ bool PatternWindow::eventFilter(QObject *watched, QEvent *event)
     }
     return QMainWindow::eventFilter(watched, event);
 }
-
-// --- Slots ---
 
 void PatternWindow::doRefresh()
 {
@@ -284,7 +270,6 @@ void PatternWindow::onAutoRefreshToggled(bool checked)
 
 void PatternWindow::onOptionToggled()
 {
-    // Zowel grid als kleur vereist een volledige redraw
     updateChanges();
     smallUpdateChanges();
 }
@@ -296,7 +281,6 @@ void PatternWindow::onScrollChanged(int value)
     if (alignedValue != m_baseVram) {
         m_baseVram = alignedValue;
 
-        // Voorkom oneindige lus
         m_vramScroll->blockSignals(true);
         m_vramScroll->setValue(m_baseVram);
         m_vramScroll->blockSignals(false);
@@ -307,9 +291,6 @@ void PatternWindow::onScrollChanged(int value)
     }
 }
 
-
-// --- Core Ported Logic ---
-
 QString PatternWindow::intToHex(int value, int width)
 {
     return QString("%1").arg(value, width, 16, QChar('0')).toUpper();
@@ -317,7 +298,6 @@ QString PatternWindow::intToHex(int value, int width)
 
 void PatternWindow::updateOfsText(void)
 {
-    // Port van Tpatternviewer::UpdateOfsText
     unsigned short bgmap = coleco_gettmsaddr(CHRMAP, 0, 0);
     unsigned short bgtil = coleco_gettmsaddr(CHRGEN, 0, 0);
     unsigned short bgcol = coleco_gettmsaddr(CHRCOL, 0, 0);
@@ -329,7 +309,7 @@ void PatternWindow::updateOfsText(void)
     unsigned short bgcolsize = (tms.Mode == 2) ? 0x1800 : 0x0800;
     unsigned short sprtilsize = 0x0800;
 
-    int currentTile = m_vramTile; // Gebruik de geselecteerde tile
+    int currentTile = m_vramTile;
 
     if ((currentTile >= bgmap) && (currentTile < bgmap + bgmapsize))
         m_vramTxtLabel->setText("BG Map");
@@ -348,7 +328,6 @@ void PatternWindow::updateOfsText(void)
 
 void PatternWindow::updateTileInfo(int x, int y)
 {
-    // Port van Tpatternviewer::VRamMouseMove
     int ix = x / (m_vramLabel->width() / 32);  // 32 tiles breed
     int iy = y / (m_vramLabel->height() / 32); // 32 tiles hoog
 
@@ -373,12 +352,10 @@ void PatternWindow::updateTileInfo(int x, int y)
 
 void PatternWindow::createTilePixmap()
 {
-    // Port van Tpatternviewer::CreateTile
     int iy, value, vcol, ofsvram;
     QRgb fgcol, bgcol;
     QImage tileImage(8, 8, QImage::Format_RGB32);
 
-    // Safety check
     if (!emulator) {
         m_tilePixmap = QPixmap::fromImage(tileImage);
         return;
@@ -387,14 +364,12 @@ void PatternWindow::createTilePixmap()
     for (iy = 0; iy < 8; iy++) {
         QRgb *linePtr = (QRgb *)tileImage.scanLine(iy);
 
-        // Fake de Y-coördinaat voor bank switching, gebaseerd op het adres
         BYTE fake_y = 0x00;
         ofsvram = m_vramTile - coleco_gettmsaddr(CHRGEN, 0, 0);
 
         if (ofsvram >= 0x1000) fake_y = 0x80;
         else if (ofsvram >= 0x800) fake_y = 0x40;
 
-        // Adres voor deze specifieke byte (tile_base & 0x7FF) + lijn_offset
         int pattern_byte_addr = (m_vramTile & 0x7FF) + iy;
 
         if ((m_vramTile >= coleco_gettmsaddr(CHRGEN, 0, 0)) && (m_vramTile < coleco_gettmsaddr(CHRGEN, 0, 0) + 0x1800)) {
@@ -448,9 +423,8 @@ void PatternWindow::smallUpdateChanges()
     QPixmap scaledTile = m_tilePixmap.scaled(128, 128, Qt::IgnoreAspectRatio, Qt::FastTransformation);
 
     // Teken het grid (net als in ntablewindow, altijd)
-    // if (m_gridCheck->isChecked()) { // <-- We verwijderen de check
     QPainter painter(&scaledTile);
-    painter.setPen(QColor(Qt::darkGray)); // cl3DDkShadow
+    painter.setPen(QColor(Qt::darkGray));
     int step = 128 / 8;
     for (int x = 0; x <= 128; x += step) {
         painter.drawLine(x, 0, x, 128);
@@ -458,7 +432,6 @@ void PatternWindow::smallUpdateChanges()
     for (int y = 0; y <= 128; y += step) {
         painter.drawLine(0, y, 128, y);
     }
-    // }
 
     m_tileLabel->setPixmap(scaledTile);
 }
@@ -470,9 +443,9 @@ void PatternWindow::createVramPixmap(QPaintDevice *device, int w, int h)
     QRgb fgcol, bgcol;
     BYTE fake_y;
 
-    // 1. Maak de 256x256 basis-image
+    // Maak de 256x256 basis-image
     QImage image(ROWCNT, LINECNT, QImage::Format_RGB32);
-    image.fill(Qt::black); // Start met een zwarte achtergrond
+    image.fill(Qt::black);
 
     if (!emulator) {
         QPainter painter(device);
@@ -534,13 +507,13 @@ void PatternWindow::createVramPixmap(QPaintDevice *device, int w, int h)
         }
     }
 
-    // 2. Converteer naar QPixmap en schaal naar het doel-device
+    // Converteer naar QPixmap en schaal naar het doel-device
     QPixmap basePixmap = QPixmap::fromImage(image);
     QPainter painter(device);
     // Schaal 256x256 naar 512x512
     painter.drawPixmap(0, 0, w, h, basePixmap);
 
-    // 3. Teken het grid (indien nodig) over de geschaalde pixmap
+    // Teken het grid (indien nodig) over de geschaalde pixmap
     if (m_gridCheck->isChecked()) {
         int step = w / 32; // 512 / 32 = 16
         QColor defaultColor(Qt::darkGray);
@@ -568,7 +541,6 @@ void PatternWindow::createVramPixmap(QPaintDevice *device, int w, int h)
         int sprtilsize = 0x0800;
         int spratrsize = 0x0080;
 
-        // Helper (lambda) om een ID voor elke regio te krijgen
         auto getRegionId = [&](int vramAddr) {
             if ((vramAddr >= bgmap) && (vramAddr < bgmap + bgmapsize)) return 1; // BG Map
             if ((vramAddr >= bgtil) && (vramAddr < bgtil + bgtilsize)) return 2; // BG Tile
@@ -588,15 +560,12 @@ void PatternWindow::createVramPixmap(QPaintDevice *device, int w, int h)
             }
         }
 
-        // --- Teken de lijnen ---
         for (int i = 0; i <= 32; i++) {
             int x = (i * step);
             int y = (i * step);
             if (x >= w) x = w - 1;
             if (y >= h) y = h - 1;
 
-            // --- Verticale Lijn (op positie x) ---
-            // (Lijn 'i' scheidt kolom 'i-1' en 'i')
             if (i > 0 && i < 32) {
                 bool boundaryFound = false;
                 for(int row = 0; row < 32; row++) {

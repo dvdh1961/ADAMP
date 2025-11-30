@@ -103,7 +103,6 @@ private:
     int    m_padding;
 };
 
-// ===== Singleton =====
 PrintWindow* PrintWindow::s_instance = nullptr;
 
 PrintWindow* PrintWindow::instance()
@@ -132,7 +131,6 @@ extern "C" void adam_printer_chunk(const uint8_t* data, int len)
         );
 }
 
-// ---------------- ctor/dtor ----------------
 PrintWindow::PrintWindow(QWidget* parent)
     : QMainWindow(parent)
 {
@@ -308,8 +306,6 @@ void PrintWindow::contextMenuEvent(QContextMenuEvent* event)
     menu.exec(event->globalPos());
 }
 
-
-// ---------------- helpers ----------------
 void PrintWindow::updateTopContainerMaxHeight()
 {
     if (!m_paperLabel || !m_bitmapLabel) return;
@@ -426,9 +422,6 @@ void PrintWindow::copySelection()
     clipboard->setText(text);
 }
 
-// ---------------- Public slots ----------------
-
-// --- DE OPLOSSING VOOR HET VASTLOPEN ---
 void PrintWindow::appendPrinterBytes(const QByteArray& bytes)
 {
     QMutexLocker lk(&m_appendMutex);
@@ -444,21 +437,13 @@ void PrintWindow::appendPrinterBytes(const QByteArray& bytes)
         if (b == 0x0D || b == 0x0A) {
             int len = m_currentLine.length();
 
-            // HIER IS DE FIX:
-            // We negeren de Enter ALLEEN als de regel 'precies vol' is (veelvoud van 80).
-            // Dus: 80, 160, 240... -> Negeren.
-            // Maar: 150, 45, 90... -> NIET negeren, gewoon printen!
-            // We gebruiken een kleine marge (79-81) voor veiligheid.
-
             int remainder = len % 80;
             bool isWrapPoint = (remainder == 0 || remainder == 1 || remainder == 79);
 
             if (len >= 79 && isWrapPoint) {
-                // Dit is waarschijnlijk een auto-wrap. Negeren.
                 continue;
             }
 
-            // Anders: Echte Enter (ook al is de regel lang, hij is niet 'precies' vol)
             flushCurrentLine();
             m_atLineStart = true;
             continue;

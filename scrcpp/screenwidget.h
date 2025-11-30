@@ -4,14 +4,8 @@
 #include <QWidget>
 #include <QImage>
 #include <QPainter>
-#include <QMutex> // Nodig voor thread-veiligheid
-
-// 1. Definieer de modi
-enum ScalingMode {
-    ModeSharp,  // 0
-    ModeSmooth, // 1
-    ModeEPX     // 2
-};
+#include <QMutex>
+#include "mainwindow.h"
 
 class ScreenWidget : public QWidget
 {
@@ -21,11 +15,15 @@ public:
     explicit ScreenWidget(QWidget *parent = nullptr);
     ~ScreenWidget();
 
-    // Handig voor zero-copy in de toekomst (optioneel)
+    enum ScalingMode {
+        ModeSharp,  // 0
+        ModeSmooth, // 1
+        ModeEPX     // 2
+    };
+
     uchar* frameBits() { return m_frame.bits(); }
     int    frameStride() const { return m_frame.bytesPerLine(); }
 
-    // Standaard Coleco resolutie
     static constexpr int COLECO_WIDTH  = 256;
     static constexpr int COLECO_HEIGHT = 192;
 
@@ -35,20 +33,19 @@ public:
    void setBackgroundColor(const QColor& color);
    void setSmoothScaling(bool enabled);
    void setFullScreenMode(bool enabled);
-   void setScalingMode(ScalingMode mode);
 
 public slots:
-    // Dit is het slot dat het signaal van de ColecoController ontvangt
     void updateFrame(const QImage &frame);
     void setFrame(const QImage &img);
+    void setScalingMode(ScalingMode mode);
+    void setScanlinesMode(ScanlinesMode mode);
 
 protected:
-    // We overschrijven de paint-functie
     void paintEvent(QPaintEvent *event) override;
 
 private:
-    QImage m_frame; // De huidige afbeelding die we tonen
-    QMutex m_mutex; // Beveiliging voor toegang vanuit meerdere threads
+    QImage m_frame;
+    QMutex m_mutex;
     QColor m_backgroundColor;
     bool m_smoothScaling;
     bool m_isFullScreen;
@@ -56,6 +53,12 @@ private:
 
     QImage m_epxBuffer;
     void applyEPX(const QImage& source);
+
+    ScanlinesMode m_scanlinesMode = ScanlinesOff;
+
+    void applyTVScanlinesFilter(QImage& image);
+    void applyLCDizeFilter(QImage& image);
+    void applyRasterizeFilter(QImage& image);
 };
 
-#endif // SCREENWIDGET_H
+#endif

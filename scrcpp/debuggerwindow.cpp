@@ -27,7 +27,7 @@
 #include <QTextStream>
 #include <QMessageBox>
 #include <QCoreApplication>
-#include <QTabWidget> // <-- Toegevoegd
+#include <QTabWidget>
 #include "setbreakpointdialog.h"
 #include <algorithm>
 
@@ -42,13 +42,11 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
     QWidget *central = new QWidget(this);
     setCentralWidget(central);
 
-    // Root vertical layout (alles onder elkaar)
     QVBoxLayout *rootLayout = new QVBoxLayout(central);
     QFont tableFont1("Roboto", 10);
     QFont tableFont2("Roboto", 11);
     QFont fixedFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
 
-    // --- Helper-lambda voor de *onderste* knoppenbalk ---
     QString buttonStyle =
         "QPushButton { border: none; background: transparent; }"
         "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }";
@@ -60,7 +58,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
         QPushButton *button = new QPushButton(this);
         button->setIcon(icon);
         button->setIconSize(pixmap.size());
-        button->setFixedSize(pixmap.size()); // Dit maakt ze klein
+        button->setFixedSize(pixmap.size());
         button->setText("");
         button->setFlat(true);
         button->setStyleSheet(buttonStyle);
@@ -69,12 +67,9 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
     };
 
 
-    //
-    // ======= TOP ROW: DISASSEMBLY (links) | REGISTERS (midden) | RECHTER KOLOM (rechts) =======
-    //
     QHBoxLayout *topRow = new QHBoxLayout();
 
-    // --- DISASSEMBLY side (links) ---
+    // --- DISASSEMBLY (links) ---
     {
         QVBoxLayout *disLayout = new QVBoxLayout();
         QLabel *lblDis = new QLabel("<b>Disassembly (around PC)</b>", this);
@@ -95,7 +90,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
         topRow->addLayout(disLayout, 1);
     }
 
-    // --- REGISTERS side (midden) ---
+    // --- REGISTERS (midden) ---
     {
         QVBoxLayout *regLayout = new QVBoxLayout();
         QLabel *lblRegs = new QLabel("<b>Registers</b>", this);
@@ -116,7 +111,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
     {
         QVBoxLayout *rightColumnLayout = new QVBoxLayout();
 
-        // --- 1. Flags Table (Bovenaan) ---
+        // --- Flags Table (Bovenaan) ---
         rightColumnLayout->addWidget(new QLabel("<b>Flags</b>", this));
         m_flagsTable = new QTableWidget(1, 6, this);
         m_flagsTable->setHorizontalHeaderLabels(QStringList() << "S" << "Z" << "H" << "P/V" << "N" << "C");
@@ -130,10 +125,10 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
         int flagsHeight = (m_flagsTable->horizontalHeader()->height() + 2) + (1 * 20);
         m_flagsTable->setMinimumHeight(flagsHeight);
         m_flagsTable->setMaximumHeight(flagsHeight);
-        rightColumnLayout->addWidget(m_flagsTable, 0); // Stretch 0
+        rightColumnLayout->addWidget(m_flagsTable, 0);
 
 
-        // --- 2. Stack Table (Midden, vult de rest) ---
+        // --- Stack Table (Midden) ---
         rightColumnLayout->addWidget(new QLabel("<b>Stack (Top)</b>", this));
         m_stackTable = new QTableWidget(7, 4, this);
         m_stackTable->setHorizontalHeaderLabels(QStringList() << "Addr 0..7" << "Val" << "Addr 8..14" << "Val");
@@ -146,26 +141,26 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
         rightColumnLayout->addWidget(m_stackTable, 1 /* stretch 1 */);
 
 
-        // --- 3. TAB WIDGET (Breakpoint / Patches) ---
+        // --- TAB WIDGET (Breakpoint / Patches) ---
         m_rightTabWidget = new QTabWidget(this);
         m_rightTabWidget->setFont(tableFont1); // Kleinere font voor de tabs
         m_rightTabWidget->setFixedHeight(140); // Vaste hoogte
 
-        // --- TAB 1: Breakpoints ---
+        // --- Breakpoints ---
         {
             QWidget *bpTab = new QWidget(m_rightTabWidget);
             QVBoxLayout *bpTabLayout = new QVBoxLayout(bpTab);
-            bpTabLayout->setContentsMargins(4, 4, 4, 4); // Binnen-marge
+            bpTabLayout->setContentsMargins(4, 4, 4, 4);
             bpTabLayout->setSpacing(4);
 
-            // 3a. Breakpoint Lijst
+            // Breakpoint Lijst
             m_bpList = new QListWidget(this);
             m_bpList->setFont(fixedFont);
             m_bpList->setSelectionMode(QAbstractItemView::SingleSelection);
-            m_bpList->setFixedHeight(80); // Vaste hoogte voor de lijst zelf
-            bpTabLayout->addWidget(m_bpList, 0); // Stretch 0
+            m_bpList->setFixedHeight(80);
+            bpTabLayout->addWidget(m_bpList, 0);
 
-            // 3b. Breakpoint Knoppen
+            // Breakpoint Knoppen
             QHBoxLayout *bpButtons = new QHBoxLayout();
             bpButtons->setSpacing(4);
             QString bpBtnStyle = "QPushButton { padding: 2px 5px; }";
@@ -200,11 +195,11 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
             bpButtons->addStretch();
             bpButtons->addWidget(m_bpEnableButton);
 
-            bpTabLayout->addLayout(bpButtons, 0); // Stretch 0
+            bpTabLayout->addLayout(bpButtons, 0);
 
             m_rightTabWidget->addTab(bpTab, tr("Breakpoints"));
 
-            // Connecteer breakpoint signalen
+            // Connect breakpoint signalen
             connect(m_bpEnableButton, &QPushButton::clicked,
                     this, &DebuggerWindow::onToggleBreakpoints);
             connect(m_bpAddButton, &QPushButton::clicked, this, &DebuggerWindow::onBpAdd);
@@ -215,7 +210,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
             connect(m_bpSaveButton, &QPushButton::clicked, this, &DebuggerWindow::onBpSave);
         }
 
-        // --- TAB 2: Patches ---
+        // --- Patches ---
         {
             QWidget *patchTab = new QWidget(m_rightTabWidget);
             QVBoxLayout *patchLayout = new QVBoxLayout(patchTab);
@@ -228,18 +223,14 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
             m_rightTabWidget->addTab(patchTab, tr("Patches"));
         }
 
-        // Voeg het hele tab-widget toe aan de rechterkolom
         rightColumnLayout->addWidget(m_rightTabWidget, 0 /* stretch 0 */);
 
-        // Voeg de hele rechterkolom toe
         topRow->addLayout(rightColumnLayout, 1);
     }
 
     rootLayout->addLayout(topRow, 1);
 
-    //
     // ======= MEMORY DUMP (volledige breedte onderaan) =======
-    //
     {
         QLabel *lblMem = new QLabel("<b>Memory Dump</b>", this);
         rootLayout->addWidget(lblMem);
@@ -263,9 +254,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
         rootLayout->addWidget(m_memTable, 1);
     }
 
-    //
     // ======= MEMORY CONTROLS =======
-    //
     {
         QHBoxLayout *memControlsLayout = new QHBoxLayout();
         memControlsLayout->addWidget(new QLabel("Bron:", this));
@@ -303,12 +292,9 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
         connect(m_memAddrHomeButton, &QPushButton::clicked, this, &DebuggerWindow::onMemAddrHome);
     }
 
-    //
     // ======= DEBUGGER CONTROLS (knoppen) =======
-    //
     QHBoxLayout *buttons = new QHBoxLayout;
 
-    // --- De lambda wordt hier gebruikt ---
     QPushButton *btnStep        = createImageButton(":/images/images/STEP.png");
     QPushButton *btnRun         = createImageButton(":/images/images/RUN.png");
     QPushButton *btnBreak       = createImageButton(":/images/images/BREAK.png");
@@ -355,26 +341,11 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
     updateAllViews();
 }
 
-/* ============================================================
-   SETTER VOOR PATH
-   ============================================================ */
-void DebuggerWindow::setBreakpointPath(const QString &path)
-{
-    m_breakpointPath = path;
-}
-
-
-/* ============================================================
-   Koppel de controller
-   ============================================================ */
 void DebuggerWindow::setController(ColecoController *controller)
 {
     m_controller = controller;
 }
 
-/* ============================================================
-   PUBLIC SLOT: alles refreshen
-   ============================================================ */
 void DebuggerWindow::updateAllViews()
 {
     updateRegisters();
@@ -384,9 +355,6 @@ void DebuggerWindow::updateAllViews()
     updateStack();
 }
 
-/* ============================================================
-   REGISTERS
-   ============================================================ */
 void DebuggerWindow::updateRegisters()
 {
     if (!m_regTable) return;
@@ -416,9 +384,6 @@ void DebuggerWindow::updateRegisters()
     }
 }
 
-/* ============================================================
-   DISASSEMBLY (PC highlight in rood)
-   ============================================================ */
 void DebuggerWindow::updateDisassembly()
 {
     if (!m_disasmView) return;
@@ -471,9 +436,6 @@ void DebuggerWindow::updateDisassembly()
     }
 }
 
-/* ============================================================
-   MEMORY DUMP (hex + ASCII)
-   ============================================================ */
 void DebuggerWindow::updateMemoryDump()
 {
     if (!m_memTable) return;
@@ -504,9 +466,6 @@ void DebuggerWindow::updateMemoryDump()
     }
 }
 
-/* ============================================================
-   HELPER: Memory Read
-   ============================================================ */
 uint8_t DebuggerWindow::readMemoryByte(uint32_t address)
 {
     uint32_t addr = address;
@@ -520,10 +479,6 @@ uint8_t DebuggerWindow::readMemoryByte(uint32_t address)
     default: return 0xFF;
     }
 }
-
-/* ============================================================
-   NIEUWE HELPERS: Flags en Stack
-   ============================================================ */
 
 void DebuggerWindow::updateFlags()
 {
@@ -589,7 +544,6 @@ void DebuggerWindow::updateStack()
     QColor spColor = Qt::cyan;
     QColor defaultColor = Qt::white;
 
-    // Helper lambda om een cel in te vullen
     auto setItem = [&](int r, int c, const QString& text, QColor col) {
         QTableWidgetItem* item = m_stackTable->item(r, c);
         if (!item) {
@@ -725,9 +679,6 @@ void DebuggerWindow::fillDisassemblyAround(uint16_t addr)
     }
 }
 
-/* ============================================================
-   SLOTS voor Memory Controls
-   ============================================================ */
 void DebuggerWindow::onMemSourceChanged(int index)
 {
     m_currentMemSourceIndex = index;
@@ -760,7 +711,7 @@ void DebuggerWindow::onMemAddrNext()
 {
     const int bytesPerLine = 16;
     uint32_t maxAddr = 0xFFFF;
-    if (m_currentMemSourceIndex == 2) { // Main RAM
+    if (m_currentMemSourceIndex == 2) {
         maxAddr = 0x1FFFF; // 128K
     }
     if (m_memDumpStartAddr < (maxAddr - bytesPerLine)) {
@@ -778,10 +729,6 @@ void DebuggerWindow::onMemAddrHome()
     updateMemoryDump();
 }
 
-/* ============================================================
-   AANGEPASTE SLOTS voor Breakpoints
-   ============================================================ */
-
 void DebuggerWindow::syncBreakpointsToCore()
 {
     if (!m_controller) return;
@@ -795,7 +742,7 @@ void DebuggerWindow::syncBreakpointsToCore()
             }
         }
     }
-    debug_sync_breakpoints(m_controller, activeBreakpoints); // (ga er vanuit dat dit bestaat)
+    debug_sync_breakpoints(m_controller, activeBreakpoints);
 }
 
 void DebuggerWindow::updateBreakpointList()
@@ -803,19 +750,16 @@ void DebuggerWindow::updateBreakpointList()
     QFont fixedFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
 
     m_bpList->blockSignals(true);
-    m_bpList->clear(); // Dit wist alle items *en* de bijbehorende widgets
+    m_bpList->clear();
 
     for (const DebuggerBreakpoint& bp : m_breakpoints) {
-        // 1. Maak het 'item' dat als container in de lijst dient
         QListWidgetItem* item = new QListWidgetItem(m_bpList);
 
-        // 2. Maak onze custom widget die de inhoud van de rij wordt
         QWidget* itemWidget = new QWidget();
         QHBoxLayout* layout = new QHBoxLayout(itemWidget);
-        layout->setContentsMargins(2, 0, 4, 0); // (links, top, rechts, bottom)
+        layout->setContentsMargins(2, 0, 4, 0);
         layout->setSpacing(4);
 
-        // 3. Maak het label met de breakpoint-tekst
         QLabel* label = new QLabel(bp.definition);
         label->setFont(fixedFont);
 
@@ -823,22 +767,17 @@ void DebuggerWindow::updateBreakpointList()
 
         label->setStyleSheet(QString("color: %1").arg(isEffectivelyEnabled ? "white" : "#555555"));
 
-        // 4. Maak de checkbox
         QCheckBox* checkBox = new QCheckBox();
         checkBox->setChecked(bp.enabled);
 
-        // 5. BEWAAR DE 'ID' (de definitie string) in de checkbox
         checkBox->setProperty("bpDefinition", bp.definition);
 
-        // 6. Verbind het 'toggled' signaal
         connect(checkBox, &QCheckBox::toggled, this, &DebuggerWindow::onBpCheckboxToggled);
 
-        // 7. Voeg de widgets toe aan de layout
-        layout->addWidget(label);     // Tekst links
-        layout->addStretch(1);        // Rekbare ruimte in het midden
-        layout->addWidget(checkBox);  // Checkbox rechts
+        layout->addWidget(label);
+        layout->addStretch(1);
+        layout->addWidget(checkBox);
 
-        // 8. Koppel de widget aan het item en voeg toe aan de lijst
         item->setSizeHint(itemWidget->sizeHint());
         m_bpList->addItem(item);
         m_bpList->setItemWidget(item, itemWidget);
@@ -881,9 +820,8 @@ void DebuggerWindow::onBpDel()
     if (row < 0 || row >= m_breakpoints.size()) return;
 
     m_breakpoints.removeAt(row);
-    updateBreakpointList(); // Bouwt de lijst opnieuw op
+    updateBreakpointList();
 
-    // Update selectie
     if (row < m_bpList->count()) {
         m_bpList->setCurrentRow(row);
     } else if (m_bpList->count() > 0) {
@@ -952,12 +890,7 @@ void DebuggerWindow::onToggleBreakpoints()
             "background-color: #CC0000; color: white; font-weight: bold; padding: 2px 5px;"
             );
 
-        // Als we de breakpoints uitschakelen terwijl de CPU
-        // mogelijk op een breakpoint is gestopt, wis dan de
-        // 'break'-vlag in de C-core.
-        // Zonder dit zal de "Run"-knop niet werken.
         emit requestBreakCPU();
-        //coleco_clear_debug_flags();
     }
 
     updateBreakpointList();
@@ -981,7 +914,7 @@ void DebuggerWindow::onBpCheckboxToggled(bool checked)
     if (it != m_breakpoints.end()) {
         it->enabled = checked;
     } else {
-        qWarning() << "onBpCheckboxToggled: Kon breakpoint niet vinden:" << bpDef;
+        qWarning() << "onBpCheckboxToggled: Could not find breakpoint:" << bpDef;
         return;
     }
 
@@ -997,118 +930,16 @@ void DebuggerWindow::onBpCheckboxToggled(bool checked)
     syncBreakpointsToCore();
 }
 
-
-// --- SLOTS VOOR LADEN EN OPSLAAN ---
-
 void DebuggerWindow::onBpLoad()
 {
-    // Maak een absoluut pad
-    QString absoluteBpPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_breakpointPath);
-
-    QDir dir(absoluteBpPath);
-    if (!dir.exists()) {
-        dir.mkpath(".");
-    }
-
-    QString fileName = QFileDialog::getOpenFileName(
-        this,
-        tr("Load Breakpoints"),
-        absoluteBpPath, // Gebruik het absolute pad
-        tr("Breakpoint Files (*.txt);;All Files (*)")
-        );
-
-    if (fileName.isEmpty()) {
-        return;
-    }
-
-    QFile file(fileName);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, tr("Error"),
-                             tr("Could not open file for reading:\n%1").arg(file.errorString()));
-        return;
-    }
-
-    QTextStream in(&file);
-    m_breakpoints.clear();
-
-    while (!in.atEnd()) {
-        QString line = in.readLine().trimmed();
-        if (line.isEmpty() || line.startsWith('#')) {
-            continue;
-        }
-
-        bool enabled = true;
-        QString definition = line;
-
-        if (line.startsWith("D ")) {
-            enabled = false;
-            definition = line.mid(2).trimmed();
-        } else if (line.startsWith("E ")) {
-            enabled = true;
-            definition = line.mid(2).trimmed();
-        }
-
-        if (!definition.isEmpty()) {
-            m_breakpoints.append({definition, enabled});
-        }
-    }
-
-    file.close();
-
-    std::sort(m_breakpoints.begin(), m_breakpoints.end());
-    updateBreakpointList();
-    syncBreakpointsToCore();
-
-    QMessageBox::information(this, tr("Success"), tr("Breakpoints loaded."));
+    emit requestBpLoad();
 }
 
 void DebuggerWindow::onBpSave()
 {
-    QString absoluteBpPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_breakpointPath);
-
-    QDir dir(absoluteBpPath);
-    if (!dir.exists()) {
-        dir.mkpath(".");
-    }
-
-    QString defaultFile = dir.filePath("my_breakpoints.txt");
-
-    QString fileName = QFileDialog::getSaveFileName(
-        this,
-        tr("Save Breakpoints"),
-        defaultFile,
-        tr("Breakpoint Files (*.txt);;All Files (*)")
-        );
-
-    if (fileName.isEmpty()) {
-        return;
-    }
-
-    QFile file(fileName);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, tr("Error"),
-                             tr("Could not open file for writing:\n%1").arg(file.errorString()));
-        return;
-    }
-
-    QTextStream out(&file);
-    out << "# ADAM+ Breakpoint File\n";
-    out << "# Format: [E/D] <Definition>\n";
-    out << "# E = Enabled, D = Disabled (default is E)\n\n";
-
-    for (const DebuggerBreakpoint& bp : m_breakpoints) {
-        out << (bp.enabled ? "E " : "D ") << bp.definition << "\n";
-    }
-
-    file.close();
-
-    QMessageBox::information(this, tr("Success"), tr("Breakpoints saved."));
+    emit requestBpSave();
 }
 
-
-/* ============================================================
-   CLOSE EVENT
-   ============================================================ */
 void DebuggerWindow::closeEvent(QCloseEvent *event)
 {
     if (m_controller) {
@@ -1116,4 +947,18 @@ void DebuggerWindow::closeEvent(QCloseEvent *event)
     }
     emit requestRunCPU();
     QMainWindow::closeEvent(event);
+}
+
+QList<DebuggerBreakpoint> DebuggerWindow::getBreakpointDefinitions() const
+{
+    return m_breakpoints;
+}
+
+void DebuggerWindow::setBreakpointDefinitions(const QList<DebuggerBreakpoint>& list)
+{
+    m_breakpoints = list;
+    std::sort(m_breakpoints.begin(), m_breakpoints.end());
+    updateBreakpointList();
+    syncBreakpointsToCore();
+    QMessageBox::information(this, tr("Success"), tr("Breakpoints loaded."));
 }

@@ -4,7 +4,6 @@
 #include <QMainWindow>
 #include <QPixmap>
 
-// Forward declarations voor Qt-widgets
 class QAction;
 class QMenu;
 class QMenuBar;
@@ -15,7 +14,6 @@ class QScrollBar;
 class QGroupBox;
 
 
-// Nodig voor cv_pal32
 extern int cv_pal32[16*4];
 
 class PatternWindow : public QMainWindow
@@ -49,7 +47,6 @@ private:
     void setupUI();
     void setupMenus();
 
-    // Core logica poorten
     void createVramPixmap(QPaintDevice *device, int w, int h);
     void createTilePixmap();
     void updateChanges();
@@ -57,10 +54,8 @@ private:
     void updateTileInfo(int x, int y);
     void updateOfsText();
 
-    // Helper
     QString intToHex(int value, int width);
 
-    // Menu Bar
     QMenuBar *m_menuBar;
     QMenu *m_fileMenu;
     QMenu *m_viewMenu;
@@ -70,30 +65,26 @@ private:
     QAction *m_autoRefreshAction;
     QAction *m_refreshAction;
 
-    // UI-componenten
-    QLabel *m_vramLabel;      // De grote "VRam" TPaintBox
-    QScrollBar *m_vramScroll;   // "scrVRAM"
-    QLabel *m_vramOfsLabel;   // "eVRAMOfs"
-    QLabel *m_vramTxtLabel;   // "eVRAMTxt"
+    QLabel *m_vramLabel;
+    QScrollBar *m_vramScroll;
+    QLabel *m_vramOfsLabel;
+    QLabel *m_vramTxtLabel;
 
-    // Tile Info Group
     QGroupBox *m_tileInfoBox;
-    QLabel *m_tileIndexLabel; // "eBGTTileNo"
-    QLabel *m_tileAddrLabel;  // "eBGTTileAdr"
+    QLabel *m_tileIndexLabel;
+    QLabel *m_tileAddrLabel;
 
-    // Tile View Group
     QGroupBox *m_tileViewBox;
-    QLabel *m_tileLabel;      // "TileAlone" TPaintBox
-    QLabel *m_tileValueLabels[8]; // Voor "idTiValue"
-    QCheckBox *m_gridCheck;     // "chkGrid"
-    QRadioButton *m_colorRadio;   // "rCol"
-    QRadioButton *m_bwRadio;      // "rBW"
+    QLabel *m_tileLabel;
+    QLabel *m_tileValueLabels[8];
+    QCheckBox *m_gridCheck;
+    QRadioButton *m_colorRadio;
+    QRadioButton *m_bwRadio;
 
-    // Member variabelen
-    QPixmap m_vramPixmap;       // "mOffscreenBitmap"
-    QPixmap m_tilePixmap;       // "mOfftileBitmap"
-    int m_baseVram;             // Huidige scroll-offset
-    int m_vramTile;             // Geselecteerd tile-adres (voor 8x8 view)
+    QPixmap m_vramPixmap;
+    QPixmap m_tilePixmap;
+    int m_baseVram;
+    int m_vramTile;
 };
 
-#endif // PATTERNWINDOW_H
+#endif

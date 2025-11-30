@@ -15,12 +15,9 @@
 #include <QTextEdit>
 #include <QFrame>
 
-//
-// --- HELPERFUNCTIE (MET FIX EN DEBUG) ---
-//
 static QString formatBreakpointString(const QString& input)
 {
-    // --- DEBUG 6 ---
+    // --- DEBUG ---
     qDebug() << "[SetBreakpointDialog] formatBreakpointString validating:" << input;
 
     QString s = input.toUpper().trimmed();
@@ -70,14 +67,11 @@ static QString formatBreakpointString(const QString& input)
         }
     }
 
-    // --- DEBUG 7 ---
+    // --- DEBUG ---
     qWarning() << "[SetBreakpointDialog] Invalid breakpoint format:" << input;
     return QString();
 }
-// --- EINDE HELPERFUNCTIE ---
 
-
-// ... (mapUiTypeToCore en mapCoreTypeToUi blijven hetzelfde) ...
 static QString mapUiTypeToCore(QString type) {
     QString t = type.left(2);
 
@@ -113,7 +107,6 @@ static QString mapCoreTypeToUi(QString type) {
     if (type == "REG")  return "12.Register";
     if (type == "FLAG") return "13.Flag";
 
-    // Als iemand gewoon een hex adres ingeeft (bv. "BBA3")
     bool ok = false;
     type.toUInt(&ok, 16);
     if (ok)
@@ -123,11 +116,8 @@ static QString mapCoreTypeToUi(QString type) {
 }
 
 SetBreakpointDialog::SetBreakpointDialog(QWidget *parent)
-    // ... (constructor blijft hetzelfde) ...
     : QDialog(parent)
 {
-    // --- NIEUW: Lijsten initialiseren ---
-    // Gebaseerd op de QSet in formatBreakpointString
     m_registerList = {
         "PC", "SP", "AF", "BC", "DE", "HL", "IX", "IY",
         "AF'", "BC'", "DE'", "HL'", "A", "B", "C", "D", "E", "H", "L",
@@ -137,8 +127,6 @@ SetBreakpointDialog::SetBreakpointDialog(QWidget *parent)
 
     m_registerList.sort();
     m_flagList.sort();
-    // --- EINDE NIEUW ---
-
     setupUi();
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 }
@@ -150,7 +138,6 @@ void SetBreakpointDialog::setupUi()
 
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
-    // --- GRID MET TYPE + VELDEN ---
     QGridLayout *gridLayout = new QGridLayout();
     m_typeLabel       = new QLabel(tr("Type:"), this);
     m_addrCondLabel   = new QLabel(tr("Condition:"), this);
@@ -173,13 +160,11 @@ void SetBreakpointDialog::setupUi()
 
     m_addr1Edit = new QLineEdit(this);
 
-    // --- NIEUW: ComboBoxes aanmaken ---
     m_registerCombo = new QComboBox(this);
     m_registerCombo->addItems(m_registerList);
 
     m_flagCombo = new QComboBox(this);
     m_flagCombo->addItems(m_flagList);
-    // --- EINDE NIEUW ---
 
     m_addr2Edit = new QLineEdit(this);
 
@@ -189,11 +174,9 @@ void SetBreakpointDialog::setupUi()
     gridLayout->addWidget(m_addrCondCombo,  1, 1);
     gridLayout->addWidget(m_addr1Label,     1, 2);
 
-    // --- AANGEPAST: Voeg alle drie de widgets toe aan dezelfde cel ---
     gridLayout->addWidget(m_addr1Edit,      1, 3, 1, 2);
     gridLayout->addWidget(m_registerCombo,  1, 3, 1, 2);
     gridLayout->addWidget(m_flagCombo,      1, 3, 1, 2);
-    // --- EINDE AANGEPAST ---
 
     gridLayout->addWidget(m_valueCondLabel, 2, 0);
     gridLayout->addWidget(m_valueCondCombo, 2, 1);
@@ -202,7 +185,6 @@ void SetBreakpointDialog::setupUi()
 
     mainLayout->addLayout(gridLayout);
 
-    // --- Help box ---
     m_helpEdit = new QTextEdit(this);
     m_helpEdit->setReadOnly(true);
     m_helpEdit->setMinimumHeight(60);
@@ -211,7 +193,6 @@ void SetBreakpointDialog::setupUi()
 
     mainLayout->addStretch();
 
-    // --- OK / CANCEL BUTTONS ---
     QHBoxLayout *buttonLayout = new QHBoxLayout();
     QIcon okIcon(":/images/images/OK.png");
     QIcon cancelIcon(":/images/images/CANCEL.png");
@@ -253,7 +234,6 @@ void SetBreakpointDialog::setupUi()
 
     mainLayout->addLayout(buttonLayout);
 
-    // --- SIGNALS ---
     connect(m_typeCombo,      &QComboBox::currentTextChanged, this, &SetBreakpointDialog::onTypeChanged);
     connect(m_addrCondCombo,  &QComboBox::currentTextChanged, this, &SetBreakpointDialog::onAddrCondChanged);
     connect(m_okButton,       &QPushButton::clicked,          this, &SetBreakpointDialog::onOkClicked);
@@ -274,18 +254,14 @@ void SetBreakpointDialog::setAllControlsVisible(bool visible)
     m_valueLabel->setVisible(visible);
     m_addr2Edit->setVisible(visible);
 
-    // --- NIEUW ---
-    // Verberg de nieuwe comboboxen ook
     if (visible == false) {
         m_registerCombo->setVisible(false);
         m_flagCombo->setVisible(false);
     }
-    // --- EINDE NIEUW ---
 }
 
 void SetBreakpointDialog::onTypeChanged(const QString &type)
 {
-    // type = iets als "01.Execute address" of "11.Memory"
     QString label = type;
     int dotPos = label.indexOf('.');
     if (dotPos != -1) {
@@ -294,7 +270,6 @@ void SetBreakpointDialog::onTypeChanged(const QString &type)
 
     setAllControlsVisible(true);
 
-    // --- Standaard de juiste velden tonen/verbergen ---
     m_addr1Edit->setVisible(true);
     m_registerCombo->setVisible(false);
     m_flagCombo->setVisible(false);
@@ -347,9 +322,7 @@ void SetBreakpointDialog::onTypeChanged(const QString &type)
         m_valueCondCombo->setVisible(false);
     }
     else if (label.startsWith("Execute")) {
-        // Voor EXE, toon alleen het adresveld
         m_addr1Label->setText(tr("Address:"));
-        // Verberg condities
         m_addrCondCombo->setVisible(false);
         m_addrCondLabel->setVisible(false);
         m_valueCondLabel->setVisible(false);
@@ -362,14 +335,12 @@ void SetBreakpointDialog::onTypeChanged(const QString &type)
         onAddrCondChanged(m_addrCondCombo->currentText());
     }
 
-    // Helptekst updaten: gebruikt de eerste 2 chars ("01","02",...)
     updateHelpText(type);
 }
 
 
 void SetBreakpointDialog::onAddrCondChanged(const QString &addrCond)
 {
-    // ... (blijft hetzelfde) ...
     QString type = m_typeCombo->currentText();
     if (QStringList{"Register", "Flag", "Memory", "Clock"}.contains(type)) {
         return;
@@ -431,28 +402,21 @@ void SetBreakpointDialog::onCancelClicked()
 
 QString SetBreakpointDialog::buildOutputString() const
 {
-    // ... (blijft hetzelfde) ...
     QString type = mapUiTypeToCore(m_typeCombo->currentText());
     QString addrCond = m_addrCondCombo->currentText();
     QString valCond = m_valueCondCombo->currentText();
     QString addr2 = m_addr2Edit->text().toUpper();
 
     if (type == "REG") {
-        // --- AANGEPAST ---
-        QString reg = m_registerCombo->currentText(); // Haal uit combobox
+        QString reg = m_registerCombo->currentText();
         return QString("REG %1 %2 %3").arg(reg, addrCond, addr2);
-        // --- EINDE AANGEPAST ---
     }
     if (type == "FLAG") {
-        // --- AANGEPAST ---
-        QString flag = m_flagCombo->currentText(); // Haal uit combobox
+        QString flag = m_flagCombo->currentText();
         return QString("FLAG %1 = %2").arg(flag, addr2);
-        // --- EINDE AANGEPAST ---
     }
 
-    // --- HIERHEEN VERPLAATST ---
     QString addr1 = m_addr1Edit->text().toUpper();
-    // --- EINDE ---
 
     if (type == "MEM") {
         return QString("MEM %1 %2 %3").arg(addr1, valCond, addr2);
@@ -490,7 +454,7 @@ void SetBreakpointDialog::parseInputString(const QString &input)
         isSimpleAddr = true;
     }
 
-    QString uiType = mapCoreTypeToUi(coreType);   // geeft nu "01.Execute address" enz.
+    QString uiType = mapCoreTypeToUi(coreType);
 
     int idx = m_typeCombo->findText(uiType);
     if (idx != -1) {
@@ -515,17 +479,13 @@ void SetBreakpointDialog::parseInputString(const QString &input)
         QString label = (dotPos != -1) ? currentLabel.mid(dotPos + 1) : currentLabel;
 
         if (label.startsWith("Register")) {
-            // --- AANGEPAST ---
-            m_registerCombo->setCurrentText(parts.at(1)); // Zet combobox
+            m_registerCombo->setCurrentText(parts.at(1));
             m_addrCondCombo->setCurrentText(parts.at(2));
             m_addr2Edit->setText(parts.at(3));
-            // --- EINDE AANGEPAST ---
         }
         else if (label.startsWith("Flag")) {
-            // --- AANGEPAST ---
-            m_flagCombo->setCurrentText(parts.at(1)); // Zet combobox
+            m_flagCombo->setCurrentText(parts.at(1));
             m_addr2Edit->setText(parts.at(3));
-            // --- EINDE AANGEPAST ---
         }
         else if (label.startsWith("Memory")) {
             m_addr1Edit->setText(parts.at(1));

@@ -24,8 +24,16 @@ class SettingsWindow;
 class HardwareWindow;
 class JoypadWindow;
 class KbWidget;
+class QActionGroup;
+class QMenu;
 
 struct HardwareConfig;
+
+enum ScanlinesMode {
+    ScanlinesOff = 0,
+    ScanlinesTV,
+    ScanlinesLCD,
+    ScanlinesRaster  };
 
 class MainWindow : public QMainWindow
 {
@@ -48,9 +56,9 @@ public slots:
     void onToggleSGM(bool checked);
     void onToggleKeyboard(bool on);
     void onToggleVideoStandard();
-    void onShowNameTable(bool checked);
-    void onShowPatternTable(bool checked);
-    void onShowSpriteTable(bool checked);
+    void onShowNameTable();
+    void onShowPatternTable();
+    void onShowSpriteTable();
     void onShowPrinterWindow();
     void onToggleSnap(bool checked);
 
@@ -76,6 +84,8 @@ public slots:
     void onSaveState();
     void onLoadState();
     void onSaveScreenshot();
+    void onSaveBreakpoint();
+    void onLoadBreakpoint();
     void onResetWindowSize();
     void onOpenJoypadMapper();
 
@@ -84,6 +94,8 @@ private slots:
     void onLoadTape(int drive);
     void onEjectDisk(int drive);
     void onEjectTape(int drive);
+    void onOpenAdamRom();
+    void onEjectAdamRom();
     // --- MEDIA STATUS UPDATE SLOTS ---
     void onDiskStatusChanged(int drive, const QString& fileName);
     void onTapeStatusChanged(int drive, const QString& fileName);
@@ -92,6 +104,8 @@ private slots:
     void onFrameReceived(const QImage &frame);
     void onCycleScalingMode();
     void onToggleBezels(bool checked);
+    void onScalingModeChanged(QAction* action);
+    void onJoystickTypeChanged(QAction* action);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -101,6 +115,7 @@ protected:
     void keyReleaseEvent(QKeyEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void configurePlatformSettings();
+    void onScanlinesModeChanged(QAction* action);
 
 private:
     // helpers
@@ -124,7 +139,7 @@ private:
     PatternWindow    *m_patternWindow = nullptr;
     SpriteWindow     *m_spriteWindow = nullptr;
     SettingsWindow   *m_settingsWindow = nullptr;
-    SimpleJoystick *m_joystick = nullptr;
+    SimpleJoystick   *m_joystick = nullptr;
 
     // hoofd UI elementen
     ScreenWidget *m_screenWidget = nullptr;
@@ -230,6 +245,12 @@ private:
     QMenu *m_tapeMenuC            = nullptr;
     QMenu *m_tapeMenuD            = nullptr;
 
+    QActionGroup *m_joystickGroup = nullptr;
+    QAction *m_actJoystickGeneral = nullptr;
+    QAction *m_actJoystickPS      = nullptr;
+    QAction *m_actJoystickXbox    = nullptr;
+    int m_joystickType = 0; // 0=General, 1=PS, 2=Xbox (NIEUWE MEMBER)
+
     bool m_isDiskLoadedA;
     bool m_isDiskLoadedB;
     bool m_isDiskLoadedC;
@@ -238,13 +259,27 @@ private:
     bool m_isTapeLoadedB;
     bool m_isTapeLoadedC;
     bool m_isTapeLoadedD;
-    int  m_scalingMode; // 0=Sharp, 1=Smooth, 2=EPX
+    ScanlinesMode m_scanlinesMode = ScanlinesOff;
+    QMenu *m_scanlinesMenu = nullptr;
+    QActionGroup *m_scanlinesGroup = nullptr;
+    QAction *m_actScanlinesTV = nullptr;
+    QAction *m_actScanlinesLCD = nullptr;
+    QAction *m_actScanlinesRaster = nullptr;
+    QMenu *m_scalingMenu = nullptr;
+    QActionGroup *m_scalingGroup = nullptr;
+    QAction *m_actScalingSmooth = nullptr;
+    QAction *m_actScalingSharp = nullptr;
+    QAction *m_actScalingEPX = nullptr;
+
+
+    int  m_scalingMode;
     bool m_startFullScreen;
     bool m_useBezels;
     bool m_snapWindows;
+    bool m_useScanlines = false;
 
-    QActionGroup* m_adamInputGroup;
-    QMenu* m_adamInputMenu;
+    QActionGroup* m_adamInputGroup = nullptr;
+    QMenu* m_adamInputMenu = nullptr;
     QAction* m_actAdamKeyboard;
     QAction* m_actAdamJoystick;
     bool     m_adamInputModeJoystick; // false = KB, true = Joystick
@@ -264,6 +299,13 @@ private:
     QString m_tapePath;
     QString m_statePath;
     QString m_breakpointPath;
+    QString m_screenshotsPath;
+
+    QMenu *m_adamRomMenu = nullptr;
+    QAction *m_openAdamRomAction = nullptr;
+    QAction *m_ejectAdamRomAction = nullptr;
+    bool m_isAdamRomLoaded = false;
+    QString m_currentARomName;
 
     int m_paletteIndex = 0;
     int m_machineType = 0; // 0=Coleco/Phoenix, 1=ADAM

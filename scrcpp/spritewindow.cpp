@@ -1,6 +1,5 @@
 #include "spritewindow.h"
 
-// Qt includes
 #include <QApplication>
 #include <QLayout>
 #include <QGroupBox>
@@ -122,7 +121,7 @@ void SpriteWindow::setupUI()
 
     // 2. Sprite Info
     m_spriteInfoBox = new QGroupBox("Sprite Info");
-    QGridLayout *infoLayout = new QGridLayout(m_spriteInfoBox); // <-- Gebruik QGridLayout
+    QGridLayout *infoLayout = new QGridLayout(m_spriteInfoBox);
 
     // Maak de labels
     m_attrAddrLabel = new QLabel("$0000");
@@ -228,8 +227,6 @@ void SpriteWindow::setupMenus()
     setMenuBar(m_menuBar);
 }
 
-// --- Event Overrides ---
-
 void SpriteWindow::closeEvent(QCloseEvent *event)
 {
     emit windowClosed();
@@ -250,8 +247,6 @@ void SpriteWindow::showEvent(QShowEvent *event)
 
     event->accept();
 }
-
-// --- Slots ---
 
 void SpriteWindow::doRefresh()
 {
@@ -316,8 +311,6 @@ void SpriteWindow::onSpriteSelected(QTableWidgetItem *current, QTableWidgetItem 
     updateSpriteTable();
     updateSpriteView();
 }
-
-// --- Core Ported Logic ---
 
 QString SpriteWindow::intToHex(int value, int width)
 {

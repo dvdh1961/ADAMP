@@ -60,6 +60,13 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     pathsLayout->addWidget(m_breakpointPathEdit, 4, 1);
     pathsLayout->addWidget(m_breakpointPathBtn, 4, 2);
 
+    // --- Rij 6: Screenshot Path (NIEUW) ---
+    QLabel *scLabel = new QLabel(tr("Screenshot Path:"));
+    m_screenshotPathEdit = new QLineEdit;
+    m_screenshotPathBtn = new QPushButton(tr("Browse..."));
+    pathsLayout->addWidget(scLabel, 5, 0);
+    pathsLayout->addWidget(m_screenshotPathEdit, 5, 1);
+    pathsLayout->addWidget(m_screenshotPathBtn, 5, 2);
 
     // --- Knoppen (AANGEPAST BLOK) ---
     m_okButton = new QPushButton(this);
@@ -118,6 +125,7 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     connect(m_tapePathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseTapePath);
     connect(m_statePathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseStatePath);
     connect(m_breakpointPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseBreakpointPath); // <-- NIEUW
+    connect(m_screenshotPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseScreenshotPath); // <-- NIEUW
     connect(m_okButton, &QPushButton::clicked, this, &SettingsWindow::accept);
     connect(m_cancelButton, &QPushButton::clicked, this, &SettingsWindow::reject);
 }
@@ -128,6 +136,7 @@ QString SettingsWindow::diskPath() const { return m_diskPathEdit->text(); }
 QString SettingsWindow::tapePath() const { return m_tapePathEdit->text(); }
 QString SettingsWindow::statePath() const { return m_statePathEdit->text(); }
 QString SettingsWindow::breakpointPath() const { return m_breakpointPathEdit->text(); } // <-- NIEUW
+QString SettingsWindow::screenshotPath() const { return m_screenshotPathEdit->text(); } // <-- NIEUW
 
 // --- Setters ---
 void SettingsWindow::setRomPath(const QString &path) { m_romPathEdit->setText(path); }
@@ -135,6 +144,7 @@ void SettingsWindow::setDiskPath(const QString &path) { m_diskPathEdit->setText(
 void SettingsWindow::setTapePath(const QString &path) { m_tapePathEdit->setText(path); }
 void SettingsWindow::setStatePath(const QString &path) { m_statePathEdit->setText(path); }
 void SettingsWindow::setBreakpointPath(const QString &path) { m_breakpointPathEdit->setText(path); } // <-- NIEUW
+void SettingsWindow::setScreenshotPath(const QString &path) { m_screenshotPathEdit->setText(path); } // <-- NIEUW
 
 // --- Slots ---
 void SettingsWindow::onBrowseRomPath()
@@ -171,7 +181,6 @@ void SettingsWindow::onBrowseStatePath()
     }
 }
 
-// NIEUWE SLOT
 void SettingsWindow::onBrowseBreakpointPath()
 {
     QString dir = QFileDialog::getExistingDirectory(
@@ -179,5 +188,15 @@ void SettingsWindow::onBrowseBreakpointPath()
         );
     if (!dir.isEmpty()) {
         m_breakpointPathEdit->setText(dir);
+    }
+}
+
+void SettingsWindow::onBrowseScreenshotPath()
+{
+    QString dir = QFileDialog::getExistingDirectory(
+        this, tr("Select Screenshot Directory"), m_screenshotPathEdit->text()
+        );
+    if (!dir.isEmpty()) {
+        m_screenshotPathEdit->setText(dir);
     }
 }

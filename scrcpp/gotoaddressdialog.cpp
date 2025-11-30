@@ -45,7 +45,6 @@ void GotoAddressDialog::setupUi()
 
     mainLayout->addStretch();
 
-    // Image knoppen (zelfde stijl als SetBreakpointDialog)
     QHBoxLayout *buttonLayout = new QHBoxLayout();
 
     QIcon okIcon(":/images/images/OK.png");
@@ -102,7 +101,6 @@ bool GotoAddressDialog::getAddress(QWidget *parent,
 {
     GotoAddressDialog dlg(parent);
 
-    // Voorvullen met huidige PC
     dlg.m_addrEdit->setText(
         QString("%1").arg(currentPC, 4, 16, QChar('0')).toUpper()
         );
@@ -120,13 +118,11 @@ void GotoAddressDialog::onOkClicked()
     QString text = m_addrEdit->text().trimmed();
 
     if (text.isEmpty()) {
-        // Niets ingevuld -> negeren, dialoog blijft open
         return;
     }
 
     uint16_t val = static_cast<uint16_t>(text.toUShort(&ok, 16));
     if (!ok) {
-        // Ongeldige hex -> negeren, dialoog blijft open
         return;
     }
 

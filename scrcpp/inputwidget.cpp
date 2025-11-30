@@ -1,6 +1,6 @@
 
 #include "inputwidget.h"
-#include "keypad.h"   // nieuwe controller-API
+#include "keypad.h"
 #include <QPainter>
 #include <QFont>
 #include <QDebug>
@@ -9,9 +9,9 @@
 extern "C" {
 #include "input_bridge.h"
 }
-// Nieuwe state voor speler 1
+// State player 1
 ColecoControllerState m_pad0;
-// Houdt bij welke keypad-toets (0..11) ingedrukt is; -1 = geen
+// store keypad-key (0..11) pressed = -1
 int m_keypadHeld = -1;
 
 // Volgorde-indexen:
@@ -21,27 +21,7 @@ static constexpr int IDX_UP=0, IDX_DOWN=1, IDX_LEFT=2, IDX_RIGHT=3,
     IDX_TR=4, IDX_TL=5, IDX_HASH=6, IDX_STAR=7,
     IDX_0=8, IDX_9=17;
 
-// // Helpers (lokaal in cpp)
-// static inline int keyToColecoIndex(int qtKey) {
-//     switch (qtKey) {
-//     case Qt::Key_0: return 0;
-//     case Qt::Key_1: return 1;
-//     case Qt::Key_2: return 2;
-//     case Qt::Key_3: return 3;
-//     case Qt::Key_4: return 4;
-//     case Qt::Key_5: return 5;
-//     case Qt::Key_6: return 6;
-//     case Qt::Key_7: return 7;
-//     case Qt::Key_8: return 8;
-//     case Qt::Key_9: return 9;
-//     // let op: jouw code gebruikte Key codes 95/176 voor * en #
-//     case Qt::Key_Asterisk:   return 10; // '*'
-//     case Qt::Key_NumberSign: return 11; // '#'
-//     default: return -1;
-//     }
-// }
-
-// Standaard keybinding per index
+// Keybinding per index
 int InputWidget::defaultKeyForIndex(int i)
 {
     switch (i) {
@@ -49,24 +29,23 @@ int InputWidget::defaultKeyForIndex(int i)
     case IDX_DOWN:  return Qt::Key_Down;
     case IDX_LEFT:  return Qt::Key_Left;
     case IDX_RIGHT: return Qt::Key_Right;
-    case IDX_TR:    return Qt::Key_X;        // Trig R
-    case IDX_TL:    return Qt::Key_Z;        // Trig L
-    case IDX_HASH:  return Qt::Key_NumberSign; // '#'
-    case IDX_STAR:  return Qt::Key_Asterisk;   // '*'
+    case IDX_TR:    return Qt::Key_X;           // Trig R
+    case IDX_TL:    return Qt::Key_Z;           // Trig L
+    case IDX_HASH:  return Qt::Key_NumberSign;  // '#'
+    case IDX_STAR:  return Qt::Key_Asterisk;    // '*'
     default:
         // BUT 0..9
         if (i>=IDX_0 && i<=IDX_9) {
-            int d = i - IDX_0;               // 0..9
+            int d = i - IDX_0;                  // 0..9
             return Qt::Key_0 + d;
         }
         return 0;
     }
 }
 
-// Vind index in map voor deze Qt-key; -1 = niet gevonden
 int InputWidget::findIndexForQtKey(const std::array<int,20>& map, int qtKey) const
 {
-    for (int i=0;i<18;++i) {                 // we gebruiken 0..17
+    for (int i=0;i<18;++i) {                 // we use 0..17
         if (map[i] == qtKey) return i;
     }
     return -1;
@@ -80,12 +59,10 @@ InputWidget::InputWidget(QWidget *parent)
     setAttribute(Qt::WA_TransparentForMouseEvents, true);
     setAutoFillBackground(false);
     setEnabled(true);
-    setVisible(false); // start ALTIJD onzichtbaar
+    setVisible(false);
     setOverlayVisible(false);
-    // Tekenen uit/aan blijft via m_overlayVisible (HUD), maar input willen we altijd
-    qApp->installEventFilter(this);   // ⟵ VANG KEY EVENTS ALTIJD, OOK ALS WIJ VERBORGEN ZIJN
+    qApp->installEventFilter(this);
 
-    // ~60 fps overlay
     connect(&m_overlayTick, &QTimer::timeout, this, &InputWidget::stepOverlay);
     m_overlayTick.setTimerType(Qt::PreciseTimer);
     m_overlayTick.start(16);
@@ -94,60 +71,36 @@ InputWidget::InputWidget(QWidget *parent)
 
 void InputWidget::reloadMappings()
 {
-    // Lees QSettings uit JoypadWindow: "input/p1/<idx>"
     QSettings s;
     for (int i=0;i<18;++i) {
         int v = s.value(QString("input/p1/%1").arg(i), 0).toInt();
-        if (v == 0) v = defaultKeyForIndex(i);   // fallback naar standaard
+        if (v == 0) v = defaultKeyForIndex(i);
         m_mapP1[i] = v;
     }
-    // optioneel P2 alvast klaarzetten
     for (int i=0;i<18;++i) {
         int v = s.value(QString("input/p2/%1").arg(i), 0).toInt();
-        if (v == 0) v = defaultKeyForIndex(i);   // voorlopig dezelfde defaults
+        if (v == 0) v = defaultKeyForIndex(i);
         m_mapP2[i] = v;
     }
 }
 
 void InputWidget::attachTo(QWidget *target)
 {
-    // 1) Onthoud target
     m_target = target;
     if (!m_target) return;
 
-    // 2) Word KIND van het scherm (niet van MainWindow/splitter)
-    //    → coördinaten zijn dan lokaal aan het scherm
     setParent(m_target);
 
-    // 3) Zorg dat we meeveranderen met het scherm
     m_target->installEventFilter(this);
 
-    // 4) Vul het hele schermoppervlak
     setGeometry(m_target->rect());
 
-    // 5) Bovenop
     raise();
-    //show();
     setFocus(Qt::OtherFocusReason);
 }
 
 bool InputWidget::eventFilter(QObject *obj, QEvent *ev)
 {
-    // // 0) App-breed key handling (los van zichtbaarheid en focus)
-    // if (ev->type() == QEvent::KeyPress || ev->type() == QEvent::KeyRelease) {
-    //     auto *ke = static_cast<QKeyEvent*>(ev);
-    //     if (!ke->isAutoRepeat()) {
-    //         const bool pressed = (ev->type() == QEvent::KeyPress);
-    //         handleKey(ke, pressed);      // ⟵ gebruikt je bestaande mapping
-    //         // Laat andere widgets nog steeds hun key krijgen:
-    //         // return true = event "geconsumeerd", return false = doorlaten.
-    //         // Voor emulator is "doorlaten" meestal OK (MainWindow shortcuts blijven werken).
-    //         // Wil je exclusief? Zet hier 'return true;'.
-    //     }
-    //     // niet retourneren; we laten 'm door tenzij je exclusief wil
-    // }
-
-    // 1) Bestaande overlay-positie/raise logic
     if (obj == m_target) {
         switch (ev->type()) {
         case QEvent::Resize:
@@ -195,16 +148,14 @@ void InputWidget::keyReleaseEvent(QKeyEvent *e)
 
 bool InputWidget::handleKey(QKeyEvent *e, bool pressed)
 {
-    // F1..F6 blokkeren (deze worden al afgehandeld in MainWindow via ADAMNET)
+    // F1..F6 lock (Used in MainWindow through ADAMNET)
     if (e->key() >= Qt::Key_F1 && e->key() <= Qt::Key_F6) {
-        // markeer als afgehandeld, maar stuur niets door
         return true;
     }
 
     const int key = e->key();
-    // Zoek welke *actie-index* bij deze toets hoort
     const int idx = findIndexForQtKey(m_mapP1, key);
-    if (idx < 0) return false; // niet voor ons
+    if (idx < 0) return false;
 
     // Richting / triggers / keypad
     if      (idx == IDX_UP)    m_pad0.up    = pressed;
@@ -244,7 +195,6 @@ void InputWidget::stepOverlay()
 
 QRect InputWidget::hudRect() const
 {
-    // basisafmeting: ~220x120 @ scale 1.0
     const int w = int(220 * m_scale);
     const int h = int(120 * m_scale);
 
@@ -266,9 +216,6 @@ static QColor mixA(const QColor &c, int alpha) {
 
 void InputWidget::drawHud(QPainter &p, const QRect &r)
 {
-    // Lees input
-    // Virtuele flags voor tekenen (geen bitmasks meer nodig)
-
     const bool dirUp    = m_pad0.up;
     const bool dirDown  = m_pad0.down;
     const bool dirLeft  = m_pad0.left;
@@ -276,28 +223,22 @@ void InputWidget::drawHud(QPainter &p, const QRect &r)
     const bool btnL     = m_pad0.fireL;
     const bool btnR     = m_pad0.fireR;
 
-    // Helper om HUD-“bit” als pressed te tonen:
     auto keyPressed = [&](int bit)->bool {
-        // bit: 0..9=digits, 10='*', 11='#' — komt overeen met onze keypad index
         return (m_pad0.keypad == bit);
     };
 
     p.setRenderHint(QPainter::Antialiasing, true);
 
-    // Achtergrond paneel
     p.setPen(Qt::NoPen);
     p.setBrush(mixA(QColor(0x3d, 0xa9, 0xfc), 0xA0 + int(10*m_flash)));
     p.drawRoundedRect(r, 10*m_scale, 10*m_scale);
 
-    // Lay-out: links D-Pad, rechts twee knoppen
     const int pad = int(10 * m_scale);
     const QRect left = r.adjusted(pad, pad, -r.width()/2 - pad/2, -pad);
     const QRect right= QRect(r.center().x()+pad/2, r.y()+pad, r.width()/2 - 2*pad, r.height()-2*pad);
 
-    // D-Pad (kruis)
-    // Tekst "PLAYER 1" boven de joystick
-    const QPoint lc_text = left.center() + QPoint(0, int(1 * m_scale));     // tekst blijft hier
-    const QPoint lc_pad  = lc_text + QPoint(0, int(14 * m_scale));           // pijlen 10 extra omlaag
+    const QPoint lc_text = left.center() + QPoint(0, int(1 * m_scale));
+    const QPoint lc_pad  = lc_text + QPoint(0, int(14 * m_scale));
     const QSize  asz1(int(30*m_scale), int(30*m_scale));
 
     QFont font = p.font();
@@ -306,18 +247,15 @@ void InputWidget::drawHud(QPainter &p, const QRect &r)
     p.setFont(font);
 
     QString label = "PLAYER 1";
-    // Positie: bijna tegen de pijl aan (slechts 2 pixels ruimte)
-    int yOffset = int(asz1.height()/2 + 15*m_scale); // hoogte pijl + kleine marge
+    int yOffset = int(asz1.height()/2 + 15*m_scale);
     QRect textRect(lc_text.x() - int(60*m_scale),
                    lc_text.y() - yOffset - int(20*m_scale),
                    int(120*m_scale),
                    int(20*m_scale));
 
-    // lichte schaduw
     p.setPen(QColor(0,0,0,180));
     p.drawText(textRect.translated(1,1), Qt::AlignCenter, label);
 
-    // hoofdtekst
     p.setPen(mixA(Qt::white, 160));
     p.drawText(textRect, Qt::AlignCenter, label);
 
@@ -357,7 +295,6 @@ void InputWidget::drawHud(QPainter &p, const QRect &r)
         p.drawPolygon(arrow);
     };
 
-    // Grootte en positie
     const QSize asz(int(20*m_scale), int(20*m_scale));
 
     drawArrow(lc_pad + QPoint(0, -asz.height()-6*m_scale), asz, dirUp,    Qt::UpArrow);
@@ -365,14 +302,11 @@ void InputWidget::drawHud(QPainter &p, const QRect &r)
     drawArrow(lc_pad + QPoint(-asz.width()-6*m_scale, 0),  asz, dirLeft,  Qt::LeftArrow);
     drawArrow(lc_pad + QPoint( asz.width()+6*m_scale, 0),  asz, dirRight, Qt::RightArrow);
 
-
-    // center
     p.setBrush(mixA(Qt::white, 80));
     p.setPen(Qt::NoPen);
     p.drawEllipse(QRect(lc_pad - QPoint(int(8*m_scale),int(8*m_scale)),
                         QSize(int(16*m_scale),int(16*m_scale))));
 
-    // Rechts: A/B boven
     const int rightH   = right.height();
     const int buttonsH = int(20 * m_scale);
     const int gap      = int(8  * m_scale);
@@ -392,13 +326,9 @@ void InputWidget::drawHud(QPainter &p, const QRect &r)
     drawButton(rc + QPoint( int(-20*m_scale), 0), "A", btnL);
     drawButton(rc + QPoint( int( 25*m_scale), 0), "B", btnR);
 
-    // Keypad (rechts onder): 1 2 3 / 4 5 6 / 7 8 9 / # 0 *
     const QRect kpRect = QRect(right.left(), abRect.bottom()+gap, right.width(),
                                rightH - buttonsH - gap);
 
-    // auto keyPressed = [&](int bit)->bool {
-    //     return (kp & (1u << bit)) != 0;
-    // };
     auto keyLabelFor = [&](int bit)->QString {
         if (bit == 11) return "#";
         if (bit == 10) return "*";

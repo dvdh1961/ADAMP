@@ -1,6 +1,5 @@
 #include "ntablewindow.h"
 
-// Qt includes
 #include <QApplication>
 #include <QLayout>
 #include <QGroupBox>
@@ -17,8 +16,6 @@
 #include <QPainter>
 #include <QImage>
 
-// Emulator core includes
-// Zorg ervoor dat deze headers in je .pro-bestand (INCLUDEPATH) staan
 #include "coleco.h"
 #include "f18a.h"
 
@@ -27,7 +24,6 @@ extern "C" {
 #include "tms9928a.h"
 }
 
-// Nodig voor cv_pal32
 extern int cv_pal32[16*4];
 
 NTableWindow::NTableWindow(QWidget *parent)
@@ -39,7 +35,7 @@ NTableWindow::NTableWindow(QWidget *parent)
     m_lastScreenY(0)
 {
     setWindowTitle("Name Table Viewer");
-    setWindowFlags(Qt::Window ); // Vergelijkbaar met bsToolWindow
+    setWindowFlags(Qt::Window );
 
     setWindowFlags(windowFlags()
                    & ~Qt::WindowMaximizeButtonHint
@@ -47,26 +43,18 @@ NTableWindow::NTableWindow(QWidget *parent)
 
     setFixedSize(950,620);
 
-    // Vul de pixmaps met een standaardkleur
     m_nameTablePixmap.fill(Qt::black);
     m_tilePixmap.fill(Qt::black);
 
     setupUI();
     setupMenus();
 
-    // Laad instellingen (oorspronkelijk uit TIniFile)
-    // We kunnen QSettings gebruiken als je dit wilt opslaan,
-    // maar voor nu gebruiken we de standaardwaarden.
     m_autoRefreshAction->setChecked(true);
 }
 
 NTableWindow::~NTableWindow()
 {
-    // Geen handmatige 'delete' nodig voor UI-componenten
-    // die 'this' als parent hebben.
 }
-
-// In ntablewindow.cpp
 
 void NTableWindow::setupUI()
 {
@@ -76,13 +64,12 @@ void NTableWindow::setupUI()
     // --- Linkerpaneel (Name Table) ---
     QVBoxLayout *leftLayout = new QVBoxLayout();
 
-    // --- 1. NameTable GroupBox ---
+    // --- NameTable GroupBox ---
     QGroupBox *nameTableBox = new QGroupBox("NameTable");
     nameTableBox->setStyleSheet("QGroupBox { color: white; }");
 
-    // Layout voor BINNEN de NameTable GroupBox
     QVBoxLayout *nameTableLayout = new QVBoxLayout();
-    nameTableLayout->setContentsMargins(6, 6, 6, 6); // Voegt wat padding toe
+    nameTableLayout->setContentsMargins(6, 6, 6, 6);
 
     m_nameTableLabel = new QLabel;
     m_nameTableLabel->setFixedSize(512, 384);
@@ -90,14 +77,12 @@ void NTableWindow::setupUI()
     m_nameTableLabel->setMouseTracking(true);
     m_nameTableLabel->installEventFilter(this);
 
-    nameTableLayout->addWidget(m_nameTableLabel); // Stop label in de groupbox-layout
-    nameTableBox->setLayout(nameTableLayout);     // Stel layout in voor groupbox
+    nameTableLayout->addWidget(m_nameTableLabel);
+    nameTableBox->setLayout(nameTableLayout);
 
-    leftLayout->addWidget(nameTableBox); // Voeg groupbox toe aan linkerpaneel
+    leftLayout->addWidget(nameTableBox);
 
-    // --- 2. Settings GroupBox ---
     QGroupBox *settingsBox = new QGroupBox("Settings");
-    // Maak zowel de groupbox-titel als de checkboxes wit
     settingsBox->setStyleSheet("QGroupBox { color: white; } QCheckBox { color: white; }");
 
     QHBoxLayout *checkLayout = new QHBoxLayout();
@@ -109,48 +94,39 @@ void NTableWindow::setupUI()
     checkLayout->addWidget(m_bwCheck);
     checkLayout->addStretch();
 
-    settingsBox->setLayout(checkLayout); // Stop de checkbox-layout in de groupbox
+    settingsBox->setLayout(checkLayout);
 
-    leftLayout->addWidget(settingsBox); // Voeg groupbox toe aan linkerpaneel
-    // --- 3. Palette GroupBox ---
+    leftLayout->addWidget(settingsBox);
     m_paletteBox = new QGroupBox("Color palette");
     m_paletteBox->setStyleSheet("QGroupBox { color: white; }");
 
     QGridLayout *paletteLayout = new QGridLayout(m_paletteBox);
-    paletteLayout->setHorizontalSpacing(0); // <-- AANGEPAST: Geen horizontale ruimte
-    paletteLayout->setVerticalSpacing(2);   // Wel een beetje verticale ruimte
+    paletteLayout->setHorizontalSpacing(0);
+    paletteLayout->setVerticalSpacing(2);
     paletteLayout->setContentsMargins(6, 6, 6, 6);
 
-    // De grootte van één "pixel" in de 128x128 tile viewer (128 / 8 = 16)
     const int swatchSize = 16;
 
     for (int i = 0; i < 16; ++i) {
-        // Rij 0: Kleurstaal (een QLabel met achtergrondkleur)
         m_paletteLabels[i] = new QLabel();
         m_paletteLabels[i]->setFixedSize(swatchSize, swatchSize);
-        // Standaardstijl (wordt later overschreven door updatePalette)
         m_paletteLabels[i]->setStyleSheet("background-color: black; border: 1px solid #808080;");
         m_paletteLabels[i]->setToolTip(QString("Palette Index %1").arg(i));
-        paletteLayout->addWidget(m_paletteLabels[i], 0, i); // <-- AANGEPAST: AlignHCenter weg
+        paletteLayout->addWidget(m_paletteLabels[i], 0, i);
 
-        // Rij 1: Nummerlabel (0-15)
         QLabel *numLabel = new QLabel(QString::number(i));
         numLabel->setStyleSheet("color: white;");
-        numLabel->setAlignment(Qt::AlignHCenter); // Centreren is prima
+        numLabel->setAlignment(Qt::AlignHCenter);
         paletteLayout->addWidget(numLabel, 1, i, Qt::AlignHCenter);
     }
 
-    // AANGEPAST: Voeg een 'stretch' kolom toe aan het einde (op positie 16)
-    // Dit dwingt alle 16 blokjes (0-15) om links te beginnen.
     paletteLayout->setColumnStretch(16, 1);
 
-    leftLayout->addWidget(m_paletteBox); // Voeg groupbox toe aan linkerpaneel
-    // --- Einde Linkerpaneel ---
+    leftLayout->addWidget(m_paletteBox);
 
-    // --- Rechterpaneel (Tile Info) ---
     QVBoxLayout *rightLayout = new QVBoxLayout();
 
-    // --- 1. VDP Register Box  ---
+    // --- VDP Register Box  ---
     m_vdpRegBox = new QGroupBox("VDP Registers");
     m_vdpRegBox->setStyleSheet("QGroupBox { color: white; }");
     QGridLayout *regLayout = new QGridLayout(m_vdpRegBox);
@@ -180,17 +156,15 @@ void NTableWindow::setupUI()
         m_vdpRegLabel[i]->setStyleSheet("color: white;");
 
         // Kolom 3: Beschrijving
-        m_vdpRegDesc[i] = new QLabel(""); // Standaard leeg
-        m_vdpRegDesc[i]->setStyleSheet("color: #AAAAAA;"); // Grijs voor beschrijving
+        m_vdpRegDesc[i] = new QLabel("");
+        m_vdpRegDesc[i]->setStyleSheet("color: #AAAAAA;");
 
-        // Voeg toe aan de grid
         regLayout->addWidget(titleLabel, i, 0, Qt::AlignLeft);
         regLayout->addWidget(colonLabel, i, 1, Qt::AlignLeft);
         regLayout->addWidget(m_vdpRegLabel[i], i, 2, Qt::AlignLeft);
-        regLayout->addWidget(m_vdpRegDesc[i], i, 3, Qt::AlignLeft); // Nieuwe kolom
+        regLayout->addWidget(m_vdpRegDesc[i], i, 3, Qt::AlignLeft);
     }
 
-    // Zorg dat de beschrijving-kolom (3) uitrekt
     regLayout->setColumnStretch(0, 0); // Titels
     regLayout->setColumnStretch(1, 0); // :
     regLayout->setColumnStretch(2, 0); // Waarden (vaste breedte)
@@ -199,15 +173,13 @@ void NTableWindow::setupUI()
     rightLayout->addWidget(m_vdpRegBox);
 
 
-    // --- 2. Tile Info Box  ---
+    // --- Tile Info Box  ---
     m_tileInfoBox = new QGroupBox("Tile Info");
 
-    // Deze stylesheet geldt nu ALLEEN voor de groupbox-titel zelf
     m_tileInfoBox->setStyleSheet("QGroupBox { color: white; }");
 
     QGridLayout *gridLayout = new QGridLayout(m_tileInfoBox);
 
-    // 1. Maak de titels (Kolom 1)
     QLabel *locTitle = new QLabel("Location");
     QLabel *tileIndexTitle = new QLabel("Tile Index");
     QLabel *namTabAddrTitle = new QLabel("NamTab Addr");
@@ -220,7 +192,6 @@ void NTableWindow::setupUI()
     patGenAddrTitle->setStyleSheet("color: white;");
     colTabAddrTitle->setStyleSheet("color: white;");
 
-    // 2. Maak de waarde-labels (Kolom 3)
     m_locLabel = new QLabel("$00,$00    -  000,000");
     m_tileIndexLabel = new QLabel("$00");
     m_namTabAddrLabel = new QLabel("$0000");
@@ -233,12 +204,10 @@ void NTableWindow::setupUI()
     m_patGenAddrLabel->setStyleSheet("color: white;");
     m_colTabAddrLabel->setStyleSheet("color: white;");
 
-    // 4. Voeg alle 3 de kolommen toe aan de grid
-
     // Rij 0: Location
     gridLayout->addWidget(locTitle, 0, 0);
     QLabel* colon0 = new QLabel("      :"); colon0->setStyleSheet("color: white;");
-    gridLayout->addWidget(colon0, 0, 1); // Kolom 2
+    gridLayout->addWidget(colon0, 0, 1);
     gridLayout->addWidget(m_locLabel, 0, 2);
 
     // Rij 1: Tile Index
@@ -265,20 +234,17 @@ void NTableWindow::setupUI()
     gridLayout->addWidget(colon4, 4, 1);
     gridLayout->addWidget(m_colTabAddrLabel, 4, 2);
 
-    // 5. Zorg dat de waarden-kolom (2) uitrekt, en de rest niet
     gridLayout->setColumnStretch(0, 0); // Kolom 1 (Titels)
     gridLayout->setColumnStretch(1, 0); // Kolom 2 (:)
     gridLayout->setColumnStretch(2, 1); // Kolom 3 (Waarden)
 
     rightLayout->addWidget(m_tileInfoBox);
 
-
     // --- Tile GroupBox  ---
     // --- Layout voor Tile Viewer (links) + Hex Waarden (rechts) ---
 
-    // Maak een HBox voor de tile en de tekst
     QHBoxLayout *tileLayout = new QHBoxLayout();
-    tileLayout->setSpacing(10); // Ruimte tussen tile en tekst-kolom
+    tileLayout->setSpacing(10);
 
     // 1. Tile viewer (links)
     m_tileLabel = new QLabel;
@@ -289,19 +255,19 @@ void NTableWindow::setupUI()
 
     // 2. Maak een VBox voor de 8 hex-labels
     QVBoxLayout *hexLayout = new QVBoxLayout();
-    hexLayout->setSpacing(0); // Geen ruimte tussen de labels
-    hexLayout->setContentsMargins(0, 0, 0, 0); // Geen marges
+    hexLayout->setSpacing(0);
+    hexLayout->setContentsMargins(0, 0, 0, 0);
 
     QFont monospaceFont("Monospace");
     monospaceFont.setStyleHint(QFont::TypeWriter);
-    monospaceFont.setPointSize(10); // Iets groter lettertype
+    monospaceFont.setPointSize(10);
 
     // 128 pixels / 8 rijen = 16 pixels per rij
     const int rowHeight = 16;
-    const int rowWidth = 40; // Breedte voor "$XX"
+    const int rowWidth = 40;
 
     for (int i = 0; i < 8; ++i) {
-        m_tileValueLabels[i] = new QLabel("$00"); // Standaard tekst
+        m_tileValueLabels[i] = new QLabel("$00");
         m_tileValueLabels[i]->setStyleSheet("color: white;");
         m_tileValueLabels[i]->setFont(monospaceFont);
         // Stel een vaste grootte in: 16px hoog
@@ -311,42 +277,30 @@ void NTableWindow::setupUI()
         hexLayout->addWidget(m_tileValueLabels[i]);
     }
 
-    // Voeg de VBox met labels toe aan de HBox
     tileLayout->addLayout(hexLayout);
-    tileLayout->addStretch(); // Zorgt dat de tekst naast de tile blijft
+    tileLayout->addStretch();
 
-    // Maak een container widget voor de HBox
     QWidget *tileContainer = new QWidget();
     tileContainer->setLayout(tileLayout);
 
-    // 1. Maak de GroupBox met de titel "Tile"
     QGroupBox *tileGroupBox = new QGroupBox("Tile 8x8 pixels");
-    tileGroupBox->setStyleSheet("QGroupBox { color: white; }"); // Stijl net als de andere boxen
+    tileGroupBox->setStyleSheet("QGroupBox { color: white; }");
 
-    // 2. Maak een layout voor BINNEN de GroupBox
-    //    We gebruiken een QHBoxLayout om de tileContainer te centreren.
     QHBoxLayout *groupBoxLayout = new QHBoxLayout();
-    groupBoxLayout->addWidget(tileContainer, 0, Qt::AlignHCenter); // Centreer de container
+    groupBoxLayout->addWidget(tileContainer, 0, Qt::AlignHCenter);
 
-    // 3. Stel de layout in voor de GroupBox
     tileGroupBox->setLayout(groupBoxLayout);
 
-    // 4. Voeg de NIEUWE GroupBox (i.p.v. de container) toe aan de rechter VBox
     rightLayout->addWidget(tileGroupBox);
 
-
-    // Layout samenstellen
     mainLayout->addLayout(leftLayout);
     mainLayout->addLayout(rightLayout);
     setCentralWidget(centralWidget);
 
-    // Slots verbinden
     connect(m_gridCheck, &QCheckBox::toggled, this, &NTableWindow::onOptionToggled);
     connect(m_tilesCheck, &QCheckBox::toggled, this, &NTableWindow::onOptionToggled);
     connect(m_bwCheck, &QCheckBox::toggled, this, &NTableWindow::onOptionToggled);
 }
-
-
 
 void NTableWindow::setupMenus()
 {
@@ -381,8 +335,6 @@ void NTableWindow::setupMenus()
 
     setMenuBar(m_menuBar);
 }
-
-// --- Event Overrides ---
 
 void NTableWindow::closeEvent(QCloseEvent *event)
 {
@@ -447,8 +399,6 @@ void NTableWindow::updatePalette()
     }
 }
 
-// --- Slots ---
-
 void NTableWindow::doRefresh()
 {
     if (m_autoRefreshAction->isChecked()) {
@@ -510,8 +460,6 @@ void NTableWindow::onEditNamTabAddr()
     }
 }
 
-// --- Core Ported Logic ---
-
 QString NTableWindow::intToHex(int value, int width)
 {
     return QString("%1").arg(value, width, 16, QChar('0')).toUpper();
@@ -519,7 +467,6 @@ QString NTableWindow::intToHex(int value, int width)
 
 void NTableWindow::updateTileInfo(int ix, int iy)
 {
-    // Deze logica is een directe port van VRamMouseMove
     int it, bgti;
 
     it = coleco_gettmsval(VRAM, m_namTabVal + ix + 32 * iy, 0, 0);
@@ -535,12 +482,10 @@ void NTableWindow::updateTileInfo(int ix, int iy)
     else
         m_colTabAddrLabel->setText("$" + intToHex((it << 3) + coleco_gettmsaddr(CHRCOL, tms.Mode, iy * 8), 4));
 
-    // Update de tile-weergave als de muis over een nieuwe tile beweegt
     if (bgti != m_vramTile) {
         m_vramTile = bgti;
-        m_lastScreenY = iy * 8; // Sla de Y-positie op
-        smallUpdateChanges(m_lastScreenY); // Gebruik het
-        //smallUpdateChanges(iy * 8);
+        m_lastScreenY = iy * 8;
+        smallUpdateChanges(m_lastScreenY);
     }
 }
 
@@ -558,17 +503,13 @@ void NTableWindow::createTile(int screen_y)
 
         if ((m_vramTile >= coleco_gettmsaddr(CHRGEN, 0, 0)) && (m_vramTile < coleco_gettmsaddr(CHRGEN, 0, 0) + 0x1800)) {
 
-
-            // 1. Bereken de 'tile index' (0-255)
             // ofsvram = byte-offset van de tile t.o.v. de start van CHRGEN
             ofsvram = m_vramTile - coleco_gettmsaddr(CHRGEN, 0, 0);
             int pattern_index = ofsvram / 8; // De tile index
 
-            // 2. Bereken het adres voor de KLEUR-data
             // Dit is (tile_index * 8) + de huidige lijn (iy)
             int color_address = (pattern_index * 8) + iy;
 
-            // 3. Haal de kleur-byte op met het juiste adres en de juiste Y-coordinaat (voor bank switching)
             if (tms.Mode == 1)
             {
                 // Mode 1 gebruikt iy>>3 voor de hele tegel
@@ -592,7 +533,6 @@ void NTableWindow::createTile(int screen_y)
                 bgcol = 0xFF000000 | cv_pal32[tms.IdxPal[vcol & 0xf]];
             }
 
-            // De PATTERN-data ophalen (deze logica was al correct)
             if (ofsvram >= 0x1000)
                 value = coleco_gettmsval(CHRGEN, (m_vramTile & 0x7ff) + (iy & 7), tms.Mode, screen_y + iy);
             else if (ofsvram >= 0x800)
@@ -601,7 +541,6 @@ void NTableWindow::createTile(int screen_y)
                 value = coleco_gettmsval(CHRGEN, (m_vramTile & 0x7ff) + (iy & 7), tms.Mode, screen_y + iy);
 
         } else {
-            // ... (logica voor niet-vram blijft hetzelfde) ...
             if (m_bwCheck->isChecked()) {
                 fgcol = 0xFFFFFFFF;
                 bgcol = 0xFF000000 | cv_pal32[0];
@@ -632,7 +571,7 @@ void NTableWindow::createTile(int screen_y)
         if (i < values.size()) {
             m_tileValueLabels[i]->setText(values[i]);
         } else {
-            m_tileValueLabels[i]->setText(""); // Maak leeg (zou niet mogen gebeuren)
+            m_tileValueLabels[i]->setText("");
         }
     }
 }
@@ -645,9 +584,8 @@ void NTableWindow::smallUpdateChanges(int screen_y)
     QPixmap scaledTile = m_tilePixmap.scaled(128, 128, Qt::IgnoreAspectRatio, Qt::FastTransformation);
 
     // Teken het grid indien nodig
-    //if (m_gridCheck->isChecked()) {
         QPainter painter(&scaledTile);
-        painter.setPen(QColor(Qt::darkGray)); // cl3DDkShadow
+        painter.setPen(QColor(Qt::darkGray));
         int step = 128 / 8;
         for (int x = 0; x <= 128; x += step) {
             painter.drawLine(x, 0, x, 128);
@@ -655,23 +593,20 @@ void NTableWindow::smallUpdateChanges(int screen_y)
         for (int y = 0; y <= 128; y += step) {
             painter.drawLine(0, y, 128, y);
         }
-    //}
 
     m_tileLabel->setPixmap(scaledTile);
 }
 
 void NTableWindow::createMap(QPaintDevice *device, int w, int h)
 {
-    // Port van Tnametabviewer::CreateMap
     int ix, iy, it, value;
     QRgb fgcol, bgcol;
     BYTE memtile[32 * 24];
     BYTE ic;
     int Offset;
 
-    // 1. Maak de 256x192 basis-image
     QImage image(256, 192, QImage::Format_RGB32);
-    image.fill(Qt::black); // Start met een zwarte achtergrond
+    image.fill(Qt::black);
 
     for (iy = 0; iy < 192; iy++) {
         QRgb *scanLine = (QRgb *)image.scanLine(iy);
@@ -691,11 +626,8 @@ void NTableWindow::createMap(QPaintDevice *device, int w, int h)
                 fgcol = 0xFFFFFFFF;
                 bgcol = 0xFF000000 | cv_pal32[0];
             } else {
-                // --- AANPASSING ---
-                // Gebruik tms.IdxPal, net zoals createTile() doet
                 fgcol = 0xFF000000 | cv_pal32[tms.IdxPal[(ic >> 4) & 0x0f]];
                 bgcol = 0xFF000000 | cv_pal32[tms.IdxPal[(ic & 0x0f)]];
-                // --- EINDE AANPASSING ---
             }
 
             value = coleco_gettmsval(CHRGEN, it, tms.Mode, iy);
@@ -710,14 +642,14 @@ void NTableWindow::createMap(QPaintDevice *device, int w, int h)
         }
     }
 
-    // 2. Converteer naar QPixmap en schaal naar het doel-device
+    // Converteer naar QPixmap en schaal naar het doel-device
     QPixmap basePixmap = QPixmap::fromImage(image);
     QPainter painter(device);
     painter.drawPixmap(0, 0, w, h, basePixmap);
 
-    // 3. Teken het grid (indien nodig) over de geschaalde pixmap
+    // Teken het grid (indien nodig) over de geschaalde pixmap
     if (m_gridCheck->isChecked()) {
-        painter.setPen(QColor(Qt::darkGray)); // cl3DDkShadow
+        painter.setPen(QColor(Qt::darkGray));
         int stepX = w / 32;
         int stepY = h / 24;
         for (ix = 0; ix <= w; ix += stepX) {
@@ -728,20 +660,17 @@ void NTableWindow::createMap(QPaintDevice *device, int w, int h)
         }
     }
 
-    // 4. Teken de tile-nummers (indien nodig)
+    // Teken de tile-nummers (indien nodig)
     if (m_tilesCheck->isChecked()) {
-        // --- AANGEPASTE REGEL ---
-        QFont font("Roboto", 8); // Was "Courier New", 10
-        // --- EINDE AANPASSING ---
+        QFont font("Roboto", 8);
 
         painter.setFont(font);
-        painter.setPen(QColor(64, 255, 0)); // RGB(64,255,0)
+        painter.setPen(QColor(64, 255, 0));
 
         int stepX = w / 32;
         int stepY = h / 24;
         for (iy = 0; iy < 24; iy++) {
             for (ix = 0; ix < 32; ix++) {
-                // Y-positie iets aangepast (was 11) voor het kleinere lettertype
                 painter.drawText(stepX * ix + 1, stepY * iy + 9, intToHex(memtile[ix + iy * 32], 2));
             }
         }
@@ -757,33 +686,30 @@ void NTableWindow::updateChanges()
 
 void NTableWindow::updateVdpRegisters()
 {
-    // Veiligheidscheck
     if (!emulator) return;
 
-    // --- Update R0 ---
     BYTE R0 = tms.VR[0];
     m_vdpRegLabel[0]->setText("$" + intToHex(R0, 2));
     QString R0_Desc = "";
 
-    // tms.Mode bevat de berekende mode (0-3)
     switch (tms.Mode) {
     case 0: R0_Desc = "Text (40x24)"; break;
     case 1: R0_Desc = "GFX 1 (32x24)"; break;
     case 2: R0_Desc = "GFX 2 (32x24)"; break;
     case 3: R0_Desc = "Multicolor"; break;
     }
-    if (R0 & 0x01) R0_Desc += ", ExtVDP"; // REG0_EXTVDP
+    if (R0 & 0x01) R0_Desc += ", ExtVDP";
     m_vdpRegDesc[0]->setText(R0_Desc);
 
     // --- Update R1 ---
     BYTE R1 = tms.VR[1];
     m_vdpRegLabel[1]->setText("$" + intToHex(R1, 2));
     QStringList R1_Desc;
-    if (R1 & 0x80) R1_Desc << "16k RAM";     // REG1_RAM16K
-    if (R1 & 0x40) R1_Desc << "Screen ON";   // REG1_SCREEN
-    if (R1 & 0x20) R1_Desc << "IRQ ON";      // REG1_IRQ
-    if (R1 & 0x02) R1_Desc << "16x16 Sprites"; // REG1_SPR16
-    if (R1 & 0x01) R1_Desc << "Mag Sprites";   // REG1_BIGSPR
+    if (R1 & 0x80) R1_Desc << "16k RAM";        // REG1_RAM16K
+    if (R1 & 0x40) R1_Desc << "Screen ON";      // REG1_SCREEN
+    if (R1 & 0x20) R1_Desc << "IRQ ON";         // REG1_IRQ
+    if (R1 & 0x02) R1_Desc << "16x16 Sprites";  // REG1_SPR16
+    if (R1 & 0x01) R1_Desc << "Mag Sprites";    // REG1_BIGSPR
     if (R1_Desc.isEmpty()) R1_Desc << "8k, Screen OFF";
     m_vdpRegDesc[1]->setText(R1_Desc.join(", "));
 

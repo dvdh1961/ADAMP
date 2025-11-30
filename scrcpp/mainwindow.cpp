@@ -55,6 +55,7 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QMessageBox>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -95,12 +96,19 @@ MainWindow::MainWindow(QWidget *parent)
     m_adamInputModeJoystick(false),
     m_debugWin(nullptr),
     m_cartInfoDialog(nullptr)
+    //m_adamRomMenu(nullptr),
+    //m_openAdamRomAction(nullptr),
+    //m_ejectAdamRomAction(nullptr)
+
 {
+    setUpLogWindow();
+    configurePlatformSettings();
+
     QCoreApplication::setOrganizationName("DVdHSoft");
     QCoreApplication::setApplicationName("ADAMP_EMU");
 
     // Version
-    appVersion = "0.3.1125";
+    appVersion = "0.4.1125";
 
     setWindowTitle(QString("ADAM+ Emulator - v%1").arg(appVersion));
 
@@ -155,7 +163,20 @@ MainWindow::MainWindow(QWidget *parent)
     m_inputWidget->show();
     m_inputWidget->raise();
 
+    this->setMinimumSize(770, 700);
+
+    setStatusBar();
+
+    loadSettings();
+
+    setupUI();
+
     m_joystick = new SimpleJoystick(this);
+
+    if (m_joystick) {
+         qDebug() << "Joystick: " << m_joystickType;
+        m_joystick->setJoystickType(m_joystickType);
+    }
 
     // Verbind de 'schone' signalen naar de 'schone' slots
     connect(m_joystick, &SimpleJoystick::directionChanged,
@@ -173,20 +194,14 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_joystick, &SimpleJoystick::selectPressed,
             m_inputWidget, &InputWidget::setJoystickSelect);
 
+    m_joystick->stopPolling();
     m_joystick->startPolling(0);
 
-    setUpLogWindow();
+    m_screenWidget->setScalingMode(static_cast<ScreenWidget::ScalingMode>(m_scalingMode));
 
-    this->setMinimumSize(770, 700);
-
-    configurePlatformSettings();
-
-    setStatusBar();
-
-    loadSettings();
-    setupUI();
-
-    m_screenWidget->setScalingMode(static_cast<ScalingMode>(m_scalingMode));
+    if (m_screenWidget) {
+        m_screenWidget->setScanlinesMode(m_scanlinesMode);
+    }
 
     if (m_sysLabel) {
         m_sysLabel->setText(m_machineType ? "ADAM" : "COLECO");
@@ -230,8 +245,6 @@ MainWindow::MainWindow(QWidget *parent)
     m_debugWin = new DebuggerWindow(this);
     m_debugWin->setController(m_colecoController);
 
-    m_debugWin->setBreakpointPath(m_breakpointPath);
-
     connect(m_debugWin, &DebuggerWindow::requestStepCPU,
             this,       &MainWindow::onDebuggerStepCPU);
     connect(m_debugWin, &DebuggerWindow::requestRunCPU,
@@ -240,6 +253,12 @@ MainWindow::MainWindow(QWidget *parent)
             this,       &MainWindow::onDebuggerBreakCPU);
     connect(m_debuggerAction, &QAction::triggered,
             this, &MainWindow::onOpenDebugger);
+    connect(m_debugWin, &DebuggerWindow::requestBpLoad,
+            this, &MainWindow::onLoadBreakpoint);
+
+    connect(m_debugWin, &DebuggerWindow::requestBpSave,
+            this, &MainWindow::onSaveBreakpoint);
+
 
     if (m_startFullScreen) {
         QTimer::singleShot(0, this, [this]() {
@@ -255,7 +274,6 @@ MainWindow::MainWindow(QWidget *parent)
 
         QResizeEvent re(size(), size());
         resizeEvent(&re);
-        // -------------------------
     });
 }
 
@@ -290,7 +308,7 @@ void MainWindow::onCycleScalingMode()
     m_actToggleSmoothing->setText(scaleText);
 
     if (m_screenWidget) {
-        m_screenWidget->setScalingMode(static_cast<ScalingMode>(m_scalingMode));
+        m_screenWidget->setScalingMode(static_cast<ScreenWidget::ScalingMode>(m_scalingMode));
     }
 
     saveSettings();
@@ -303,6 +321,7 @@ void MainWindow::onOpenSettings()
     m_settingsWindow->setTapePath(m_tapePath);
     m_settingsWindow->setStatePath(m_statePath);
     m_settingsWindow->setBreakpointPath(m_breakpointPath);
+    m_settingsWindow->setScreenshotPath(m_screenshotsPath);
 
     if (m_settingsWindow->exec() == QDialog::Accepted) {
 
@@ -311,6 +330,7 @@ void MainWindow::onOpenSettings()
         QString newTapePath = m_settingsWindow->tapePath();
         QString newStatePath = m_settingsWindow->statePath();
         QString newBreakpointPath = m_settingsWindow->breakpointPath();
+        QString newScreenshotPath = m_settingsWindow->screenshotPath();
 
         QDir appDir(QCoreApplication::applicationDirPath());
 
@@ -349,8 +369,11 @@ void MainWindow::onOpenSettings()
             m_breakpointPath = newBreakpointPath;
         }
 
-        if (m_debugWin) {
-            m_debugWin->setBreakpointPath(m_breakpointPath);
+        QFileInfo screenshotInfo(newScreenshotPath);
+        if (screenshotInfo.exists() && screenshotInfo.isDir()) {
+            m_screenshotsPath = appDir.relativeFilePath(newScreenshotPath);
+        } else {
+            m_screenshotsPath = newScreenshotPath;
         }
 
         saveSettings();
@@ -367,7 +390,8 @@ void MainWindow::loadSettings()
     m_diskPath     = settings.value("diskPath", ".").toString();
     m_tapePath     = settings.value("tapePath", ".").toString();
     m_statePath    = settings.value("statePath", ".").toString();
-    m_breakpointPath = settings.value("breakpointPath", "media/breakpoints").toString();
+    m_breakpointPath = settings.value("breakpointPath", ".").toString();
+    m_screenshotsPath = settings.value("screenshotPath", ".").toString();
 
     m_paletteIndex = settings.value("video/palette", 0).toInt();
     m_machineType  = settings.value("machine/type", 0).toInt();
@@ -375,24 +399,32 @@ void MainWindow::loadSettings()
     m_sgmEnabled  = settings.value("hardware/sgm",  false).toBool();
     m_f18aEnabled = settings.value("hardware/f18a", false).toBool();
 
+    m_joystickType    = settings.value("controller/joystickType", 0).toInt();
     m_ctrlSteering    = settings.value("controller/steering",    false).toBool();
     m_ctrlRoller      = settings.value("controller/roller",      false).toBool();
     m_ctrlSuperAction = settings.value("controller/superaction", false).toBool();
 
     m_scalingMode = settings.value("video/scalingMode", 1).toInt();
+
+    // --- TIJDELIJKE DEBUG: CONTROLE NA LADEN ---
+    qDebug() << "LOADED JOYSTICK TYPE:" << m_joystickType;
+
+    m_scanlinesMode = static_cast<ScanlinesMode>(settings.value("video/scanlinesMode", ScanlinesOff).toInt()); // NIEUW laden
+
+    if (m_scanlinesGroup) {
+        QList<QAction*> actions = m_scanlinesGroup->actions();
+        for (QAction* action : actions) {
+            if (action->data().toInt() == m_scanlinesMode) {
+                action->setChecked(true);
+                break;
+            }
+        }
+    }
+
     m_startFullScreen = settings.value("video/fullscreen", false).toBool();
     m_useBezels = settings.value("video/useBezels", true).toBool();
 
-    qDebug() << "Loading settings from:" << iniPath;
-    qDebug() << "Loaded settings:"
-             << "machine="  << m_machineType
-             << "palette="  << m_paletteIndex
-             << "sgm="      << m_sgmEnabled
-             << "f18a="     << m_f18aEnabled
-             << "steer="    << m_ctrlSteering
-             << "roller="   << m_ctrlRoller
-             << "saction="  << m_ctrlSuperAction
-             << "bppath="   << m_breakpointPath;
+    qDebug() << "Loaded settings";
 
     QByteArray geometry = settings.value("window/geometry").toByteArray();
 
@@ -416,31 +448,24 @@ void MainWindow::saveSettings()
     settings.setValue("tapePath",       m_tapePath);
     settings.setValue("statePath",      m_statePath);
     settings.setValue("breakpointPath", m_breakpointPath);
+    settings.setValue("screenshotPath", m_screenshotsPath);
     settings.setValue("video/palette",  m_paletteIndex);
     settings.setValue("machine/type",   m_machineType);
 
     settings.setValue("hardware/sgm",   m_sgmEnabled);
     settings.setValue("hardware/f18a",  m_f18aEnabled);
 
+    settings.setValue("controller/joystickType", m_joystickType);
     settings.setValue("controller/steering",    m_ctrlSteering);
     settings.setValue("controller/roller",      m_ctrlRoller);
     settings.setValue("controller/superaction", m_ctrlSuperAction);
 
     settings.setValue("video/scalingMode", m_scalingMode);
+    settings.setValue("video/scanlinesMode", m_scanlinesMode);
     settings.setValue("video/fullscreen", m_startFullScreen);
     settings.setValue("video/useBezels", m_useBezels);
 
     settings.sync();
-
-    qDebug() << "Settings saved to:" << iniPath
-             << "palette=" << m_paletteIndex
-             << "machine=" << m_machineType
-             << "sgm="     << m_sgmEnabled
-             << "f18a="    << m_f18aEnabled
-             << "steer="   << m_ctrlSteering
-             << "roller="  << m_ctrlRoller
-             << "saction=" << m_ctrlSuperAction
-             << "bppath="  << m_breakpointPath;
 
     settings.setValue("window/geometry", saveGeometry());
     settings.setValue("window/snap", m_snapWindows);
@@ -465,7 +490,7 @@ void MainWindow::setStatusBar()
 
     flags &= ~Qt::WindowMaximizeButtonHint;
     flags &= ~Qt::WindowMinimizeButtonHint;
-    flags &= ~Qt::WindowCloseButtonHint;
+    //flags &= ~Qt::WindowCloseButtonHint;
 
     flags |= Qt::CustomizeWindowHint;
 
@@ -649,94 +674,98 @@ void MainWindow::setStatusBar()
 
 void MainWindow::setupUI()
 {
+    // --- FILE MENU ---
     QMenu* fileMenu = menuBar()->addMenu(tr("File"));
-    m_openRomAction = new QAction(tr("Cartridge"), this);
-    m_openRomAction->setShortcut(QKeySequence::Open);
+
+    // Coleco cartridge
+    m_openRomAction = new QAction(tr("COLECO Cartridge"), this);
     connect(m_openRomAction, &QAction::triggered, this, &MainWindow::onOpenRom);
     fileMenu->addAction(m_openRomAction);
-
     fileMenu->addSeparator();
 
+    // Adam cartridge
+    m_adamRomMenu = new QMenu(tr("Adam Cartridge"), this);
+    m_openAdamRomAction = new QAction(tr("Load"), this);
+    connect(m_openAdamRomAction, &QAction::triggered, this, &MainWindow::onOpenAdamRom);
+    m_adamRomMenu->addAction(m_openAdamRomAction);
+
+    m_ejectAdamRomAction = new QAction(tr("Eject"), this);
+    connect(m_ejectAdamRomAction, &QAction::triggered, this, &MainWindow::onEjectAdamRom);
+    m_adamRomMenu->addAction(m_ejectAdamRomAction);
+    fileMenu->addMenu(m_adamRomMenu);
+
+    m_adamRomMenu->setEnabled(false); // Standaard uitgeschakeld
+
+    // Tape Menu's
     m_tapeMenuA = new QMenu(tr("Tape D1"), this);
     m_loadTapeActionA = new QAction(tr("Load"), this);
     connect(m_loadTapeActionA, &QAction::triggered, this, [this]() { onLoadTape(0); });
     m_tapeMenuA->addAction(m_loadTapeActionA);
-
     m_ejectTapeActionA = new QAction(tr("Eject/Save"), this);
     connect(m_ejectTapeActionA, &QAction::triggered, this, [this]() { onEjectTape(0); });
     m_tapeMenuA->addAction(m_ejectTapeActionA);
     fileMenu->addMenu(m_tapeMenuA);
-
     m_tapeMenuB = new QMenu(tr("Tape D2"), this);
     m_loadTapeActionB = new QAction(tr("Load"), this);
     connect(m_loadTapeActionB, &QAction::triggered, this, [this]() { onLoadTape(1); });
     m_tapeMenuB->addAction(m_loadTapeActionB);
-
     m_ejectTapeActionB = new QAction(tr("Eject/Save"), this);
     connect(m_ejectTapeActionB, &QAction::triggered, this, [this]() { onEjectTape(1); });
     m_tapeMenuB->addAction(m_ejectTapeActionB);
     fileMenu->addMenu(m_tapeMenuB);
-
     m_tapeMenuC = new QMenu(tr("Tape D3"), this);
     m_loadTapeActionC = new QAction(tr("Load"), this);
     connect(m_loadTapeActionC, &QAction::triggered, this, [this]() { onLoadTape(2); });
     m_tapeMenuC->addAction(m_loadTapeActionC);
-
     m_ejectTapeActionC = new QAction(tr("Eject/Save"), this);
     connect(m_ejectTapeActionC, &QAction::triggered, this, [this]() { onEjectTape(2); });
     m_tapeMenuC->addAction(m_ejectTapeActionC);
     fileMenu->addMenu(m_tapeMenuC);
-
     m_tapeMenuD = new QMenu(tr("Tape D4"), this);
     m_loadTapeActionD = new QAction(tr("Load"), this);
     connect(m_loadTapeActionD, &QAction::triggered, this, [this]() { onLoadTape(3); });
     m_tapeMenuD->addAction(m_loadTapeActionD);
-
     m_ejectTapeActionD = new QAction(tr("Eject/Save"), this);
     connect(m_ejectTapeActionD, &QAction::triggered, this, [this]() { onEjectTape(3); });
     m_tapeMenuD->addAction(m_ejectTapeActionD);
     fileMenu->addMenu(m_tapeMenuD);
 
+    // Disk Menu's
     m_diskMenuA = new QMenu(tr("Disk  D5"), this);
     m_loadDiskActionA = new QAction(tr("Load"), this);
     connect(m_loadDiskActionA, &QAction::triggered, this, [this]() { onLoadDisk(0); });
     m_diskMenuA->addAction(m_loadDiskActionA);
-
     m_ejectDiskActionA = new QAction(tr("Eject/Save"), this);
     connect(m_ejectDiskActionA, &QAction::triggered, this, [this]() { onEjectDisk(0); });
     m_diskMenuA->addAction(m_ejectDiskActionA);
     fileMenu->addMenu(m_diskMenuA);
-
     m_diskMenuB = new QMenu(tr("Disk  D6"), this);
     m_loadDiskActionB = new QAction(tr("Load"), this);
     connect(m_loadDiskActionB, &QAction::triggered, this, [this]() { onLoadDisk(1); });
     m_diskMenuB->addAction(m_loadDiskActionB);
-
     m_ejectDiskActionB = new QAction(tr("Eject/Save"), this);
     connect(m_ejectDiskActionB, &QAction::triggered, this, [this]() { onEjectDisk(1); });
     m_diskMenuB->addAction(m_ejectDiskActionB);
     fileMenu->addMenu(m_diskMenuB);
-
     m_diskMenuC = new QMenu(tr("Disk  D7"), this);
     m_loadDiskActionC = new QAction(tr("Load"), this);
     connect(m_loadDiskActionC, &QAction::triggered, this,  [this]() { onLoadDisk(2); });
     m_diskMenuC->addAction(m_loadDiskActionC);
-
     m_ejectDiskActionC = new QAction(tr("Eject/Save"), this);
     connect(m_ejectDiskActionC, &QAction::triggered, this, [this]() { onEjectDisk(2); });
     m_diskMenuC->addAction(m_ejectDiskActionC);
     fileMenu->addMenu(m_diskMenuC);
-
     m_diskMenuD = new QMenu(tr("Disk  D8"), this);
     m_loadDiskActionD = new QAction(tr("Load"), this);
     connect(m_loadDiskActionD, &QAction::triggered, this,  [this]() { onLoadDisk(3); });
     m_diskMenuD->addAction(m_loadDiskActionD);
-
     m_ejectDiskActionD = new QAction(tr("Eject/Save"), this);
     connect(m_ejectDiskActionD, &QAction::triggered, this, [this]() { onEjectDisk(3); });
     m_diskMenuD->addAction(m_ejectDiskActionD);
     fileMenu->addMenu(m_diskMenuD);
 
+    // Initial state disabled
+    //m_openARomAction->setEnabled(false);
     m_diskMenuA->setEnabled(false);
     m_diskMenuB->setEnabled(false);
     m_diskMenuC->setEnabled(false);
@@ -751,38 +780,27 @@ void MainWindow::setupUI()
     m_actSaveState = new QAction(tr("Save State..."), this);
     connect(m_actSaveState, &QAction::triggered, this, &MainWindow::onSaveState);
     fileMenu->addAction(m_actSaveState);
-
     m_actLoadState = new QAction(tr("Load State..."), this);
     connect(m_actLoadState, &QAction::triggered, this, &MainWindow::onLoadState);
     fileMenu->addAction(m_actLoadState);
-
     m_actSaveState->setEnabled(false);
     m_actLoadState->setEnabled(false);
-
     fileMenu->addSeparator();
-    m_settingsAction = new QAction(tr("Settings..."), this);
+    m_settingsAction = new QAction(tr("Settings"), this);
     connect(m_settingsAction, &QAction::triggered, this, &MainWindow::onOpenSettings);
     fileMenu->addAction(m_settingsAction);
-
     fileMenu->addSeparator();
     m_quitAction = new QAction(tr("&Exit"), this);
     m_quitAction->setShortcut(QKeySequence::Quit);
     connect(m_quitAction, &QAction::triggered, this, &MainWindow::close);
     fileMenu->addAction(m_quitAction);
 
+    // --- DEBUG MENU ---
     QMenu* debugMenu = menuBar()->addMenu(tr("Debug"));
     m_startAction = new QAction(tr("Run/Stop"), this);
     m_startAction->setShortcut(Qt::Key_F11);
     connect(m_startAction, &QAction::triggered, this, &MainWindow::onRunStop);
     debugMenu->addAction(m_startAction);
-    debugMenu->addSeparator();
-    m_resetAction = new QAction(tr("&Soft Reset"), this);
-    connect(m_resetAction, &QAction::triggered, this, &MainWindow::onReset);
-    debugMenu->addAction(m_resetAction);
-    m_hresetAction = new QAction(tr("&Hard Reset"), this);
-    m_hresetAction->setShortcut(Qt::Key_F12);
-    connect(m_hresetAction, &QAction::triggered, this, &MainWindow::onhReset);
-    debugMenu->addAction(m_hresetAction);
     debugMenu->addSeparator();
     m_actShowLog = new QAction(tr("Logger"), this);
     m_actShowLog->setCheckable(true);
@@ -790,105 +808,222 @@ void MainWindow::setupUI()
     debugMenu->addAction(m_actShowLog);
 
     QAction* actClearLog = new QAction(tr("Clear Logger"), this);
-
     connect(actClearLog, &QAction::triggered, this, [this]() {
         if (m_logView) {
             m_logView->clear();
         }
     });
     debugMenu->addAction(actClearLog);
-
     debugMenu->addSeparator();
     m_debuggerAction = new QAction(tr("Debugger"), this);
     debugMenu->addAction(m_debuggerAction);
 
+    // --- TOOLS MENU ---
     QMenu* toolsMenu = menuBar()->addMenu(tr("Tools"));
-    m_actToggleKeyboard = new QAction(tr("Keypad"), this);
-    m_actToggleKeyboard->setCheckable(true);
-    m_actToggleKeyboard->setChecked(false);
-    toolsMenu->addAction(m_actToggleKeyboard);
-    m_actJoypadMapper = new QAction(tr("Keypad mapper"), this);
-    toolsMenu->addAction(m_actJoypadMapper);
-    toolsMenu->addSeparator();
     m_actShowNameTable = new QAction(tr("Name Table Viewer"), this);
-    m_actShowNameTable->setCheckable(true);
-    connect(m_actShowNameTable, &QAction::toggled, this, &MainWindow::onShowNameTable);
+    connect(m_actShowNameTable, &QAction::triggered, this, &MainWindow::onShowNameTable);
     toolsMenu->addAction(m_actShowNameTable);
     m_actShowPatternTable = new QAction(tr("Pattern Table Viewer"), this);
-    m_actShowPatternTable->setCheckable(true);
-    connect(m_actShowPatternTable, &QAction::toggled, this, &MainWindow::onShowPatternTable);
+    connect(m_actShowPatternTable, &QAction::triggered, this, &MainWindow::onShowPatternTable);
     toolsMenu->addAction(m_actShowPatternTable);
     m_actShowSpriteTable = new QAction(tr("Sprite Table Viewer"), this);
-    m_actShowSpriteTable->setCheckable(true);
-    connect(m_actShowSpriteTable, &QAction::toggled, this, &MainWindow::onShowSpriteTable);
+    connect(m_actShowSpriteTable, &QAction::triggered, this, &MainWindow::onShowSpriteTable);
     toolsMenu->addAction(m_actShowSpriteTable);
     toolsMenu->addSeparator();
     m_cartInfoAction = new QAction(tr("Cart profile"), this);
     toolsMenu->addAction(m_cartInfoAction);
-    for (auto* m : menuBar()->findChildren<QMenu*>()) {
-        if (m->title().contains("Tools", Qt::CaseInsensitive)) { toolsMenu = m; break; }
+
+    // --- INPUT MENU ---
+    QMenu* inputMenu = menuBar()->addMenu(tr("Input"));
+
+    // Keypad (was in Tools)
+    m_actToggleKeyboard = new QAction(tr("Keypad"), this);
+    m_actToggleKeyboard->setCheckable(true);
+    m_actToggleKeyboard->setChecked(false);
+    inputMenu->addAction(m_actToggleKeyboard);
+
+    // Keypad mapper (was in Tools)
+    m_actJoypadMapper = new QAction(tr("Keypad mapper"), this);
+    inputMenu->addAction(m_actJoypadMapper);
+
+    inputMenu->addSeparator();
+
+    // Joystick Controller Menu (was in Tools)
+    QMenu* joystickControllerMenu = inputMenu->addMenu(tr("Joystick Controller")); // Hoofdmenu
+    // ... (De code om m_joystickGroup en de 3 sub-acties toe te voegen, blijft HIER)
+    // ... (m_actJoystickGeneral, m_actJoystickPS, m_actJoystickXbox worden toegevoegd aan joystickControllerMenu)
+
+    // Actiegroep om ervoor te zorgen dat slechts één type is geselecteerd
+    m_joystickGroup = new QActionGroup(this);
+    m_joystickGroup->setExclusive(true);
+
+    // 1. Algemene Controller
+    m_actJoystickGeneral = new QAction(tr("General"), this);
+    m_actJoystickGeneral->setCheckable(true);
+    m_actJoystickGeneral->setData(0); // 0 = Generic/Default type
+    m_joystickGroup->addAction(m_actJoystickGeneral);
+    joystickControllerMenu->addAction(m_actJoystickGeneral);
+
+    // 2. PlayStation Controller
+    m_actJoystickPS = new QAction(tr("PlayStation"), this);
+    m_actJoystickPS->setCheckable(true);
+    m_actJoystickPS->setData(1); // 1 = PlayStation type (voor POV mapping)
+    m_joystickGroup->addAction(m_actJoystickPS);
+    joystickControllerMenu->addAction(m_actJoystickPS);
+
+    // 3. Xbox Controller
+    m_actJoystickXbox = new QAction(tr("Xbox"), this);
+    m_actJoystickXbox->setCheckable(true);
+    m_actJoystickXbox->setData(2); // 2 = Xbox type (optionele toekomstige mapping)
+    m_joystickGroup->addAction(m_actJoystickXbox);
+    joystickControllerMenu->addAction(m_actJoystickXbox);
+
+    // Verbinden met de afhandelingsslot
+    connect(m_joystickGroup, &QActionGroup::triggered, this, &MainWindow::onJoystickTypeChanged);
+
+    // Synchronisatie van de geladen waarde
+    if (m_joystickGroup) {
+        QList<QAction*> actions = m_joystickGroup->actions();
+        for (QAction* action : actions) {
+            if (action->data().toInt() == m_joystickType) {
+                action->setChecked(true);
+                break;
+            }
+        }
     }
-    if (!toolsMenu) toolsMenu = menuBar()->addMenu("&Tools");
 
-    m_actPrinterOutput = toolsMenu->addAction("Printer Output...", this, &MainWindow::onShowPrinterWindow);
-    m_actPrinterOutput->setShortcut(QKeySequence("Ctrl+Shift+P"));
-
-    QMenu* optionsMenu = menuBar()->addMenu(tr("Options"));
+    // --- VIDEO MENU ---
+    QMenu* videoMenu = menuBar()->addMenu(tr("Video"));
     QActionGroup* videoGroup = new QActionGroup(this);
-    m_actToggleNTSC = new QAction(tr("NTSC (60Hz)"), this);
+    // NTSC & PAL
+    m_actToggleNTSC = new QAction(tr("NTSC"), this);
     m_actToggleNTSC->setCheckable(true);
-    m_actToggleNTSC->setChecked(true); // Default op NTSC
+    m_actToggleNTSC->setChecked(true);
     videoGroup->addAction(m_actToggleNTSC);
-    optionsMenu->addAction(m_actToggleNTSC);
-    m_actTogglePAL = new QAction(tr("PAL (50Hz)"), this);
+    videoMenu->addAction(m_actToggleNTSC);
+    m_actTogglePAL  = new QAction(tr("PAL "), this);
     m_actTogglePAL->setCheckable(true);
     videoGroup->addAction(m_actTogglePAL);
-    optionsMenu->addAction(m_actTogglePAL);
-    optionsMenu->addSeparator();
+    videoMenu->addAction(m_actTogglePAL);
+    videoMenu->addSeparator();
+    m_scanlinesMenu = videoMenu->addMenu(tr("Simulate Scanlines"));
+    m_scanlinesGroup = new QActionGroup(this);
+    m_scanlinesGroup->setExclusive(true);
+    // Optie 1: Scanlines UIT
+    QAction* actScanlinesOff = new QAction(tr("Off"), this);
+    actScanlinesOff->setCheckable(true);
+    actScanlinesOff->setChecked(m_scanlinesMode == ScanlinesOff);
+    actScanlinesOff->setData(ScanlinesOff);
+    m_scanlinesGroup->addAction(actScanlinesOff);
+    m_scanlinesMenu->addAction(actScanlinesOff);
+    m_scanlinesMenu->addSeparator();
+    // Optie 2: TV Scanlines (TelevizeImage)
+    m_actScanlinesTV = new QAction(tr("TV Scanlines"), this);
+    m_actScanlinesTV->setCheckable(true);
+    m_actScanlinesTV->setChecked(m_scanlinesMode == ScanlinesTV);
+    m_actScanlinesTV->setData(ScanlinesTV);
+    m_scanlinesGroup->addAction(m_actScanlinesTV);
+    m_scanlinesMenu->addAction(m_actScanlinesTV);
+    // Optie 3: LCD Scanlines (LcdizeImage)
+    m_actScanlinesLCD = new QAction(tr("LCD Scanlines"), this);
+    m_actScanlinesLCD->setCheckable(true);
+    m_actScanlinesLCD->setChecked(m_scanlinesMode == ScanlinesLCD);
+    m_actScanlinesLCD->setData(ScanlinesLCD);
+    m_scanlinesGroup->addAction(m_actScanlinesLCD);
+    m_scanlinesMenu->addAction(m_actScanlinesLCD);
+    // Optie 4: LCD Raster (RasterizeImage)
+    m_actScanlinesRaster = new QAction(tr("LCD Raster"), this);
+    m_actScanlinesRaster->setCheckable(true);
+    m_actScanlinesRaster->setChecked(m_scanlinesMode == ScanlinesRaster);
+    m_actScanlinesRaster->setData(ScanlinesRaster);
+    m_scanlinesGroup->addAction(m_actScanlinesRaster);
+    m_scanlinesMenu->addAction(m_actScanlinesRaster);
 
-    m_actToggleSmoothing = new QAction(this);
-    m_actToggleSmoothing->setCheckable(false);
+    videoMenu->addSeparator();
+    m_scalingMenu = videoMenu->addMenu(tr("Video Mode"));
+    m_scalingGroup = new QActionGroup(this);
+    m_scalingGroup->setExclusive(true);
+    // Scaling Mode 1: Smooth
+    m_actScalingSmooth = new QAction(tr("Smooth"), this);
+    m_actScalingSmooth->setCheckable(true);
+    // De waarde '1' correspondeert met ModeSmooth
+    m_actScalingSmooth->setData(1);
+    m_scalingGroup->addAction(m_actScalingSmooth);
+    m_scalingMenu->addAction(m_actScalingSmooth);
+    // Scaling Mode 2: Sharp
+    m_actScalingSharp = new QAction(tr("Sharp (Nearest Neighbor)"), this);
+    m_actScalingSharp->setCheckable(true);
+    // De waarde '0' correspondeert met ModeSharp
+    m_actScalingSharp->setData(0);
+    m_scalingGroup->addAction(m_actScalingSharp);
+    m_scalingMenu->addAction(m_actScalingSharp);
+    // Scaling Mode 3: EPX
+    m_actScalingEPX = new QAction(tr("EPX Filter (2x)"), this);
+    m_actScalingEPX->setCheckable(true);
+    // De waarde '2' correspondeert met ModeEPX
+    m_actScalingEPX->setData(2);
+    m_scalingGroup->addAction(m_actScalingEPX);
+    m_scalingMenu->addAction(m_actScalingEPX);
+    connect(m_scalingGroup, &QActionGroup::triggered, this, &MainWindow::onScalingModeChanged);
 
-    if (m_scalingMode == 0) { // ModeSharp
-        m_actToggleSmoothing->setText("Scaling: Sharp");
-    } else if (m_scalingMode == 2) { // ModeEPX
-        m_actToggleSmoothing->setText("Scaling: EPX");
-    } else { // ModeSmooth (default)
-        m_actToggleSmoothing->setText("Scaling: Smooth");
+    if (m_scalingGroup) {
+        QList<QAction*> actions = m_scalingGroup->actions();
+        for (QAction* action : actions) {
+            if (action->data().toInt() == m_scalingMode) {
+                action->setChecked(true);
+                break;
+            }
+        }
     }
-    optionsMenu->addAction(m_actToggleSmoothing);
-    optionsMenu->addSeparator();
+    videoMenu->addSeparator();
+
+    // Volledig scherm
     m_actFullScreen = new QAction(tr("Full Screen"), this);
     m_actFullScreen->setCheckable(true);
     m_actFullScreen->setChecked(m_startFullScreen);
     m_actFullScreen->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F));
-    optionsMenu->addAction(m_actFullScreen);
-
+    videoMenu->addAction(m_actFullScreen);
+    // Reset Window Size
     m_actResetSize = new QAction(tr("Reset Window Size"), this);
     connect(m_actResetSize, &QAction::triggered, this, &MainWindow::onResetWindowSize);
-    optionsMenu->addAction(m_actResetSize);
-
-    optionsMenu->addSeparator();
-
-    m_actToggleBezels = new QAction(tr("Show Bezels/Wallpaper"), this);
+    videoMenu->addAction(m_actResetSize);
+    videoMenu->addSeparator();
+    // Show Bezels/Wallpaper
+    m_actToggleBezels = new QAction(tr("Show Bezels"), this);
     m_actToggleBezels->setCheckable(true);
     m_actToggleBezels->setChecked(m_useBezels);
     connect(m_actToggleBezels, &QAction::toggled, this, &MainWindow::onToggleBezels);
-    optionsMenu->addAction(m_actToggleBezels);
-
-    optionsMenu->addSeparator();
+    videoMenu->addAction(m_actToggleBezels);
+    videoMenu->addSeparator();
+    // Save Screenshot
     m_actSaveScreenshot = new QAction(tr("Save Screenshot..."), this);
-    optionsMenu->addAction(m_actSaveScreenshot);
+    videoMenu->addAction(m_actSaveScreenshot);
     m_actSaveScreenshot->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
 
-    optionsMenu->addSeparator();
-    m_actHardware = new QAction(tr("Hardware..."), this);
-    optionsMenu->addAction(m_actHardware);
+    // --- HARDWARE MENU ---
+    QMenu* hardwareMenu = menuBar()->addMenu(tr("Hardware"));
+
+    hardwareMenu->addSeparator();
+    m_actHardware = new QAction(tr("Hardware selection"), this);
+    hardwareMenu->addAction(m_actHardware);
     connect(m_actHardware, &QAction::triggered, this, &MainWindow::onOpenHardware);
+    hardwareMenu->addSeparator();
+    m_actPrinterOutput = hardwareMenu->addAction("Printer Output", this, &MainWindow::onShowPrinterWindow);
+    m_actPrinterOutput->setShortcut(QKeySequence("Ctrl+Shift+P"));
+    hardwareMenu->addSeparator();
+    m_resetAction = new QAction(tr("&Soft Reset"), this);
+    connect(m_resetAction, &QAction::triggered, this, &MainWindow::onReset);
+    hardwareMenu->addAction(m_resetAction);
+    m_hresetAction = new QAction(tr("&Hard Reset"), this);
+    m_hresetAction->setShortcut(Qt::Key_F12);
+    connect(m_hresetAction, &QAction::triggered, this, &MainWindow::onhReset);
+    hardwareMenu->addAction(m_hresetAction);
+    hardwareMenu->addSeparator();
 
-    optionsMenu->addSeparator();
+    // --- OPTIONS MENU ---
+    QMenu* optionsMenu = menuBar()->addMenu(tr("Options"));
 
-    m_actToggleSnap = new QAction(tr("Snap Debug/Print Windows"), this);
+    m_actToggleSnap = new QAction(tr("Snap to mainwindow"), this);
     m_actToggleSnap->setCheckable(true);
     m_actToggleSnap->setChecked(m_snapWindows);
     connect(m_actToggleSnap, &QAction::toggled, this, &MainWindow::onToggleSnap);
@@ -900,13 +1035,13 @@ void MainWindow::setupUI()
     m_adamInputGroup = new QActionGroup(this);
     m_adamInputGroup->setExclusive(true);
 
-    m_actAdamKeyboard = new QAction(tr("ADAM Keyboard (Typing)"), this);
+    m_actAdamKeyboard = new QAction(tr("Keyboard mode"), this);
     m_actAdamKeyboard->setCheckable(true);
     m_actAdamKeyboard->setChecked(true);
     m_adamInputGroup->addAction(m_actAdamKeyboard);
     m_adamInputMenu->addAction(m_actAdamKeyboard);
 
-    m_actAdamJoystick = new QAction(tr("Coleco Joystick (Games)"), this);
+    m_actAdamJoystick = new QAction(tr("Keypad  mode"), this);
     m_actAdamJoystick->setCheckable(true);
     m_actAdamJoystick->setChecked(false);
     m_adamInputGroup->addAction(m_actAdamJoystick);
@@ -914,11 +1049,7 @@ void MainWindow::setupUI()
 
     m_adamInputMenu->setEnabled(false);
 
-
-    connect(m_actJoypadMapper, &QAction::triggered, this, &MainWindow::onOpenJoypadMapper);
-    connect(m_actAdamKeyboard, &QAction::triggered, this, &MainWindow::onAdamInputModeChanged);
-    connect(m_actAdamJoystick, &QAction::triggered, this, &MainWindow::onAdamInputModeChanged);
-
+    // --- HELP MENU ---
     QMenu* helpMenu = menuBar()->addMenu(tr("Help"));
     m_actWiki = new QAction(tr("Github page"), this);
     helpMenu->addAction(m_actWiki);
@@ -931,97 +1062,99 @@ void MainWindow::setupUI()
     m_actAbout = new QAction(tr("About"), this);
     helpMenu->addAction(m_actAbout);
 
+    // --- CONNECTIES ---
+    connect(m_actWiki, &QAction::triggered, this, []() {
+        QDesktopServices::openUrl(QUrl("https://github.com/dvdh1961/ADAMP"));
+    });
+    connect(m_actReport, &QAction::triggered, this, []() {
+        QDesktopServices::openUrl(QUrl("https://github.com/dvdh1961/ADAMP/issues"));
+    });
+    connect(m_actDonate, &QAction::triggered, this, []() {
+        QDesktopServices::openUrl(QUrl("https://www.paypal.com/donate?business=dannyvdh@pandora.be"));
+    });
 
-    connect(m_actToggleSGM, &QAction::toggled, this, &MainWindow::onToggleSGM);
-    connect(m_actToggleKeyboard, &QAction::toggled, this, &MainWindow::onToggleKeyboard);
-
+    // Scanlines connectie
+    connect(m_scanlinesGroup, &QActionGroup::triggered, this, &MainWindow::onScanlinesModeChanged);
     connect(m_actToggleNTSC, &QAction::triggered, this, &MainWindow::onToggleVideoStandard);
     connect(m_actTogglePAL, &QAction::triggered, this, &MainWindow::onToggleVideoStandard);
-
+    connect(m_actToggleKeyboard, &QAction::toggled, this, &MainWindow::onToggleKeyboard);
     connect(m_cartInfoAction, &QAction::triggered, this, &MainWindow::onOpenCartInfo);
-
-    connect(m_ntableWindow, &NTableWindow::windowClosed, this, [this]() {
-        m_actShowNameTable->setChecked(false);
-    });
-    connect(m_patternWindow, &PatternWindow::windowClosed, this, [this]() {
-        m_actShowPatternTable->setChecked(false);
-    });
-    connect(m_spriteWindow, &SpriteWindow::windowClosed, this, [this]() {
-        m_actShowSpriteTable->setChecked(false);
-    });
-
     connect(m_actAbout, &QAction::triggered, this, &MainWindow::showAboutDialog);
-
     connect(m_actFullScreen, &QAction::toggled, this, &MainWindow::onToggleFullScreen);
-    connect(m_actToggleSmoothing, &QAction::triggered, this, &MainWindow::onCycleScalingMode);
-
     connect(m_actSaveScreenshot, &QAction::triggered,this, &MainWindow::onSaveScreenshot);
-
-    connect(m_actWiki, &QAction::triggered, this, [](){
-        QString link = "https://github.com/dvdh1961/ADAMP";
-        QDesktopServices::openUrl(QUrl(link));
-    });
-
-    connect(m_actReport, &QAction::triggered, this, [](){
-        QString link = "https://github.com/dvdh1961/ADAMP/issues";
-        QDesktopServices::openUrl(QUrl(link));
-    });
-
-    connect(m_actDonate, &QAction::triggered, this, [](){
-        QString link = "https://www.paypal.com/donate?business=dannyvdh@pandora.be";
-        QDesktopServices::openUrl(QUrl(link));
-    });
+    connect(m_actJoypadMapper, &QAction::triggered, this, &MainWindow::onOpenJoypadMapper);
+    connect(m_actAdamKeyboard, &QAction::triggered, this, &MainWindow::onAdamInputModeChanged);
+    connect(m_actAdamJoystick, &QAction::triggered, this, &MainWindow::onAdamInputModeChanged);
 
     onEmuPausedChanged(false);
 }
 
-void MainWindow::onSaveScreenshot()
+void MainWindow::onScalingModeChanged(QAction* action)
 {
-    if (!m_screenWidget)
-        return;
+    int newMode = action->data().toInt();
 
-    QPixmap pix = m_screenWidget->grab();
-    if (pix.isNull()) {
-        qWarning() << "Screenshot: nothing to grab from m_screenWidget";
+    if (m_scalingMode == newMode) {
         return;
     }
 
-    QString absoluteShotPath =
-        QDir::cleanPath(QCoreApplication::applicationDirPath() + "/screenshots");
+    m_scalingMode = newMode;
+    qDebug() << "UI: Scaling Mode changed to" << newMode;
 
-    QDir shotDir(absoluteShotPath);
-    if (!shotDir.exists())
-        shotDir.mkpath(".");
+    saveSettings();
 
-    QString baseName = m_currentRomName;
-    if (baseName.isEmpty())
-        baseName = "screen";
+    if (m_screenWidget) {
+        m_screenWidget->setScalingMode(static_cast<ScreenWidget::ScalingMode>(newMode));
+    }
+}
 
-    QFileInfo fi(baseName);
-    baseName = fi.completeBaseName();
+void MainWindow::onSaveScreenshot()
+{
+    QDir dir(m_screenshotsPath);
+    if (!dir.exists()) {
+        dir.mkpath(".");
+    }
 
-    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
-
-    QString defaultFile = shotDir.filePath(baseName + "_" + timestamp + ".png");
-
-    const QString filePath = CustomFileDialog::getSaveFileName(
-        this,
-        tr("Save Screenshot"),
-        defaultFile,
-        tr("PNG Image (*.png);;All Files (*.*)")
-        );
-
-    if (filePath.isEmpty())
-        return;
-
-    QString finalPath = filePath;
-    if (!finalPath.endsWith(".png", Qt::CaseInsensitive))
-        finalPath += ".png";
-
-    if (!pix.save(finalPath, "PNG")) {
-        qWarning() << "Failed to save screenshot to" << finalPath;
+    QString romBaseName = m_currentRomName;
+    if (romBaseName.isEmpty() || romBaseName == "No cart") {
+        romBaseName = "screenshot";
     } else {
-        qDebug() << "Screenshot saved to" << finalPath;
+        QFileInfo fi(romBaseName);
+        romBaseName = fi.completeBaseName();
+    }
+
+    QString absoluteScreenshotPath =
+        QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_screenshotsPath);
+
+    QString fileName = CustomFileDialog::getSaveFileName(this,
+                                                         tr("Save Screenshot"),
+                                                         absoluteScreenshotPath,
+                                                         tr("PNG Images (*.png);;All Files (*)"),
+                                                         nullptr,
+                                                         CustomFileDialog::PathScreenshot,
+                                                         QFileDialog::Options(),
+                                                         romBaseName
+                                                         );
+
+    if (fileName.isEmpty()) {
+        return;
+    }
+
+    QString finalPath = fileName;
+    if (!finalPath.endsWith(".png", Qt::CaseInsensitive)) {
+        finalPath += ".png";
+    }
+
+    QFileInfo fileInfo(finalPath);
+    CustomFileDialog::s_lastSaveDir = fileInfo.absolutePath();
+
+    if (m_screenWidget) {
+        QImage screenshot = m_screenWidget->grab().toImage();
+
+        if (screenshot.save(finalPath)) {
+            qDebug() << "Screenshot saved to:" << finalPath;
+        } else {
+            QMessageBox::warning(this, tr("Error"), tr("Failed to save screenshot to %1.").arg(finalPath));
+        }
     }
 }
 
@@ -1209,17 +1342,13 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
     }
 
     updateMediaMenuState();
-
-    if (m_romLabel) m_romLabel->setVisible(!isAdam);
-    if (m_sepLabel4) m_sepLabel4->setVisible(!isAdam);
-
 }
 
 void MainWindow::showAboutDialog()
 {
     QDialog aboutDialog(this);
     aboutDialog.setWindowTitle("About ADAM+");
-    aboutDialog.setFixedSize(420, 560);
+    aboutDialog.setFixedSize(620, 560);
 
     QVBoxLayout *layout = new QVBoxLayout(&aboutDialog);
     layout->setAlignment(Qt::AlignCenter);
@@ -1239,18 +1368,21 @@ void MainWindow::showAboutDialog()
                            "©2025 DannyVdH<br>"
                            "<a href='https://github.com/dvdh1961/ADAMP'>VDH Productions</a><br><br>"
                            "This software is free to use for personal, educational, and non-profit purposes<br>"
-                           "under the PolyForm Noncommercial License 1.0.0.<br>"
-                           "Please see the attached <i>readme.md</i> file that should be included with this distribution.<br><br>"
+                           "Some software components are subject to licensing agreements held by the rightful owners<br>"
+                           "The ADAM+ emulator is built using the latest available techniques and technologies<br>"
+                           "obtainable in 2025. Leveraging deep expertise and the assistance of advanced<br>"
+                           "Language Models (LLMs), we can achieve the full potential of our programming<br>"
+                           "skills with exceptional speed and accuracy.<br><br>"
                            "The goal is to go even deeper into my ADAM+ hardware project<br>"
-                           " — this emulator — <br>"
+                           " — this ADAM+ emulator — <br>"
                            "will go much further in integrating specific hardware components.<br><br>"
-                           "Credits goes to.<br>"
+                           "Credits goes to all the brilliant coders worldwide!<br>"
                            "A lot of interfacing and parts of code based on the EmulTwo project.<br>"
                            "Parts of ADAM emulation code from Marat Fayzullin’s ColEm project.<br>"
                            "Wavemotion-dave, for improving compatibility issues.<br>"
                            "Parts of EightyOne created by Michael D Wynne.<br>"
                            "Z80 core taken from Juergen Buchmueller.<br>"
-                           "AY8910 code from Z81 ©1995–2001 Russell Marks.<br>"
+                           "AY8910 code from Z81 ©1995–2001 Russell Marks.<br><br>"
                            "And all the ones that were involved and that I forgot to mention.<br><br>"
                            ).arg(appVersion));
 
@@ -1286,31 +1418,19 @@ void MainWindow::showAboutDialog()
     aboutDialog.exec();
 }
 
-void MainWindow::onShowNameTable(bool checked)
+void MainWindow::onShowNameTable()
 {
-    if (checked) {
         m_ntableWindow->show();
-    } else {
-        m_ntableWindow->hide();
-    }
 }
 
-void MainWindow::onShowPatternTable(bool checked)
+void MainWindow::onShowPatternTable()
 {
-    if (checked) {
         m_patternWindow->show();
-    } else {
-        m_patternWindow->hide();
-    }
 }
 
-void MainWindow::onShowSpriteTable(bool checked)
+void MainWindow::onShowSpriteTable()
 {
-    if (checked) {
         m_spriteWindow->show();
-    } else {
-        m_spriteWindow->hide();
-    }
 }
 
 void MainWindow::onOpenCartInfo()
@@ -1334,6 +1454,24 @@ void MainWindow::onToggleVideoStandard()
     QMetaObject::invokeMethod(m_colecoController, "setVideoStandard",
                               Qt::QueuedConnection,
                               Q_ARG(bool, isNTSC));
+}
+
+void MainWindow::onScanlinesModeChanged(QAction* action)
+{
+    ScanlinesMode newMode = static_cast<ScanlinesMode>(action->data().toInt());
+
+    if (m_scanlinesMode == newMode) {
+        return;
+    }
+
+    m_scanlinesMode = newMode;
+    qDebug() << "UI: Scanlines Mode changed to" << newMode;
+
+    saveSettings();
+
+    if (m_screenWidget) {
+        m_screenWidget->setScanlinesMode(newMode);
+    }
 }
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *event)
@@ -1452,30 +1590,49 @@ void MainWindow::setupEmulatorThread()
 
 }
 
+// mainwindow.cpp
+
 void MainWindow::onOpenRom()
 {
+    // 1. Bepaal het absolute pad op basis van de opgeslagen m_romPath (onze root/default).
     QString absoluteRomPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_romPath);
 
+    // 2. Open de custom dialoog om een bestand te kiezen.
+    // De CustomFileDialog gebruikt het absoluteRomPath als de initiële map,
+    // maar zal deze negeren als er een tijdelijk opgeslagen pad in s_lastOpenDir is.
     const QString filePath = CustomFileDialog::getOpenFileName(
         this,
         tr("Open ColecoVision ROM"),
-        absoluteRomPath, // Start in de laatst gebruikte map
-        tr("ROM files (*.rom *.col *.bin);;All files (*.*)")
+        absoluteRomPath, // Start in de laatst gebruikte map (of de default root)
+        tr("ROM files (*.rom *.col *.bin);;All files (*.*)"),
+        nullptr,
+        CustomFileDialog::PathRom,
+        QFileDialog::Options()
+        // Let op: De 8e parameter (romBaseName) is hier niet van toepassing.
         );
 
+    // Als de gebruiker op annuleren klikt, stoppen we.
     if (filePath.isEmpty()) return;
 
     QFileInfo fileInfo(filePath);
     QDir appDir(QCoreApplication::applicationDirPath());
-    m_romPath = appDir.relativeFilePath(fileInfo.absolutePath());
 
-    qDebug() << "UI: Asked to load ROM:" << filePath;
-    qDebug() << "New relatieve ROM path saved:" << m_romPath;
+    // 3. Update TIJDELIJKE OPSLAG voor de dialoog in de HUIDIGE SESSIE.
+    // Dit zorgt ervoor dat de dialoog de volgende keer direct naar deze map springt.
+    // Dit heeft GEEN effect op de permanente settings.ini.
+    CustomFileDialog::s_lastOpenDir = fileInfo.absolutePath();
 
+    // 4. Update permanente instelling ALLEEN indien gewenst (Hier laten we de instelling MET RUST).
+    // Als u wilt dat de m_romPath permanent de nieuwe map onthoudt (wat NIET de eis was),
+    // zou u de volgende twee regels moeten toevoegen:
+    // m_romPath = appDir.relativeFilePath(fileInfo.absolutePath());
+    // saveSettings();
+
+    // 5. Update UI en emulator
     m_currentRomName = fileInfo.fileName();
 
     QFontMetrics metrics(m_romLabel->font());
-    QString elidedText = metrics.elidedText(m_currentRomName, Qt::ElideRight, m_romLabel->width()); // width() is nu de 450px
+    QString elidedText = metrics.elidedText(m_currentRomName, Qt::ElideRight, m_romLabel->width());
     m_romLabel->setText(elidedText);
 
     if (m_currentRomName.contains("ddp", Qt::CaseInsensitive) ||
@@ -1484,12 +1641,59 @@ void MainWindow::onOpenRom()
     else
         m_sysLabel->setText("COLECO");
 
+    // Reset de machine en laad de ROM
     QMetaObject::invokeMethod(m_colecoController, "resethMachine",
                               Qt::QueuedConnection);
 
     QMetaObject::invokeMethod(m_colecoController, "loadRom",
                               Qt::QueuedConnection,
                               Q_ARG(QString, filePath));
+}
+
+void MainWindow::onOpenAdamRom()
+{
+    if (m_machineType != 1) return;
+
+    QString absoluteRomPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_romPath);
+
+    const QString filePath = CustomFileDialog::getOpenFileName(
+        this,
+        tr("Open ADAM Cartridge ROM"),
+        absoluteRomPath,
+        tr("ADAM ROM files (*.rom *.bin);;All files (*.*)"),
+        nullptr,
+        CustomFileDialog::PathRom,
+        QFileDialog::Options()
+        );
+
+    if (filePath.isEmpty()) return;
+
+    QFileInfo fileInfo(filePath);
+
+    CustomFileDialog::s_lastOpenDir = fileInfo.absolutePath();
+
+    m_currentARomName = fileInfo.fileName();
+
+    QMetaObject::invokeMethod(m_colecoController, "AdamCartridge",
+                              Qt::QueuedConnection,
+                              Q_ARG(QString, filePath));
+
+    m_isAdamRomLoaded = true;
+    updateMediaMenuState();
+    updateMediaStatusLabels();
+}
+
+void MainWindow::onEjectAdamRom()
+{
+    if (!m_isAdamRomLoaded) return;
+
+    QMetaObject::invokeMethod(m_colecoController, "ejectAdamCartridge",
+                              Qt::QueuedConnection);
+
+    m_isAdamRomLoaded = false;
+    m_currentARomName.clear();
+    updateMediaMenuState();
+    updateMediaStatusLabels();
 }
 
 void MainWindow::onSgmStatusChanged(bool enabled)
@@ -1670,6 +1874,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
     saveSettings();
 
+    CustomFileDialog::resetLastVisitedPaths();
+
     if (m_emulatorThread && m_emulatorThread->isRunning()) {
         qDebug() << "Stop Thread nicely";
 
@@ -1833,6 +2039,17 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
         return;
     }
 
+    if (m_machineType == MACHINEADAM && !m_adamInputModeJoystick)
+    {
+        // 1. Stuur de release naar de InputWidget/Keypad mapper
+        // Dit is de fix om de 'vaststaande knop' in Keypad Mode op te lossen.
+        bool handled_by_keypad = m_inputWidget->handleKey(event, false);
+        if (handled_by_keypad) {
+            event->accept();
+            return;
+        }
+    }
+
     if ((m_machineType != 1) || m_adamInputModeJoystick) {
         bool handled = false;
         if (m_inputWidget) handled = m_inputWidget->handleKey(event, false);
@@ -1887,8 +2104,6 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
     event->accept();
 }
 
-// --- NIEUWE SLOTS VOOR MEDIA ---
-
 void MainWindow::onLoadDisk(int drive)
 {
     if (m_machineType != 1) return;
@@ -1896,24 +2111,25 @@ void MainWindow::onLoadDisk(int drive)
     QString absoluteDiskPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_diskPath);
 
     const QString filePath = CustomFileDialog::getOpenFileName(
-    //const QString filePath = QFileDialog::getOpenFileName(
         this,
         tr("Open ADAM Disk Image"),
-        absoluteDiskPath, // Start in de Disk-map
-        tr("ADAM Disk (*.dsk *.img);;All Files (*.*)")
+        absoluteDiskPath,
+        tr("ADAM Disk (*.dsk *.img);;All Files (*.*)"),
+        nullptr,
+        CustomFileDialog::PathDisk, // Gebruik PathDisk type
+        QFileDialog::Options()
         );
 
     if (filePath.isEmpty()) return;
 
-    // Update m_diskPath naar de map van het zojuist geopende bestand
     QFileInfo fileInfo(filePath);
     QDir appDir(QCoreApplication::applicationDirPath());
-    m_diskPath = appDir.relativeFilePath(fileInfo.absolutePath());
 
-    // Stuur naar controller-thread
+    CustomFileDialog::s_lastOpenDir = fileInfo.absolutePath();
+
     QMetaObject::invokeMethod(m_colecoController, "loadDisk",
                               Qt::QueuedConnection,
-                              Q_ARG(int, drive), // Drive 0
+                              Q_ARG(int, drive),
                               Q_ARG(QString, filePath));
 }
 
@@ -1924,30 +2140,30 @@ void MainWindow::onLoadTape(int drive)
     QString absoluteTapePath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_tapePath);
 
     const QString filePath = CustomFileDialog::getOpenFileName(
-    //const QString filePath = QFileDialog::getOpenFileName(
         this,
         tr("Open ADAM Tape Image"),
-        absoluteTapePath, // Start in de Tape-map
-        tr("ADAM Tape (*.ddp);;All Files (*.*)")
+        absoluteTapePath,
+        tr("ADAM Tape (*.ddp);;All Files (*.*)"),
+        nullptr,
+        CustomFileDialog::PathTape, // Gebruik PathTape type
+        QFileDialog::Options()
         );
 
     if (filePath.isEmpty()) return;
 
-    // Update m_tapePath naar de map van het zojuist geopende bestand
     QFileInfo fileInfo(filePath);
     QDir appDir(QCoreApplication::applicationDirPath());
-    m_tapePath = appDir.relativeFilePath(fileInfo.absolutePath());
+
+    CustomFileDialog::s_lastOpenDir = fileInfo.absolutePath();
 
     QMetaObject::invokeMethod(m_colecoController, "loadTape",
                               Qt::QueuedConnection,
-                              Q_ARG(int, drive), // Drive 0
+                              Q_ARG(int, drive),
                               Q_ARG(QString, filePath));
 }
 
 void MainWindow::onEjectDisk(int drive)
 {
-    // Ejecten mag altijd (ook als de knop verborgen is)
-    // om de save-logica te triggeren
     qDebug() << "UI: Eject/Save Disk " << drive + 5;
     QMetaObject::invokeMethod(m_colecoController, "ejectDisk",
                               Qt::QueuedConnection,
@@ -1964,12 +2180,10 @@ void MainWindow::onEjectTape(int drive)
 
 void MainWindow::onDiskStatusChanged(int drive, const QString& fileName)
 {
-    // Haal een standaard vinkje-icoon op uit de huidige stijl
     QIcon checkIcon = style()->standardIcon(QStyle::SP_DialogApplyButton);
 
     if (drive == 0) {
         m_isDiskLoadedA = !fileName.isEmpty();
-        // Zet icoon als geladen, anders leeg icoon
         if (m_diskMenuA) m_diskMenuA->setIcon(m_isDiskLoadedA ? checkIcon : QIcon());
 
         if (m_diskLabelA) {
@@ -2108,6 +2322,8 @@ void MainWindow::updateMediaMenuState()
     const bool isAdam = (m_machineType == 1);
 
     if (!isAdam) {
+        if (m_adamRomMenu) m_adamRomMenu->setEnabled(false);
+
         if (m_tapeMenuA) m_tapeMenuA->setEnabled(false);
         if (m_tapeMenuB) m_tapeMenuB->setEnabled(false);
         if (m_tapeMenuC) m_tapeMenuC->setEnabled(false);
@@ -2139,6 +2355,9 @@ void MainWindow::updateMediaMenuState()
     // Tape ↔ Disk exclusie
     const bool canUseTape = true;//!m_isDiskLoadedA && !m_isDiskLoadedB && !m_isDiskLoadedC && !m_isDiskLoadedD;
     const bool canUseDisk = true;//!m_isTapeLoadedA && !m_isTapeLoadedB && !m_isTapeLoadedC && !m_isTapeLoadedD;
+
+    // Rom
+    if (m_adamRomMenu) m_adamRomMenu->setEnabled(true);
 
     // Tape
     if (m_tapeMenuA) m_tapeMenuA->setEnabled(canUseTape);
@@ -2260,18 +2479,15 @@ void MainWindow::updateFullScreenWallpaper()
 
     QPixmap newWallpaper(wallpaperPath);
 
-    // Fallback if picture cannot be loaded
     if (newWallpaper.isNull()) {
         qWarning() << "Kan wallpaper niet laden:" << wallpaperPath;
         m_wallpaperLabel->clear();
         m_wallpaperLabel->setStyleSheet("background-color: black;");
     } else {
-        m_wallpaperLabel->setStyleSheet(""); // remove previous style
+        m_wallpaperLabel->setStyleSheet("");
         m_wallpaperLabel->setPixmap(newWallpaper);
     }
 }
-
-// In mainwindow.cpp
 
 void MainWindow::onSaveState()
 {
@@ -2283,7 +2499,7 @@ void MainWindow::onSaveState()
         statesDir.mkpath(".");
 
     QString baseName = m_currentRomName;
-    if (baseName.isEmpty())
+    if (baseName.isEmpty() || baseName == "No cart")
         baseName = "state";
 
     QFileInfo fi(baseName);
@@ -2294,8 +2510,11 @@ void MainWindow::onSaveState()
     const QString filePath = CustomFileDialog::getSaveFileName(
         this,
         tr("Save State"),
-        defaultFile, // <-- Dit is nu een correct, absoluut pad
-        tr("State files (*.sta);;All Files (*.*)")
+        defaultFile,
+        tr("State files (*.sta);;All Files (*.*)"),
+        nullptr,
+        CustomFileDialog::PathState,
+        QFileDialog::Options()
         );
 
     if (filePath.isEmpty())
@@ -2305,10 +2524,8 @@ void MainWindow::onSaveState()
     if (!finalPath.endsWith(".sta", Qt::CaseInsensitive))
         finalPath += ".sta";
 
-    QFileInfo outInfo(finalPath);
-    QDir appDir(QCoreApplication::applicationDirPath());
-    m_statePath = appDir.relativeFilePath(outInfo.absolutePath());
-    saveSettings();   // nu wordt je nieuwe state map ook echt bewaard
+    QFileInfo fileInfo(finalPath);
+    CustomFileDialog::s_lastSaveDir = fileInfo.absolutePath(); // Gebruik s_lastSaveDir voor Save dialogen!
 
     QMetaObject::invokeMethod(
         m_colecoController,
@@ -2317,7 +2534,6 @@ void MainWindow::onSaveState()
         Q_ARG(QString, finalPath)
         );
 }
-
 
 void MainWindow::onLoadState()
 {
@@ -2332,11 +2548,17 @@ void MainWindow::onLoadState()
         this,
         tr("Load State"),
         statesDir.absolutePath(),
-        tr("State files (*.sta);;All Files (*.*)")
+        tr("State files (*.sta);;All Files (*.*)"),
+        nullptr,
+        CustomFileDialog::PathState,
+        QFileDialog::Options()
         );
 
     if (filePath.isEmpty())
         return;
+
+    QFileInfo fileInfo(filePath);
+    CustomFileDialog::s_lastOpenDir = fileInfo.absolutePath();
 
     QFileInfo inInfo(filePath);
     QDir appDir(QCoreApplication::applicationDirPath());
@@ -2366,6 +2588,144 @@ void MainWindow::onOpenJoypadMapper()
 {
     JoypadWindow dlg(this);
     if (dlg.exec() == QDialog::Accepted) {
-        if (m_inputWidget) m_inputWidget->reloadMappings(); // ⟵ hier updaten
+        if (m_inputWidget) m_inputWidget->reloadMappings();
     }
+}
+
+void MainWindow::onJoystickTypeChanged(QAction* action)
+{
+    int newType = action->data().toInt();
+
+    if (m_joystickType == newType) {
+        return;
+    }
+
+    m_joystickType = newType;
+
+    saveSettings();
+
+    if (m_joystick) {
+        // 1. Zeg SimpleJoystick welk type het is (dit sluit de driver)
+        m_joystick->setJoystickType(m_joystickType);
+
+        // 2. HERSTART de polling om de driver opnieuw te openen en de timer te starten.
+        // We moeten de polling eerst stoppen om een schone start te garanderen.
+        m_joystick->stopPolling();
+        m_joystick->startPolling(0);
+    }
+}
+
+void MainWindow::onSaveBreakpoint()
+{
+    if (!m_debugWin) return;
+
+    const QList<DebuggerBreakpoint> breakpointsToSave = m_debugWin->getBreakpointDefinitions();
+    if (breakpointsToSave.isEmpty()) {
+        QMessageBox::information(this, tr("Info"), tr("No breakpoints to save."));
+        return;
+    }
+
+    QString absoluteBreakpointPath =
+        QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_breakpointPath);
+
+    QDir breakpointsDir(absoluteBreakpointPath);
+    if (!breakpointsDir.exists())
+        breakpointsDir.mkpath(".");
+
+    QString baseName = "my_breakpoints.txt";
+
+    const QString filePath = CustomFileDialog::getSaveFileName(
+        this,
+        tr("Save Breakpoints"),
+        breakpointsDir.absolutePath(),
+        tr("Breakpoint Files (*.txt);;All Files (*.*)"),
+        nullptr,
+        CustomFileDialog::PathState,
+        QFileDialog::Options()
+        );
+
+    if (filePath.isEmpty()) return;
+
+    QString finalPath = filePath;
+    if (!finalPath.endsWith(".txt", Qt::CaseInsensitive))
+        finalPath += ".txt";
+
+    QFileInfo fileInfo(finalPath);
+    CustomFileDialog::s_lastSaveDir = fileInfo.absolutePath();
+
+    QFile file(finalPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Error"), tr("Could not open file for writing:\n%1").arg(file.errorString()));
+        return;
+    }
+
+    QTextStream out(&file);
+    out << "# ADAM+ Breakpoint File\n";
+    out << "# Format: [E/D] <Definition>\n\n";
+
+    for (const DebuggerBreakpoint& bp : breakpointsToSave) {
+        out << (bp.enabled ? "E " : "D ") << bp.definition << "\n";
+    }
+
+    file.close();
+    QMessageBox::information(this, tr("Success"), tr("Breakpoints saved."));
+}
+
+void MainWindow::onLoadBreakpoint()
+{
+    if (!m_debugWin) return;
+
+    QString absoluteBreakpointPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_breakpointPath);
+
+    QDir breakpointsDir(absoluteBreakpointPath);
+    if (!breakpointsDir.exists())
+        breakpointsDir.mkpath(".");
+
+    const QString filePath = CustomFileDialog::getOpenFileName(
+        this,
+        tr("Load Breakpoints"),
+        breakpointsDir.absolutePath(),
+        tr("Breakpoint Files (*.txt);;All Files (*.*)"),
+        nullptr,
+        CustomFileDialog::PathState,
+        QFileDialog::Options()
+        );
+
+    if (filePath.isEmpty()) return;
+
+    QFileInfo fileInfo(filePath);
+    CustomFileDialog::s_lastOpenDir = fileInfo.absolutePath();
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Error"), tr("Could not open file for reading:\n%1").arg(file.errorString()));
+        return;
+    }
+
+    QTextStream in(&file);
+    QList<DebuggerBreakpoint> loadedBreakpoints;
+
+    while (!in.atEnd()) {
+        QString line = in.readLine().trimmed();
+        if (line.isEmpty() || line.startsWith('#')) continue;
+
+        bool enabled = true;
+        QString definition = line;
+
+        if (line.startsWith("D ")) {
+            enabled = false;
+            definition = line.mid(2).trimmed();
+        } else if (line.startsWith("E ")) {
+            enabled = true;
+            definition = line.mid(2).trimmed();
+        }
+
+        if (!definition.isEmpty()) {
+            loadedBreakpoints.append({definition, enabled});
+        }
+    }
+
+    file.close();
+
+    m_debugWin->setBreakpointDefinitions(loadedBreakpoints);
 }

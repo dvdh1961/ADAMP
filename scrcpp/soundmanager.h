@@ -18,25 +18,11 @@
 #include <QMutex>
 
 static const int kSampleRate  = 44100;
-static const int kChunkFrames = 735;   // 44100 / 60
-static const int kBytesPerFrame = 4;   // stereo 16-bit
+static const int kChunkFrames = 735;
+static const int kBytesPerFrame = 4;
 
-// Forward declare jouw controller
 class ColecoController;
 
-/**
- * SoundManager
- *
- * Qt-versie van de EmulTwo audio backend:
- * - initialise(hwnd, fpsHint): DirectSound device + buffers klaarzetten
- * - suspend()/resume(): tijdelijk stilzetten zonder stoppen
- * - end(): netjes opruimen
- *
- * Er draait een QTimer (m_fillTimer) in de GUI-thread.
- * Elke tik vraagt hij verse audio van de emulatorthread
- * via mixAudioInternal() en schrijft dat in de DirectSound
- * secondary buffer.
- */
 class SoundManager : public QObject, public IAudioSink
 {
     Q_OBJECT
@@ -44,8 +30,6 @@ public:
     explicit SoundManager(QObject *parent = nullptr);
     ~SoundManager();
 
-    // hwnd = (HWND)MainWindow::winId()
-    // fpsHint = 60 (NTSC) of 50 (PAL). Gebruik voorlopig 60.
 #if defined(Q_OS_WIN)
     bool initialise(HWND hwnd, int fpsHint);
     bool reInitialise(HWND hwnd, int fpsHint);
@@ -60,12 +44,10 @@ public:
 
     void end();
 
-    // MainWindow moet de controller doorgeven zodat we audio kunnen vragen.
     void attachController(ColecoController *ctrl);
     void pushAudioFromEmu(const int16_t* srcStereo, int framesStereo);
 
 private:
-    // Interne helpers
 #if defined(Q_OS_WIN)
     bool initDirectSound(HWND hwnd, int fpsHint);
     void releaseDirectSound();
@@ -86,21 +68,17 @@ private:
 #endif
 
 private:
-    // Emu controller (zit in QThread). Wordt gebruikt via invokeMethod(BlockingQueuedConnection)
     QPointer<ColecoController> m_controller;
 
 #if defined(Q_OS_WIN)
-    // DirectSound
     LPDIRECTSOUND8       m_ds            = nullptr;
     LPDIRECTSOUNDBUFFER  m_primaryBuffer = nullptr;
     LPDIRECTSOUNDBUFFER  m_secondaryBuf  = nullptr;
-    // audioformat
     DWORD   m_sampleRate     = 44100; // Hz
     WORD    m_channels       = 2;     // stereo
     WORD    m_bitsPerSample  = 16;    // signed 16-bit
     DWORD   m_bytesPerFrame  = 4;     // stereo16 = 4 bytes per frame
 
-    // ringbuffer in DirectSound
     DWORD   m_bufferBytes    = 0;     // totale lengte van de secondary buffer
     DWORD   m_lastWritePos   = 0;     // waar we laatst geschreven hebben
 #endif
@@ -108,31 +86,26 @@ private:
     // ALSA variables
     snd_pcm_t *m_pcmHandle = nullptr;
     snd_pcm_hw_params_t *m_params = nullptr;
-    // audioformat
     unsigned int m_sampleRate     = 44100; // Hz
     unsigned int m_channels       = 2;     // stereo
     unsigned int m_bitsPerSample  = 16;    // signed 16-bit
     unsigned int m_bytesPerFrame  = 4;     // stereo16 = 4 bytes per frame
 
-    // ringbuffer in AlsaSound
     unsigned int m_bufferBytes    = 0;     // totale lengte van de secondary buffer
     unsigned int m_lastWritePos   = 0;     // waar we laatst geschreven hebben
 #endif
 
 
     bool    m_inited         = false;
-    bool    m_suspended      = false; // pauze / mute
-    bool    m_running        = false; // timer actief?
+    bool    m_suspended      = false;
+    bool    m_running        = false;
 
-    // Grootte van één "chunk" die we per timer-tick schrijven.
-    // 512 stereo frames = 512 * 4 = 2048 bytes per keer → prima.
     static const int kChunkFrames = 735;
-    int16_t m_mixBufferInterleaved[kChunkFrames * 2]; // L,R,L,R,...
+    int16_t m_mixBufferInterleaved[kChunkFrames * 2];
 
-    // laatst opgehaalde stereo mix uit de emu-thread
     int16_t m_lastAudioChunk[kChunkFrames * 2];
     bool    m_lastAudioValid = false;
     QMutex  m_audioMutex;
 };
 
-#endif // SOUNDMANAGER_H
+#endif

@@ -33,10 +33,9 @@ private:
     QTableWidget *m_table = nullptr;
     QFont         m_monoFont;
 
-    // Kleuren voor zebra-effect (zoals in PrintWindow)
     QColor   m_rowLight = QColor(0x1D,0X1D,0X1D);
     QColor   m_rowDark  = QColor(0X2D,0X2D,0X2D);
-    QColor   m_textColor = QColor(0XA5,0XA3,0XAE); // <-- Dit is de kleur die nu gebruikt zal worden.
+    QColor   m_textColor = QColor(0XA5,0XA3,0XAE);
 };
 
-#endif // LOGWIDGET_H
+#endif

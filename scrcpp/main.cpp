@@ -9,10 +9,8 @@ int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
 
-    // --- Activeer Fusion stijl ---
     QApplication::setStyle(QStyleFactory::create("Fusion"));
 
-    // --- Donker thema ---
     QPalette darkPalette;
     darkPalette.setColor(QPalette::Window, QColor(45, 45, 45));
     darkPalette.setColor(QPalette::WindowText, Qt::white);
@@ -28,11 +26,8 @@ int main(int argc, char *argv[])
     darkPalette.setColor(QPalette::HighlightedText, Qt::black);
     a.setPalette(darkPalette);
 
-    // --- Optioneel: donkere tooltip achtergrond ---
     a.setStyleSheet("QToolTip { color: #ffffff; background-color: #2a2a2a; border: 1px solid #767676; }");
 
-
-    // Donkere menubalk + menu’s met duidelijke hover/pressed kleuren
     qApp->setStyleSheet(R"(
         /* Menubalk */
         QMenuBar {
@@ -87,7 +82,6 @@ int main(int argc, char *argv[])
         }
     )");
 
-    // --- Logging vroeg installeren ---
     LogWidget::installQtHandler();
 
     MainWindow w;

@@ -3,7 +3,6 @@
 
 #include <QDialog>
 
-// Forward declarations
 class QLineEdit;
 class QPushButton;
 class QDialogButtonBox;
@@ -15,26 +14,27 @@ class SettingsWindow : public QDialog
 public:
     explicit SettingsWindow(QWidget *parent = nullptr);
 
-    // Functies om de data in en uit het dialoogvenster te krijgen
     void setRomPath(const QString &path);
     void setDiskPath(const QString &path);
     void setTapePath(const QString &path);
     void setStatePath(const QString &path);
-    void setBreakpointPath(const QString &path); // <-- NIEUW
+    void setBreakpointPath(const QString &path);
+    void setScreenshotPath(const QString &path);
 
     QString romPath() const;
     QString diskPath() const;
     QString tapePath() const;
     QString statePath() const;
-    QString breakpointPath() const; // <-- NIEUW
+    QString breakpointPath() const;
+    QString screenshotPath() const;
 
 private slots:
-    // Slot voor de "Browse..." knop
     void onBrowseRomPath();
     void onBrowseDiskPath();
     void onBrowseTapePath();
     void onBrowseStatePath();
-    void onBrowseBreakpointPath(); // <-- NIEUW
+    void onBrowseBreakpointPath();
+    void onBrowseScreenshotPath();
 
 private:
     void setupUI();
@@ -47,12 +47,14 @@ private:
     QPushButton *m_tapePathBtn;
     QLineEdit *m_statePathEdit;
     QPushButton *m_statePathBtn;
-    QLineEdit *m_breakpointPathEdit; // <-- NIEUW
-    QPushButton *m_breakpointPathBtn;  // <-- NIEUW
+    QLineEdit *m_breakpointPathEdit;
+    QPushButton *m_breakpointPathBtn;
+    QLineEdit *m_screenshotPathEdit;
+    QPushButton *m_screenshotPathBtn;
 
     QDialogButtonBox *m_buttonBox;
     QPushButton *m_okButton;
     QPushButton *m_cancelButton;
 };
 
-#endif // SETTINGSWINDOW_H
+#endif
