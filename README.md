@@ -66,7 +66,9 @@ Version 0.4.11.25 x86_64 Windows (Linux will be in a couple of days)
 - Added Adam rom card loading (still hard in development)
 - Joystick options
 - Folder options
-- Removed some bugs  
+- Removed some bugs
+
+---
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_C1.gif)
 
@@ -81,11 +83,15 @@ Version 0.3.11.25 x86_64 Windows & Linux
 - Changed installation path (windows --> no program files anymore)
 - Media map now standard configured into working directory (No save issues anymore)
 
+---
+
 Version 0.2.11.25
 - LINUX VERSION x86-64 added
 - Added 4 tapes / 4 disks support
 - Added printer clipboard and removed some bugs with PR#1
 - Updated logging
+
+---
 
 Version 0.1.10.25
 - 🎮 **ColecoVision** game support (`.rom`, `.bin`, `.col`)
@@ -101,6 +107,8 @@ Version 0.1.10.25
 - 🖥️ **Full screen option with buildin bezels 
 - ✒️ **LOAD & SAVE on your media!
 - 💾 **Save / Load Game State**
+
+---
 
 ## 💡Info
 - You need the free community QT6 Creator to build the project.
