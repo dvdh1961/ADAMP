@@ -2,6 +2,7 @@
 #include <string.h>
 #include <qglobal.h>
 #include <error.h>
+#include <errno.h>
 
 uint32_t g_video_frame[VB_WIDTH * VB_HEIGHT];
 volatile int g_video_dirty = 0;
