@@ -20,9 +20,9 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ## 💾 Downloads
 
-[![release](https://img.shields.io/badge/Latest%20release-windows64-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.4.11.25/WINDOWS_ADAMP_0.4.11.25.exe)
-[![release](https://img.shields.io/badge/Latest%20release-linux64-blue.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.3.11.25/LINUX_ADAMP_0.3.11.25.zip)
-![Current Release](https://img.shields.io/badge/Version-V0.4.11.25-yellow)
+[![release](https://img.shields.io/badge/Latest%20release-windows64-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.5.12.25/WINDOWS_ADAMP_0.5.12.25.exe)
+[![release](https://img.shields.io/badge/Latest%20release-linux64-blue.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.5.12.25/LINUX_ADAMP_0.5.12.25.zip)
+![Current Release](https://img.shields.io/badge/Version-V0.5.12.25-yellow)
 ![Downloads](https://img.shields.io/badge/dynamic/json?url=https://raw.githubusercontent.com/dvdh1961/ADAMP/main/stats/downloads.json&label=Downloads&query=display_total&color=yellow)
 [![YouTube](https://img.shields.io/badge/YouTube-FF0000?logo=youtube&logoColor=white)](https://youtu.be/vobLE2F9Cc0)
 
@@ -34,6 +34,28 @@ It serves as a central platform for integrating a wide range of hardware-related
 [![Donate](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://www.paypal.com/donate?business=dannyvdh@pandora.be)
 
 ## 🚀 Features
+
+Vesion 0.5.12.25 x86_64 Windows & Linux
+To approximate the behavior of the original Coleco Adam as closely as possible, 
+we have modified the method for handling ROMs, Tapes, and Disks using the buttons that
+are also present on the original hardware.
+
+The revised workflow is as follows:
+    Media Load & Run: Load the desired media (ROM, Tape, or Disk) and subsequently 
+    press the corresponding RESET button to initiate the media:
+
+    - Use the 'CARTRIDGE RESET' button to start ColecoVision ROMs.
+    - Use the 'COMPUTER RESET' button to start Adam-specific media (Tapes and Disks).
+
+    Full Media Unload: 
+    - To fully release or unload all currently mounted media (ROMs/Tapes/Disks), 
+      press the 'POWER' button.
+We have implemented a paddle function. If a joystick has been selected, the user can verify the functionality 
+of their analog stick using the small keypad widget. 
+To play a game requiring a paddle, the user must select the paddle mode in the menubar. 
+When activated, the left and right cursor keys are replaced by the left/right axis input from the analog stick.      
+
+
 
 Version 0.4.11.25 x86_64 Windows (Linux will be in a couple of days)
 - Some software components are subject to licensing agreements held by the rightful owners
