@@ -19,7 +19,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ---
 
-![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_HARDWARE1.png)
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_HARDWARE.png)
 
 ---
 
