@@ -7,7 +7,10 @@
 #include <QMoveEvent>
 #include <QSettings>
 #include <QMap>
+#include <QProgressDialog>
+
 #include "simplejoystick.h"
+#include "hardwarewindow.h"
 
 class ColecoController;
 class ScreenWidget;
@@ -49,7 +52,7 @@ public:
 
 public slots:
     // menu / UI acties
-    void onOpenRom();
+    //void onOpenRom();
     void onReset();
     void onhReset();
     void onRunStop();
@@ -61,6 +64,9 @@ public slots:
     void onShowSpriteTable();
     void onShowPrinterWindow();
     void onToggleSnap(bool checked);
+    void onMachineTypeChanged(MachineType newType);
+    void onToggleResetAdamBlink();   // NIEUW: Voor de ADAM Reset-knop
+    void onToggleResetCartBlink();  // NIEUW: Voor de Cartridge Reset-knop
 
     // callbacks van emulator / thread
     void onThreadFinished();
@@ -88,6 +94,7 @@ public slots:
     void onLoadBreakpoint();
     void onResetWindowSize();
     void onOpenJoypadMapper();
+    void onReleaseAll();
 
 private slots:
     void onLoadDisk(int drive);
@@ -96,6 +103,8 @@ private slots:
     void onEjectTape(int drive);
     void onOpenAdamRom();
     void onEjectAdamRom();
+    void onOpenColecoRom();
+    void onEjectColecoRom();
     // --- MEDIA STATUS UPDATE SLOTS ---
     void onDiskStatusChanged(int drive, const QString& fileName);
     void onTapeStatusChanged(int drive, const QString& fileName);
@@ -106,6 +115,11 @@ private slots:
     void onToggleBezels(bool checked);
     void onScalingModeChanged(QAction* action);
     void onJoystickTypeChanged(QAction* action);
+    void onResetAdamBtnClicked();
+    void onResetCartBtnClicked();
+    void onCartridgeStatusChanged(const QString& colecoName, const QString& adamName);
+    void onPowerBtnClicked();
+    void onTogglePaddleMode(bool checked);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -130,6 +144,11 @@ private:
     void showAboutDialog();
     void applyHardwareConfig(const HardwareConfig& cfg);
     void updateFullScreenWallpaper();
+    bool m_isShuttingDown = false;
+    QProgressDialog *m_shutdownDialog = nullptr;
+    void switchToAdamMode();
+    void switchToColecoMode();
+    void updateHardwareWindowMediaDisplay();
 
 private:
     // emulator thread en controller
@@ -145,8 +164,19 @@ private:
     ScreenWidget *m_screenWidget = nullptr;
     InputWidget  *m_inputWidget  = nullptr;
     LogWidget    *m_logView      = nullptr;
-    QLabel       *m_logoLabel    = nullptr;
+
+    QWidget      *m_logoContainer = nullptr;  // Het transparante panel dat m_logoLabel vervangt
+    QLabel       *m_logoLabel0    = nullptr;  // adamp_logo0.png
+    QPushButton  *m_powerBtn      = nullptr;  // Power Reset knop
+    QLabel       *m_logoLabel1    = nullptr;  // adamp_logo1.png
+    QPushButton  *m_resetAdamBtn  = nullptr;  // Adam Reset knop
+    QPushButton  *m_resetCartBtn  = nullptr;  // Cartridge Reset knop
+    QLabel       *m_logoLabel2    = nullptr;  // adam_logo2.png
+
     KbWidget     *m_kbWidget     = nullptr;
+
+    QTimer *m_resetAdamBlinkTimer = nullptr;
+    QTimer *m_resetCartBlinkTimer = nullptr;
 
     // statusbar dingen
     QLabel *m_stdLabel  = nullptr;
@@ -161,7 +191,6 @@ private:
     QLabel *m_sepLabelSGM = nullptr;
     QLabel *m_sgmLabel    = nullptr;
     QString m_currentStd;
-    QString m_currentRomName;
     QString appVersion;
 
     // acties / menu
@@ -250,6 +279,8 @@ private:
     QAction *m_actJoystickPS      = nullptr;
     QAction *m_actJoystickXbox    = nullptr;
     int m_joystickType = 0; // 0=General, 1=PS, 2=Xbox (NIEUWE MEMBER)
+    QAction *m_actTogglePaddleMode = nullptr;
+    bool m_usePaddleMode = false;
 
     bool m_isDiskLoadedA;
     bool m_isDiskLoadedB;
@@ -271,6 +302,8 @@ private:
     QAction *m_actScalingSharp = nullptr;
     QAction *m_actScalingEPX = nullptr;
 
+    QString m_loadedTapeNames[4]; // D1 t/m D4
+    QString m_loadedDiskNames[4]; // D5 t/m D8
 
     int  m_scalingMode;
     bool m_startFullScreen;
@@ -292,6 +325,7 @@ private:
     // debugger venster
     DebuggerWindow *m_debugWin = nullptr;
     CartridgeInfoDialog *m_cartInfoDialog = nullptr;
+    HardwareWindow   *m_hardwareWindow = nullptr;
 
     bool m_isPaused = false;
     QString m_romPath;
@@ -302,10 +336,16 @@ private:
     QString m_screenshotsPath;
 
     QMenu *m_adamRomMenu = nullptr;
+    QMenu *m_colecoRomMenu = nullptr;
     QAction *m_openAdamRomAction = nullptr;
     QAction *m_ejectAdamRomAction = nullptr;
+    QAction *m_openColecoRomAction = nullptr;
+    QAction *m_ejectColecoRomAction = nullptr;
     bool m_isAdamRomLoaded = false;
+    bool m_isColecoRomLoaded = false;
     QString m_currentARomName;
+    QString m_currentRomName;
+    QAction *m_actReleaseAll = nullptr;
 
     int m_paletteIndex = 0;
     int m_machineType = 0; // 0=Coleco/Phoenix, 1=ADAM

@@ -196,7 +196,7 @@ void InputWidget::stepOverlay()
 QRect InputWidget::hudRect() const
 {
     const int w = int(220 * m_scale);
-    const int h = int(120 * m_scale);
+    const int h = int(150 * m_scale);
 
     const int M = m_margin;
     QRect r(0,0,w,h);
@@ -216,12 +216,20 @@ static QColor mixA(const QColor &c, int alpha) {
 
 void InputWidget::drawHud(QPainter &p, const QRect &r)
 {
-    const bool dirUp    = m_pad0.up;
-    const bool dirDown  = m_pad0.down;
-    const bool dirLeft  = m_pad0.left;
-    const bool dirRight = m_pad0.right;
-    const bool btnL     = m_pad0.fireL;
-    const bool btnR     = m_pad0.fireR;
+    // Aangenomen dat mixA(color, alpha) ergens gedefinieerd is
+    auto mixA = [](const QColor &c, int alpha) -> QColor {
+        QColor result = c;
+        result.setAlpha(alpha);
+        return result;
+    };
+
+    // --- Digitale Invoer Status ---
+    const bool dirUp     = m_pad0.up;
+    const bool dirDown   = m_pad0.down;
+    const bool dirLeft   = m_pad0.left;
+    const bool dirRight  = m_pad0.right;
+    const bool btnL      = m_pad0.fireL;
+    const bool btnR      = m_pad0.fireR;
 
     auto keyPressed = [&](int bit)->bool {
         return (m_pad0.keypad == bit);
@@ -237,8 +245,10 @@ void InputWidget::drawHud(QPainter &p, const QRect &r)
     const QRect left = r.adjusted(pad, pad, -r.width()/2 - pad/2, -pad);
     const QRect right= QRect(r.center().x()+pad/2, r.y()+pad, r.width()/2 - 2*pad, r.height()-2*pad);
 
-    const QPoint lc_text = left.center() + QPoint(0, int(1 * m_scale));
-    const QPoint lc_pad  = lc_text + QPoint(0, int(14 * m_scale));
+    //const QPoint lc_text = left.center() + QPoint(0, int(1 * m_scale));
+    const QPoint lc_text = left.center() + QPoint(0, int(1 * m_scale) - int(15 * m_scale));
+
+    const QPoint lc_pad  = lc_text + QPoint(0, int(14 * m_scale)); // Dit is het centrum van de D-pad
     const QSize  asz1(int(30*m_scale), int(30*m_scale));
 
     QFont font = p.font();
@@ -297,6 +307,7 @@ void InputWidget::drawHud(QPainter &p, const QRect &r)
 
     const QSize asz(int(20*m_scale), int(20*m_scale));
 
+    // D-PAD TEKENEN
     drawArrow(lc_pad + QPoint(0, -asz.height()-6*m_scale), asz, dirUp,    Qt::UpArrow);
     drawArrow(lc_pad + QPoint(0,  asz.height()+6*m_scale), asz, dirDown,  Qt::DownArrow);
     drawArrow(lc_pad + QPoint(-asz.width()-6*m_scale, 0),  asz, dirLeft,  Qt::LeftArrow);
@@ -307,9 +318,74 @@ void InputWidget::drawHud(QPainter &p, const QRect &r)
     p.drawEllipse(QRect(lc_pad - QPoint(int(8*m_scale),int(8*m_scale)),
                         QSize(int(16*m_scale),int(16*m_scale))));
 
-    const int rightH   = right.height();
+
+    // --- ANALOGE SPINNER VISUALISATIE (NIEUW) ---
+
+    // Bereken de verticale offset: D-pad centrum + uiterste punt van de Down arrow + marge
+    const int DPadBottomY = lc_pad.y() + asz.height() + 9*m_scale;
+    const int analogGap   = int(15 * m_scale);
+    int barY = DPadBottomY + analogGap;
+
+    int barHeight = int(15 * m_scale);
+    int barWidth  = left.width() * 0.9; // Neem 90% van de linker helft
+
+    // Midden van de balk
+    QPoint analogCenter(left.center().x(), barY + barHeight / 2);
+
+    // Maximale ruwe analoge waarde is 32767
+    const int MAX_VAL = 32767;
+
+    // 1. Achtergrondbalk (Neutrale zone)
+    p.setPen(QPen(mixA(Qt::white, 100), 1));
+    p.setBrush(QColor(40, 40, 40, 150));
+    QRect barRect(analogCenter.x() - barWidth / 2, barY, barWidth, barHeight);
+    p.drawRoundedRect(barRect, 0, 0);
+
+    // 2. De Indicator (Verplaatsing)
+    if (m_analogXValue != 0)
+    {
+        qreal ratio = (qreal)m_analogXValue / MAX_VAL;
+        int indicatorWidth = qAbs(ratio) * (barWidth / 2);
+
+        QColor color = (m_analogXValue < 0) ? QColor(50, 255, 50, 200) : QColor(50, 255, 50, 200);
+        p.setPen(Qt::NoPen);
+        p.setBrush(color);
+
+        QRect indicatorRect;
+        if (m_analogXValue > 0) {
+            // Naar links
+            indicatorRect.setRect(analogCenter.x() - indicatorWidth, barY, indicatorWidth, barHeight);
+        } else if (m_analogXValue < 0){
+            // Naar rechts
+            indicatorRect.setRect(analogCenter.x(), barY, indicatorWidth, barHeight);
+        }
+
+        p.drawRect(indicatorRect);
+    }
+
+    // 3. Middenlijn (Nul-punt)
+    p.setPen(QPen(mixA(Qt::white, 255), 1));
+    p.drawLine(analogCenter.x(), barY, analogCenter.x(), barY + barHeight);
+
+    int scaledValue = qRound((qreal)m_analogXValue * 100.0 / MAX_VAL);
+    // 1. Clip de inkomende waarde: Garandeer dat deze binnen [-MAX_VAL, +MAX_VAL] blijft.
+    int clippedValue = qBound(-100, scaledValue, 100); //
+
+    // 4. Tekstuele waarde
+    p.setPen(mixA(Qt::white, 200));
+    QFont tf = p.font();
+    tf.setBold(false);
+    tf.setPointSizeF(7 * m_scale);
+    p.setFont(tf);
+    p.drawText(barRect.left()+60, barY - 5, QString("X: %1").arg(clippedValue));
+    p.setFont(font); // Herstel oorspronkelijke font
+
+
+    // --- KEYPAD EN BUTTONS (Bestaande Code) ---
+
+    const int rightH     = right.height();
     const int buttonsH = int(20 * m_scale);
-    const int gap      = int(8  * m_scale);
+    const int gap        = int(8  * m_scale);
     const QRect abRect = QRect(right.left(), right.top(), right.width(), buttonsH);
 
     auto drawButton = [&](const QPoint &c, const QString &lbl, bool on){
@@ -372,6 +448,8 @@ void InputWidget::drawHud(QPainter &p, const QRect &r)
             p.drawText(cell, Qt::AlignCenter, keyLabelFor(bit));
         }
     }
+
+    //p.restore();
 }
 
 void InputWidget::paintEvent(QPaintEvent *e)
@@ -383,13 +461,46 @@ void InputWidget::paintEvent(QPaintEvent *e)
     drawHud(p, hudRect());
 }
 
+// inputwidget.cpp (Binnen setJoystickDirection)
+
 void InputWidget::setJoystickDirection(bool up, bool down, bool left, bool right)
 {
+    // A. Verticale Invoer (Wordt ALTIJD bewerkt)
     m_pad0.up = up;
     m_pad0.down = down;
-    m_pad0.left = left;
-    m_pad0.right = right;
+
+    // We updaten de bridge ALLEEN als de pulstrein actief is, OF als we de verticale as nodig hebben.
+    ib_set_joy1_dir(IB_UP, up ? 1 : 0);
+    ib_set_joy1_dir(IB_DOWN, down ? 1 : 0);
+
+
+    if (m_isPaddleMode) {
+        // PADDLE MODE AAN: Digitale horizontale input negeren
+        m_pad0.left = false;
+        m_pad0.right = false;
+
+        // Bridge: Zet horizontale bits op 0 (pulstrein zal overschrijven)
+        ib_set_joy1_dir(IB_LEFT, 0);
+        ib_set_joy1_dir(IB_RIGHT, 0);
+
+    } else {
+        // --- PADDLE MODE UIT: HERSTEL VOLLEDIGE DIGITALE CONTROLE ---
+        m_pad0.left = left;
+        m_pad0.right = right;
+
+        // CRUCIAAL: Bridge wordt nu gesynchroniseerd met de digitale status.
+        // DIT IS HET ENIGE PUNT WAAR DE DIGITALE WAARDEN DE BRIDGE MOGEN RAKEN!
+        ib_set_joy1_dir(IB_LEFT, left ? 1 : 0);
+        ib_set_joy1_dir(IB_RIGHT, right ? 1 : 0);
+
+        // **VERWIJDER DEZE PUSH:** coleco_push_direction_from_bridge(0);
+        // De s_pad structuur moet nu volledig hersteld worden door coleco_setController.
+    }
+
+    // 2. PUSH KNOPPEN/KEYPAD: Hierdoor wordt de D-pad status van m_pad0 naar s_pad gepusht.
     coleco_setController(0, m_pad0);
+
+    // 3. De Bridge-synchronisatie vindt ALLEEN plaats in coleco_paddle() nu.
 }
 
 void InputWidget::setJoystickFireL(bool pressed)
@@ -423,3 +534,32 @@ void InputWidget::setJoystickSelect(bool pressed)
     ib_set_keypad_bit(10, pressed);
     coleco_setController(0, m_pad0);
 }
+
+// NIEUW: Slot om de analoge X-waarde van de joystick te ontvangen
+void InputWidget::setJoystickAnalogX(int value)
+{
+    // Stuur de ruwe waarde naar de bridge.
+    // De bridge is gedefinieerd met int16_t, dus casten we.
+    ib_set_analog_x1((int16_t)value);
+
+    // De core (coleco.cpp) zal de waarde in zijn update cyclus lezen.
+    // Voor Windows (die geen event-loop heeft) zou je eventueel hier direct
+    // coleco_setSpinner(0, value) kunnen aanroepen, maar de bridge is beter.
+
+    // Optioneel: visuele feedback in de HUD
+    // const int ANALOG_TH = 4000;
+    // if (value > ANALOG_TH || value < -ANALOG_TH) m_flash = 1.0;
+    // Sla de waarde op voor de visualisatie in paintEvent
+    m_analogXValue = value;
+
+    // Hertekenen forceren (om de balk bij te werken)
+    update();
+}
+
+void InputWidget::setPaddleMode(bool usePaddle)
+{
+    m_isPaddleMode = usePaddle;
+    // We kunnen hier optioneel een visuele indicatie geven
+    // update();
+}
+

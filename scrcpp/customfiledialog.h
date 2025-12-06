@@ -82,6 +82,7 @@ private:
     QString    m_selectedFile;
     QStringList m_filterPatterns;
     QString    m_initialPath;
+    QString    m_upButtonLimitPath;
     PathType m_pathType = PathDefault;
 
     void loadLastVisitedPath(const QString &initialDir, AcceptMode mode);

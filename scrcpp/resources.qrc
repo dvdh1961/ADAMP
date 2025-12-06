@@ -11,7 +11,6 @@
         <file>images/machine_coleco.png</file>
         <file>images/joypad.png</file>
         <file>images/hw_printer.png</file>
-        <file>images/adamp_logo.png</file>
         <file>images/Adam_PrinterBG.png</file>
         <file>images/roms.png</file>
         <file>images/dsk.png</file>
@@ -25,7 +24,21 @@
         <file>images/SSTEP.png</file>
         <file>images/GOTO.png</file>
         <file>images/STEP.png</file>
-        <file>images/wallpaper_adam.png</file>
+        <file>images/adamp_logo2.png</file>
+        <file>images/adamp_logo_reset_adam_off.png</file>
+        <file>images/adamp_logo_reset_adam_on.png</file>
+        <file>images/adamp_logo_reset_cartridge_off.png</file>
+        <file>images/adamp_logo_reset_cartridge_on.png</file>
+        <file>images/adamp_logo0.png</file>
+        <file>images/Hardware.png</file>
+        <file>images/adamp_logo_power_adam_off.png</file>
+        <file>images/adamp_logo_power_adam_on.png</file>
         <file>images/wallpaper_coleco.png</file>
+        <file>images/wallpaper_adam.png</file>
+        <file>images/adamp_logo1.png</file>
+        <file>images/adamp_logo_reset_cartridge_blink.png</file>
+        <file>images/adamp_logo_reset_adam_blink.png</file>
+        <file>images/noCheck.png</file>
+        <file>images/Check.png</file>
     </qresource>
 </RCC>

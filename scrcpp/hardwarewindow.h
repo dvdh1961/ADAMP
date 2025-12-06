@@ -51,12 +51,24 @@ class HardwareWindow : public QDialog
 public:
     explicit HardwareWindow(const HardwareConfig& initial, QWidget *parent = nullptr);
     HardwareConfig config() const;
+    void updateLoadedMedia(const QString& mediaName);
+
+    void setLoadedMediaDisplayNames(
+        const QString& colecoCartridgeName,
+        const QString& adamCartridgeName,
+        const QString& tape1Name,
+        const QString& tape2Name,
+        const QString& disc1Name,
+        const QString& disc2Name,
+        const QString& disc3Name
+        );
 
 private slots:
     void onMachineChanged();
     void onOk();
     void onPaletteChanged(int idx);
     void onPrinterClicked();
+    void onToggleSGM(bool checked);
 
 private:
     void buildUi();
@@ -93,12 +105,21 @@ private:
     QCheckBox*   m_chkPatchBiosPAL = nullptr;
     QComboBox*   m_cboFrequency    = nullptr;
 
+    QLabel* m_lblEmuCC = nullptr; // CC (Coleco Cartridge)
+    QLabel* m_lblEmuCA = nullptr; // CA (Adam Cartridge)
+    QLabel* m_lblEmuD1 = nullptr; // D1 (Tape 1)
+    QLabel* m_lblEmuD2 = nullptr; // D2 (Tape 2)
+    QLabel* m_lblEmuD5 = nullptr; // D5 (Disc 1)
+    QLabel* m_lblEmuD6 = nullptr; // D6 (Disc 2)
+    QLabel* m_lblEmuD7 = nullptr; // D7 (Disc 3)
+
     QDialogButtonBox* m_btnBox = nullptr;
 
     HardwareConfig m_initial;
     HardwareConfig m_result;
 
     bool m_loading = false;
+    static bool m_sgmSelectionState;
 };
 
 #endif

@@ -258,6 +258,7 @@ QString CustomFileDialog::getOpenFileName(QWidget *parent, const QString &captio
     dlg.m_acceptMode = AcceptOpen;
     dlg.m_pathType = type;
     dlg.setWindowTitle(caption);
+    dlg.m_upButtonLimitPath = QDir::cleanPath(dir.isEmpty() ? QDir::homePath() : dir);
     dlg.setInitialDirectory(dir);
     dlg.setNameFilters(filter);
     dlg.loadLastVisitedPath(dir, AcceptOpen);
@@ -274,28 +275,23 @@ QString CustomFileDialog::selectedFile() const
     return QDir(m_pathEdit->text()).filePath(m_fileNameEdit->text());
 }
 
-// customfiledialog.cpp
-
 void CustomFileDialog::setInitialDirectory(const QString &dir)
 {
     QString path = dir;
     QString fileName;
 
-    // We gebruiken de statische (niet-persistente) variabelen voor tijdelijk geheugen:
     QString savedPath = (m_acceptMode == AcceptOpen) ? s_lastOpenDir : s_lastSaveDir;
 
     if (!savedPath.isEmpty() && QDir(savedPath).exists()) {
-        // Gebruik het TIJDELIJK OPGESLAGEN pad als de dialoog al een keer is geopend in deze sessie
         path = savedPath;
     } else if (!dir.isEmpty()) {
-        // Anders: Gebruik het pad van de MainWindow (onze root)
         QFileInfo fi(dir);
 
         if (fi.isDir()) {
             path = fi.absoluteFilePath();
         } else {
             path = fi.absolutePath();
-            fileName = fi.fileName(); // Om de bestandsnaam in te vullen bij save/open
+            fileName = fi.fileName();
         }
     }
 
@@ -315,7 +311,6 @@ void CustomFileDialog::setInitialDirectory(const QString &dir)
         m_fileNameEdit->setText(fileName);
     }
 
-    // De initiële map (m_initialPath) wordt de root voor de 'Up'-knop
     m_initialPath = path;
 }
 
@@ -348,7 +343,7 @@ void CustomFileDialog::onTreeViewDoubleClicked(const QModelIndex &index)
         m_treeView->setRootIndex(index);
         m_pathEdit->setText(m_model->filePath(index));
         m_fileNameEdit->clear();
-        saveLastVisitedPath();
+        //saveLastVisitedPath();
     } else {
         onTreeViewClicked(index);
         onOkButtonClicked();
@@ -409,7 +404,9 @@ void CustomFileDialog::onUpButtonClicked()
 {
     QString currentPath = m_pathEdit->text();
 
-    if (QDir::cleanPath(currentPath) == QDir::cleanPath(m_initialPath)) {
+    QString limitPath = m_upButtonLimitPath.isEmpty() ? m_initialPath : m_upButtonLimitPath;
+
+    if (QDir::cleanPath(currentPath) == QDir::cleanPath(limitPath)) {
         return;
     }
 
@@ -421,9 +418,6 @@ void CustomFileDialog::onUpButtonClicked()
 
     QString parentPath = currentDir.absolutePath();
 
-    if (!parentPath.startsWith(QDir::cleanPath(m_initialPath), Qt::CaseInsensitive)) {
-        parentPath = m_initialPath;
-    }
 
     QModelIndex index = m_model->index(parentPath);
 
@@ -432,7 +426,7 @@ void CustomFileDialog::onUpButtonClicked()
         m_treeView->scrollTo(index);
         m_pathEdit->setText(parentPath);
         m_fileNameEdit->clear();
-        saveLastVisitedPath();
+        //saveLastVisitedPath();
     }
 }
 
@@ -451,48 +445,33 @@ QString CustomFileDialog::keyFromPathType(PathType type, AcceptMode mode) const
     return "CustomFileDialog/Last" + base + "Dir";
 }
 
-// customfiledialog.cpp
-
 void CustomFileDialog::loadLastVisitedPath(const QString &initialDir, AcceptMode mode)
 {
-    // initialDir is het ABSOLUTE pad geladen uit MainWindow::loadSettings().
-    // Dit is onze harde DEFAULT/ROOT.
-
     QSettings settings(QCoreApplication::applicationDirPath() + "/settings.ini", QSettings::IniFormat);
     QString key = keyFromPathType(m_pathType, mode);
 
     const QString homePath = QDir::homePath();
 
-    // 1. Probeer de laatst bezochte map uit QSettings te lezen
-    // We gebruiken NIET initialDir als default value in QSettings::value,
-    // maar een lege string. Dit garandeert dat we ALLEEN de opgeslagen waarde lezen.
     QString savedPath = settings.value(key, QString()).toString();
 
     QString path;
 
     if (!savedPath.isEmpty() && QDir(savedPath).exists()) {
-        // Gevonden: Gebruik het pad dat de gebruiker de laatste keer bezocht.
         path = savedPath;
     } else {
-        // Niet gevonden of ongeldig: Gebruik de initiële/standaard map van MainWindow.
-        // Als initialDir leeg is (wat niet zou moeten gebeuren), val terug op HomePath.
         path = initialDir.isEmpty() ? homePath : initialDir;
 
-        // Zorg dat de fallback een geldige, bestaande map is
         if (!QDir(path).exists()) {
             path = homePath;
         }
     }
 
-    // 2. Pas het model aan
     QModelIndex index = m_model->index(path);
     if (index.isValid()) {
         m_treeView->setRootIndex(index);
         m_treeView->scrollTo(index);
         m_pathEdit->setText(path);
-        // m_fileNameEdit->clear() is hier niet nodig, dit wordt elders behandeld.
     } else {
-        // Als het pad om de een of andere reden niet geldig is, val terug op de HomePath root.
         QModelIndex rootIndex = m_model->index(homePath);
         if (rootIndex.isValid()) {
             m_treeView->setRootIndex(rootIndex);
@@ -503,6 +482,22 @@ void CustomFileDialog::loadLastVisitedPath(const QString &initialDir, AcceptMode
 
 void CustomFileDialog::saveLastVisitedPath()
 {
+    QString currentPath = m_pathEdit->text();
+
+    // 1. Update de statische variabelen
+    if (m_acceptMode == AcceptOpen) {
+        s_lastOpenDir = currentPath;
+    } else {
+        s_lastSaveDir = currentPath;
+    }
+
+    // 2. Sla het pad op in QSettings met de specifieke sleutel (keyFromPathType)
+    // De keyFromPathType zorgt ervoor dat we opslaan onder "CustomFileDialog/LastRomDir", etc.
+    // Dit is het pad dat de dialoog de volgende keer opent.
+    QSettings settings(QCoreApplication::applicationDirPath() + "/settings.ini", QSettings::IniFormat);
+    QString key = keyFromPathType(m_pathType, m_acceptMode);
+    settings.setValue(key, currentPath);
+    settings.sync();
 }
 
 void CustomFileDialog::onCreateDirClicked()

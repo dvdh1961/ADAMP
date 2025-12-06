@@ -36,6 +36,8 @@ public slots:
     void setJoystickFireR(bool pressed);
     void setJoystickStart(bool pressed);
     void setJoystickSelect(bool pressed);
+    void setJoystickAnalogX(int value);
+    void setPaddleMode(bool usePaddle);
 
 private:
     QWidget *m_target = nullptr;
@@ -59,6 +61,8 @@ private:
 
     static int defaultKeyForIndex(int idx);
     int findIndexForQtKey(const std::array<int,20>& map, int qtKey) const;
+    int m_analogXValue = 0;
+    bool m_isPaddleMode = false;
 };
 
 #endif

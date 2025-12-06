@@ -56,6 +56,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QMessageBox>
+#include <QProgressDialog>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -95,10 +96,14 @@ MainWindow::MainWindow(QWidget *parent)
     m_actAdamJoystick(nullptr),
     m_adamInputModeJoystick(false),
     m_debugWin(nullptr),
-    m_cartInfoDialog(nullptr)
-    //m_adamRomMenu(nullptr),
-    //m_openAdamRomAction(nullptr),
-    //m_ejectAdamRomAction(nullptr)
+    m_cartInfoDialog(nullptr),
+    m_hardwareWindow(nullptr),
+    m_adamRomMenu(nullptr),
+    m_colecoRomMenu(nullptr),
+    m_openAdamRomAction(nullptr),
+    m_ejectAdamRomAction(nullptr),
+    m_openColecoRomAction(nullptr),
+    m_ejectColecoRomAction(nullptr)
 
 {
     setUpLogWindow();
@@ -108,7 +113,7 @@ MainWindow::MainWindow(QWidget *parent)
     QCoreApplication::setApplicationName("ADAMP_EMU");
 
     // Version
-    appVersion = "0.4.1125";
+    appVersion = "0.5.12.25";
 
     setWindowTitle(QString("ADAM+ Emulator - v%1").arg(appVersion));
 
@@ -120,21 +125,73 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_screenWidget = new ScreenWidget(this);
 
-    m_logoLabel = new QLabel(this);
-    QPixmap logoPixmap(":/images/images/adamp_logo.png");
-    m_logoLabel->setPixmap(logoPixmap);
-    m_logoLabel->installEventFilter(this);
-    m_logoLabel->setCursor(Qt::PointingHandCursor);
+    m_logoContainer = new QWidget(this);
+    m_logoContainer->setAttribute(Qt::WA_TranslucentBackground);
 
-    m_logoLabel->setAttribute(Qt::WA_TranslucentBackground);
+    QHBoxLayout *hLayout = new QHBoxLayout(m_logoContainer);
+    hLayout->setContentsMargins(0, 0, 0, 0);
+    hLayout->setSpacing(0);
+
+    m_logoLabel0 = new QLabel(m_logoContainer);
+    QPixmap logo0Pixmap(":/images/images/adamp_logo0.png");
+    m_logoLabel0->setPixmap(logo0Pixmap);
+    m_logoLabel0->setScaledContents(false);
+    hLayout->addWidget(m_logoLabel0);
+
+    m_powerBtn = new QPushButton(m_logoContainer);
+    m_powerBtn->setCheckable(true);
+    m_powerBtn->setFlat(true);
+    m_powerBtn->setStyleSheet("border: none;");
+    m_powerBtn->setIcon(QIcon(":/images/images/adamp_logo_power_adam_off.png"));
+    m_powerBtn->setIconSize(QPixmap(":/images/images/adamp_logo_power_adam_off.png").size());
+    hLayout->addWidget(m_powerBtn);
+    m_powerBtn->setCursor(Qt::PointingHandCursor);
+    m_powerBtn->setFocusPolicy(Qt::NoFocus);
+
+    m_logoLabel1 = new QLabel(m_logoContainer);
+    QPixmap logo1Pixmap(":/images/images/adamp_logo1.png");
+    m_logoLabel1->setPixmap(logo1Pixmap);
+    m_logoLabel1->setScaledContents(false);
+    hLayout->addWidget(m_logoLabel1);
+
+    m_logoLabel1->installEventFilter(this);
+    m_logoLabel1->setCursor(Qt::PointingHandCursor);
+
+    m_resetAdamBtn = new QPushButton(m_logoContainer);
+    m_resetAdamBtn->setCheckable(true);
+    m_resetAdamBtn->setFlat(true);
+    m_resetAdamBtn->setStyleSheet("border: none;");
+    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
+    m_resetAdamBtn->setIconSize(QPixmap(":/images/images/adamp_logo_reset_adam_off.png").size());
+    hLayout->addWidget(m_resetAdamBtn);
+    m_resetAdamBtn->setCursor(Qt::PointingHandCursor);
+    m_resetAdamBtn->setFocusPolicy(Qt::NoFocus);
+
+    m_resetCartBtn = new QPushButton(m_logoContainer);
+    m_resetCartBtn->setCheckable(true);
+    m_resetCartBtn->setFlat(true);
+    m_resetCartBtn->setStyleSheet("border: none;");
+    m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png"));
+    m_resetCartBtn->setIconSize(QPixmap(":/images/images/adamp_logo_reset_cartridge_off.png").size());
+    hLayout->addWidget(m_resetCartBtn);
+    m_resetCartBtn->setCursor(Qt::PointingHandCursor);
+    m_resetCartBtn->setFocusPolicy(Qt::NoFocus);
+
+    m_logoLabel2 = new QLabel(m_logoContainer);
+    QPixmap logo2Pixmap(":/images/images/adamp_logo2.png");
+    m_logoLabel2->setPixmap(logo2Pixmap);
+    m_logoLabel2->setScaledContents(false);
+
+    hLayout->addWidget(m_logoLabel2);
+
+    m_logoContainer->setLayout(hLayout);
 
     QVBoxLayout *mainLayout = new QVBoxLayout;
     mainLayout->setContentsMargins(0, 0, 0, 0);
 
     mainLayout->addWidget(m_screenWidget, 1);
 
-    mainLayout->addWidget(m_logoLabel, 0, Qt::AlignHCenter | Qt::AlignBottom);
-
+    mainLayout->addWidget(m_logoContainer, 0, Qt::AlignHCenter | Qt::AlignBottom);
 
     m_ntableWindow = new NTableWindow(this);
     m_ntableWindow->hide();
@@ -178,7 +235,6 @@ MainWindow::MainWindow(QWidget *parent)
         m_joystick->setJoystickType(m_joystickType);
     }
 
-    // Verbind de 'schone' signalen naar de 'schone' slots
     connect(m_joystick, &SimpleJoystick::directionChanged,
             m_inputWidget, &InputWidget::setJoystickDirection);
 
@@ -194,8 +250,15 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_joystick, &SimpleJoystick::selectPressed,
             m_inputWidget, &InputWidget::setJoystickSelect);
 
+    connect(m_joystick, &SimpleJoystick::analogXChanged,
+            m_inputWidget, &InputWidget::setJoystickAnalogX);
+
     m_joystick->stopPolling();
     m_joystick->startPolling(0);
+
+    if (m_actTogglePaddleMode) {
+        onTogglePaddleMode(m_usePaddleMode);
+    }
 
     m_screenWidget->setScalingMode(static_cast<ScreenWidget::ScalingMode>(m_scalingMode));
 
@@ -215,6 +278,8 @@ MainWindow::MainWindow(QWidget *parent)
     initialConfig.steeringWheel = m_ctrlSteering;
     initialConfig.rollerCtrl = m_ctrlRoller;
     initialConfig.superAction = m_ctrlSuperAction;
+
+    m_hardwareWindow = new HardwareWindow(initialConfig, this);
 
     applyHardwareConfig(initialConfig);
 
@@ -259,6 +324,13 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_debugWin, &DebuggerWindow::requestBpSave,
             this, &MainWindow::onSaveBreakpoint);
 
+    // Timer initialisatie
+    m_resetAdamBlinkTimer = new QTimer(this);
+    m_resetCartBlinkTimer = new QTimer(this);
+
+    // Verbind de timers met de nieuwe slots
+    connect(m_resetAdamBlinkTimer, &QTimer::timeout, this, &MainWindow::onToggleResetAdamBlink);
+    connect(m_resetCartBlinkTimer, &QTimer::timeout, this, &MainWindow::onToggleResetCartBlink);
 
     if (m_startFullScreen) {
         QTimer::singleShot(0, this, [this]() {
@@ -293,15 +365,14 @@ void MainWindow::setDebugger(DebuggerWindow *debugger)
 
 void MainWindow::onCycleScalingMode()
 {
-    // 0=Sharp, 1=Smooth, 2=EPX
     m_scalingMode = (m_scalingMode + 1) % 3;
 
     QString scaleText;
-    if (m_scalingMode == 0) { // ModeSharp
+    if (m_scalingMode == 0) {
         scaleText = "Scaling: Sharp";
-    } else if (m_scalingMode == 1) { // ModeSmooth
+    } else if (m_scalingMode == 1) {
         scaleText = "Scaling: Smooth";
-    } else { // ModeEPX
+    } else {
         scaleText = "Scaling: EPX";
     }
 
@@ -403,10 +474,10 @@ void MainWindow::loadSettings()
     m_ctrlSteering    = settings.value("controller/steering",    false).toBool();
     m_ctrlRoller      = settings.value("controller/roller",      false).toBool();
     m_ctrlSuperAction = settings.value("controller/superaction", false).toBool();
+    m_usePaddleMode = settings.value("controller/usePaddleMode", false).toBool();
 
     m_scalingMode = settings.value("video/scalingMode", 1).toInt();
 
-    // --- TIJDELIJKE DEBUG: CONTROLE NA LADEN ---
     qDebug() << "LOADED JOYSTICK TYPE:" << m_joystickType;
 
     m_scanlinesMode = static_cast<ScanlinesMode>(settings.value("video/scanlinesMode", ScanlinesOff).toInt()); // NIEUW laden
@@ -459,6 +530,7 @@ void MainWindow::saveSettings()
     settings.setValue("controller/steering",    m_ctrlSteering);
     settings.setValue("controller/roller",      m_ctrlRoller);
     settings.setValue("controller/superaction", m_ctrlSuperAction);
+    settings.setValue("controller/usePaddleMode", m_usePaddleMode);
 
     settings.setValue("video/scalingMode", m_scalingMode);
     settings.setValue("video/scanlinesMode", m_scanlinesMode);
@@ -674,13 +746,19 @@ void MainWindow::setStatusBar()
 
 void MainWindow::setupUI()
 {
-    // --- FILE MENU ---
     QMenu* fileMenu = menuBar()->addMenu(tr("File"));
 
     // Coleco cartridge
-    m_openRomAction = new QAction(tr("COLECO Cartridge"), this);
-    connect(m_openRomAction, &QAction::triggered, this, &MainWindow::onOpenRom);
-    fileMenu->addAction(m_openRomAction);
+    m_colecoRomMenu = new QMenu(tr("COLECO Cartridge"), this);
+    m_openColecoRomAction = new QAction(tr("Load"), this);
+    connect(m_openColecoRomAction, &QAction::triggered, this, &MainWindow::onOpenColecoRom);
+    m_colecoRomMenu->addAction(m_openColecoRomAction);
+
+    m_ejectColecoRomAction = new QAction(tr("Eject"), this);
+    connect(m_ejectColecoRomAction, &QAction::triggered, this, &MainWindow::onEjectColecoRom);
+    m_colecoRomMenu->addAction(m_ejectColecoRomAction);
+    fileMenu->addMenu(m_colecoRomMenu);
+
     fileMenu->addSeparator();
 
     // Adam cartridge
@@ -694,7 +772,7 @@ void MainWindow::setupUI()
     m_adamRomMenu->addAction(m_ejectAdamRomAction);
     fileMenu->addMenu(m_adamRomMenu);
 
-    m_adamRomMenu->setEnabled(false); // Standaard uitgeschakeld
+    m_adamRomMenu->setEnabled(false);
 
     // Tape Menu's
     m_tapeMenuA = new QMenu(tr("Tape D1"), this);
@@ -765,7 +843,6 @@ void MainWindow::setupUI()
     fileMenu->addMenu(m_diskMenuD);
 
     // Initial state disabled
-    //m_openARomAction->setEnabled(false);
     m_diskMenuA->setEnabled(false);
     m_diskMenuB->setEnabled(false);
     m_diskMenuC->setEnabled(false);
@@ -777,6 +854,11 @@ void MainWindow::setupUI()
 
     fileMenu->addSeparator();
 
+    m_actReleaseAll = new QAction(tr("Release all media"), this);
+    connect(m_actReleaseAll, &QAction::triggered, this, &MainWindow::onReleaseAll);
+    fileMenu->addAction(m_actReleaseAll);
+
+    fileMenu->addSeparator();
     m_actSaveState = new QAction(tr("Save State..."), this);
     connect(m_actSaveState, &QAction::triggered, this, &MainWindow::onSaveState);
     fileMenu->addAction(m_actSaveState);
@@ -850,8 +932,6 @@ void MainWindow::setupUI()
 
     // Joystick Controller Menu (was in Tools)
     QMenu* joystickControllerMenu = inputMenu->addMenu(tr("Joystick Controller")); // Hoofdmenu
-    // ... (De code om m_joystickGroup en de 3 sub-acties toe te voegen, blijft HIER)
-    // ... (m_actJoystickGeneral, m_actJoystickPS, m_actJoystickXbox worden toegevoegd aan joystickControllerMenu)
 
     // Actiegroep om ervoor te zorgen dat slechts één type is geselecteerd
     m_joystickGroup = new QActionGroup(this);
@@ -891,6 +971,15 @@ void MainWindow::setupUI()
             }
         }
     }
+
+    inputMenu->addSeparator();
+    m_actTogglePaddleMode = new QAction(tr("Paddle Mode"), this);
+    m_actTogglePaddleMode->setCheckable(true);
+    m_actTogglePaddleMode->setChecked(m_usePaddleMode); // Synchroniseer met instelling
+    inputMenu->addAction(m_actTogglePaddleMode);
+
+    // De connectie
+    connect(m_actTogglePaddleMode, &QAction::toggled, this, &MainWindow::onTogglePaddleMode);
 
     // --- VIDEO MENU ---
     QMenu* videoMenu = menuBar()->addMenu(tr("Video"));
@@ -993,12 +1082,12 @@ void MainWindow::setupUI()
     m_actToggleBezels->setCheckable(true);
     m_actToggleBezels->setChecked(m_useBezels);
     connect(m_actToggleBezels, &QAction::toggled, this, &MainWindow::onToggleBezels);
+
     videoMenu->addAction(m_actToggleBezels);
     videoMenu->addSeparator();
     // Save Screenshot
     m_actSaveScreenshot = new QAction(tr("Save Screenshot..."), this);
     videoMenu->addAction(m_actSaveScreenshot);
-    m_actSaveScreenshot->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
 
     // --- HARDWARE MENU ---
     QMenu* hardwareMenu = menuBar()->addMenu(tr("Hardware"));
@@ -1085,6 +1174,10 @@ void MainWindow::setupUI()
     connect(m_actJoypadMapper, &QAction::triggered, this, &MainWindow::onOpenJoypadMapper);
     connect(m_actAdamKeyboard, &QAction::triggered, this, &MainWindow::onAdamInputModeChanged);
     connect(m_actAdamJoystick, &QAction::triggered, this, &MainWindow::onAdamInputModeChanged);
+
+    connect(m_powerBtn, &QPushButton::clicked, this, &MainWindow::onPowerBtnClicked);
+    connect(m_resetAdamBtn, &QPushButton::clicked, this, &MainWindow::onResetAdamBtnClicked);
+    connect(m_resetCartBtn, &QPushButton::clicked, this, &MainWindow::onResetCartBtnClicked);
 
     onEmuPausedChanged(false);
 }
@@ -1247,11 +1340,23 @@ void MainWindow::onOpenHardware()
     const int prevPalette = m_paletteIndex;
 
     HardwareWindow dlg(cur, this);
+
+    dlg.setLoadedMediaDisplayNames(
+        m_currentRomName,         // CC (Coleco Cartridge)
+        m_currentARomName,        // CA (ADAM Cartridge)
+        m_loadedTapeNames[0],     // D1
+        m_loadedTapeNames[1],     // D2
+        m_loadedDiskNames[0],     // D5
+        m_loadedDiskNames[1],     // D6
+        m_loadedDiskNames[2]      // D7 (Alleen de eerste 3 disks worden in de tabel getoond)
+        );
+
     if (dlg.exec() == QDialog::Accepted) {
         HardwareConfig chosen = dlg.config();
 
         m_paletteIndex = chosen.palette;
         coleco_setpalette(m_paletteIndex);
+        m_sgmEnabled = chosen.sgmEnabled;
 
         applyHardwareConfig(chosen);
 
@@ -1260,18 +1365,28 @@ void MainWindow::onOpenHardware()
         m_paletteIndex = prevPalette;
         coleco_setpalette(m_paletteIndex);
     }
+
 }
 
 void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
 {
+    const int oldMachineType = m_machineType;
     const int newMachineType = (cfg.machine == MACHINE_ADAM ? 1 : 0);
-    if (m_machineType != newMachineType) {
+
+    if (oldMachineType != newMachineType) {
         m_machineType = newMachineType;
 
-        QMetaObject::invokeMethod(
-            m_colecoController, "setMachineType",
-            Qt::QueuedConnection, Q_ARG(int, m_machineType)
-            );
+        if (m_machineType == 1) { // ADAM
+            QMetaObject::invokeMethod(
+                m_colecoController, "resetAdam",
+                Qt::QueuedConnection
+                );
+        } else { // COLECO
+            QMetaObject::invokeMethod(
+                m_colecoController, "resetColeco",
+                Qt::QueuedConnection
+                );
+        }
     }
 
     if (m_paletteIndex != cfg.palette) {
@@ -1288,23 +1403,13 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
     const bool desiredSgm = (m_machineType == 0) ? cfg.sgmEnabled : false;
     m_f18aEnabled = cfg.f18aEnabled;
 
-    if (m_machineType == 1) { // ADAM
-        m_sgmEnabled = false;
-        if (m_actToggleSGM) m_actToggleSGM->setChecked(false);
+    if (desiredSgm != m_sgmEnabled || oldMachineType != newMachineType) {
+        m_sgmEnabled = desiredSgm;
 
         QMetaObject::invokeMethod(
             m_colecoController, "setSGMEnabled",
-            Qt::QueuedConnection, Q_ARG(bool, false)
+            Qt::QueuedConnection, Q_ARG(bool, m_sgmEnabled)
             );
-    } else { // Coleco
-        if (desiredSgm != m_sgmEnabled) {
-            m_sgmEnabled = desiredSgm;
-            if (m_actToggleSGM) m_actToggleSGM->setChecked(m_sgmEnabled);
-            QMetaObject::invokeMethod(
-                m_colecoController, "setSGMEnabled",
-                Qt::QueuedConnection, Q_ARG(bool, m_sgmEnabled)
-                );
-        }
     }
 
     m_ctrlSteering    = cfg.steeringWheel;
@@ -1312,36 +1417,56 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
     m_ctrlSuperAction = cfg.superAction;
 
     if (m_sysLabel) m_sysLabel->setText(m_machineType ? "ADAM" : "COLECO");
-    saveSettings();
+
+    updateMediaStatusLabels();
+    updateHardwareWindowMediaDisplay();
 
     updateFullScreenWallpaper();
 
     bool isAdam = (m_machineType == 1);
-
     if (m_adamInputMenu) m_adamInputMenu->setEnabled(isAdam);
 
-    if (m_openRomAction) m_openRomAction->setEnabled(!isAdam);
+    updateMediaMenuState();
 
-    if (m_romLabel) m_romLabel->setVisible(!isAdam);
-    if (m_sepLabel4) m_sepLabel4->setVisible(!isAdam);
+    saveSettings();
+}
 
-    updateMediaStatusLabels();
+void MainWindow::updateHardwareWindowMediaDisplay()
+{
+    if (m_hardwareWindow) {
+        m_hardwareWindow->setLoadedMediaDisplayNames(
+            m_currentRomName,          // CC (Coleco Cartridge)
+            m_currentARomName,         // CA (ADAM Cartridge)
+            m_loadedTapeNames[0],      // D1
+            m_loadedTapeNames[1],      // D2
+            m_loadedDiskNames[0],      // D5
+            m_loadedDiskNames[1],      // D6
+            m_loadedDiskNames[2]       // D7 (Disks[2])
+            );
+    }
+}
 
-    if (!isAdam) {
-        onEjectDisk(0);
-        onEjectDisk(1);
-        onEjectDisk(2);
-        onEjectDisk(3);
-        onEjectTape(0);
-        onEjectTape(1);
-        onEjectTape(2);
-        onEjectTape(3);
+void MainWindow::onCartridgeStatusChanged(const QString& colecoName, const QString& adamName)
+{
+    m_currentRomName = colecoName;  // Coleco Cartridge (CC)
+    m_currentARomName = adamName;   // ADAM Cartridge (CA)
 
-        m_adamInputModeJoystick = false;
-        if (m_actAdamKeyboard) m_actAdamKeyboard->setChecked(true);
+    if (m_romLabel) {
+        QString display = m_currentRomName;
+        if (m_machineType == 1) { // ADAM
+            display = m_currentARomName;
+        }
+
+        if (display.isEmpty()) {
+            display = "No cart";
+        }
+
+        QFontMetrics metrics(m_romLabel->font());
+        QString elidedText = metrics.elidedText(display, Qt::ElideRight, m_romLabel->width());
+        m_romLabel->setText(elidedText);
     }
 
-    updateMediaMenuState();
+    updateHardwareWindowMediaDisplay();
 }
 
 void MainWindow::showAboutDialog()
@@ -1476,7 +1601,7 @@ void MainWindow::onScanlinesModeChanged(QAction* action)
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 {
-    if (obj == m_logoLabel && event->type() == QEvent::MouseButtonPress) {
+    if (obj == m_logoLabel1 && event->type() == QEvent::MouseButtonPress) {
         onOpenHardware();
         return true;
     }
@@ -1586,68 +1711,112 @@ void MainWindow::setupEmulatorThread()
         Qt::QueuedConnection
         );
 
+    connect(m_colecoController, &ColecoController::tapeStatusChanged,
+            this, &MainWindow::onTapeStatusChanged,
+            Qt::QueuedConnection);
+    connect(m_colecoController, &ColecoController::diskStatusChanged,
+            this, &MainWindow::onDiskStatusChanged,
+            Qt::QueuedConnection);
+    connect(m_colecoController, &ColecoController::cartridgeStatusChanged, // NIEUW
+            this, &MainWindow::onCartridgeStatusChanged,
+            Qt::QueuedConnection);
+
     qDebug() << "Thread setup: Thread started.";
 
 }
 
-// mainwindow.cpp
+// void MainWindow::onOpenRom()
+// {
+//     QString absoluteRomPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_romPath);
 
-void MainWindow::onOpenRom()
+//     const QString filePath = CustomFileDialog::getOpenFileName(
+//         this,
+//         tr("Open ColecoVision ROM"),
+//         absoluteRomPath,
+//         tr("ROM files (*.rom *.col *.bin);;All files (*.*)"),
+//         nullptr,
+//         CustomFileDialog::PathRom,
+//         QFileDialog::Options()
+//         );
+
+//     if (filePath.isEmpty()) return;
+
+//     QFileInfo fileInfo(filePath);
+//     QDir appDir(QCoreApplication::applicationDirPath());
+
+//     CustomFileDialog::s_lastOpenDir = fileInfo.absolutePath();
+
+//     m_currentRomName = fileInfo.fileName();
+
+//     QFontMetrics metrics(m_romLabel->font());
+//     QString elidedText = metrics.elidedText(m_currentRomName, Qt::ElideRight, m_romLabel->width());
+//     m_romLabel->setText(elidedText);
+
+//     if (m_currentRomName.contains("ddp", Qt::CaseInsensitive) ||
+//         m_currentRomName.contains("dsk", Qt::CaseInsensitive))
+//         m_sysLabel->setText("ADAM");
+//     else
+//         m_sysLabel->setText("COLECO");
+
+//     QMetaObject::invokeMethod(m_colecoController, "resethMachine",
+//                               Qt::QueuedConnection);
+
+//     QMetaObject::invokeMethod(m_colecoController, "loadRom",
+//                               Qt::QueuedConnection,
+//                               Q_ARG(QString, filePath));
+// }
+
+void MainWindow::onOpenColecoRom()
 {
-    // 1. Bepaal het absolute pad op basis van de opgeslagen m_romPath (onze root/default).
+    if (m_machineType != 0) return;
+
     QString absoluteRomPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_romPath);
 
-    // 2. Open de custom dialoog om een bestand te kiezen.
-    // De CustomFileDialog gebruikt het absoluteRomPath als de initiële map,
-    // maar zal deze negeren als er een tijdelijk opgeslagen pad in s_lastOpenDir is.
     const QString filePath = CustomFileDialog::getOpenFileName(
         this,
-        tr("Open ColecoVision ROM"),
-        absoluteRomPath, // Start in de laatst gebruikte map (of de default root)
-        tr("ROM files (*.rom *.col *.bin);;All files (*.*)"),
+        tr("Open COLECO Cartridge ROM"),
+        absoluteRomPath,
+        tr("COLECO ROM files (*.rom *.bin *.col);;All files (*.*)"),
         nullptr,
         CustomFileDialog::PathRom,
         QFileDialog::Options()
-        // Let op: De 8e parameter (romBaseName) is hier niet van toepassing.
         );
 
-    // Als de gebruiker op annuleren klikt, stoppen we.
     if (filePath.isEmpty()) return;
 
     QFileInfo fileInfo(filePath);
-    QDir appDir(QCoreApplication::applicationDirPath());
 
-    // 3. Update TIJDELIJKE OPSLAG voor de dialoog in de HUIDIGE SESSIE.
-    // Dit zorgt ervoor dat de dialoog de volgende keer direct naar deze map springt.
-    // Dit heeft GEEN effect op de permanente settings.ini.
     CustomFileDialog::s_lastOpenDir = fileInfo.absolutePath();
 
-    // 4. Update permanente instelling ALLEEN indien gewenst (Hier laten we de instelling MET RUST).
-    // Als u wilt dat de m_romPath permanent de nieuwe map onthoudt (wat NIET de eis was),
-    // zou u de volgende twee regels moeten toevoegen:
-    // m_romPath = appDir.relativeFilePath(fileInfo.absolutePath());
-    // saveSettings();
+    m_currentARomName = fileInfo.fileName();
 
-    // 5. Update UI en emulator
-    m_currentRomName = fileInfo.fileName();
-
-    QFontMetrics metrics(m_romLabel->font());
-    QString elidedText = metrics.elidedText(m_currentRomName, Qt::ElideRight, m_romLabel->width());
-    m_romLabel->setText(elidedText);
-
-    if (m_currentRomName.contains("ddp", Qt::CaseInsensitive) ||
-        m_currentRomName.contains("dsk", Qt::CaseInsensitive))
-        m_sysLabel->setText("ADAM");
-    else
-        m_sysLabel->setText("COLECO");
-
-    // Reset de machine en laad de ROM
-    QMetaObject::invokeMethod(m_colecoController, "resethMachine",
-                              Qt::QueuedConnection);
-
-    QMetaObject::invokeMethod(m_colecoController, "loadRom",
+    QMetaObject::invokeMethod(m_colecoController, "ColecoCartridge",
                               Qt::QueuedConnection,
                               Q_ARG(QString, filePath));
+
+    m_isColecoRomLoaded = true;
+
+    // Start de Cartridge Reset knop te knipperen (NIEUW)
+    if (m_resetCartBlinkTimer && !m_resetCartBlinkTimer->isActive()) {
+        onToggleResetCartBlink(); // Zet direct de eerste blink-status
+        m_resetCartBlinkTimer->start(300); // Start knipperen (300ms interval)
+    }
+
+    updateMediaMenuState();
+    updateMediaStatusLabels();
+}
+
+void MainWindow::onEjectColecoRom()
+{
+    if (!m_isColecoRomLoaded) return;
+
+    QMetaObject::invokeMethod(m_colecoController, "ejectColecoCartridge",
+                              Qt::QueuedConnection);
+
+    m_isColecoRomLoaded = false;
+    m_currentARomName.clear();
+    updateMediaMenuState();
+    updateMediaStatusLabels();
 }
 
 void MainWindow::onOpenAdamRom()
@@ -1669,18 +1838,27 @@ void MainWindow::onOpenAdamRom()
     if (filePath.isEmpty()) return;
 
     QFileInfo fileInfo(filePath);
-
     CustomFileDialog::s_lastOpenDir = fileInfo.absolutePath();
 
     m_currentARomName = fileInfo.fileName();
+    m_isAdamRomLoaded = true;
+
+    m_currentRomName.clear();
+    m_isColecoRomLoaded = false;
 
     QMetaObject::invokeMethod(m_colecoController, "AdamCartridge",
                               Qt::QueuedConnection,
                               Q_ARG(QString, filePath));
 
-    m_isAdamRomLoaded = true;
+    // Start de ADAM Reset knop te knipperen (NIEUW)
+    if (m_resetAdamBlinkTimer && !m_resetAdamBlinkTimer->isActive()) {
+        onToggleResetAdamBlink(); // Zet direct de eerste blink-status
+        m_resetAdamBlinkTimer->start(300); // Start knipperen (300ms interval)
+    }
+
     updateMediaMenuState();
     updateMediaStatusLabels();
+    updateHardwareWindowMediaDisplay();
 }
 
 void MainWindow::onEjectAdamRom()
@@ -1694,6 +1872,7 @@ void MainWindow::onEjectAdamRom()
     m_currentARomName.clear();
     updateMediaMenuState();
     updateMediaStatusLabels();
+    updateHardwareWindowMediaDisplay();
 }
 
 void MainWindow::onSgmStatusChanged(bool enabled)
@@ -1874,30 +2053,53 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
     saveSettings();
 
-    CustomFileDialog::resetLastVisitedPaths();
+    QProgressDialog dlg(
+        "Closing emulator…\nPlease wait...",
+        QString(),
+        0, 0,
+        this
+        );
+    dlg.setWindowTitle("Closing...");
+    dlg.setWindowModality(Qt::ApplicationModal);
+    dlg.setCancelButton(nullptr);
+    dlg.setMinimumDuration(0);
+    dlg.show();
 
+    // Laat Qt de dialog tekenen
+    qApp->processEvents(QEventLoop::AllEvents, 50);
+
+    // Als de emulator-thread draait: vraag hem om te stoppen
     if (m_emulatorThread && m_emulatorThread->isRunning()) {
-        qDebug() << "Stop Thread nicely";
 
-        // Emulatie in de worker stoppen
-        QMetaObject::invokeMethod(
-            m_colecoController,
-            "stopEmulation",
-            Qt::QueuedConnection
-            );
+        if (m_colecoController) {
+            m_colecoController->stopEmulation();   // zet m_running = false;
+        }
 
-        m_emulatorThread->quit();
+        // Geef de thread een beetje tijd om netjes uit de lus te komen
+        QElapsedTimer timer;
+        timer.start();
+        while (m_emulatorThread->isRunning() && timer.elapsed() < 5000) {
+            qApp->processEvents(QEventLoop::AllEvents, 50);
+            QThread::msleep(10);
+        }
 
-        if (!m_emulatorThread->wait(2000)) {
-            qWarning() << "Thread cannot stop, force stop.";
+        if (m_emulatorThread->isRunning()) {
+            qWarning() << "Thread didn't stop in time, forcing terminate.";
             m_emulatorThread->terminate();
             m_emulatorThread->wait();
         }
     }
 
-    // Gewoon sluiten, geen qApp->quit() meer nodig
+    const int minVisibleMs = 1000;
+    QElapsedTimer visibleTimer;
+    visibleTimer.start();
+    while (visibleTimer.elapsed() < minVisibleMs) {
+        qApp->processEvents(QEventLoop::AllEvents, 50);
+        QThread::msleep(10);
+    }
+
     event->accept();
-    QMainWindow::closeEvent(event);
+    fflush(nullptr);
 }
 
 void MainWindow::onEmuPausedChanged(bool paused)
@@ -1913,7 +2115,6 @@ void MainWindow::onEmuPausedChanged(bool paused)
         }
     }
 
-    // Save/Load State alleen als de emu 'STOP' is
     const bool allowState = paused;
     if (m_actSaveState) m_actSaveState->setEnabled(allowState);
     if (m_actLoadState) m_actLoadState->setEnabled(true);
@@ -1941,7 +2142,6 @@ void MainWindow::onStartActionTriggered()
     }
 }
 
-// mainwindow.cpp
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
     const int key = event->key();
@@ -1969,8 +2169,6 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     }
 
     // ===== ADAM keyboard mode =====
-
-    // --- KEYpad overlay actief? Eerst overlay proberen; zo niet: val door naar alfabet ---
     const bool keypadOn = (m_actToggleKeyboard && m_actToggleKeyboard->isChecked());
     if (keypadOn) {
         bool handled = (m_inputWidget && m_inputWidget->handleKey(event, true));
@@ -2007,7 +2205,7 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     const QString text = event->text();
     if (!text.isEmpty() &&
         key != Qt::Key_Return && key != Qt::Key_Enter &&
-        key != Qt::Key_Backspace && key != Qt::Key_Space &&
+        key != Qt::Key_Backspace && //key != Qt::Key_Space &&
         key != Qt::Key_Tab &&
         !(key >= Qt::Key_F1 && key <= Qt::Key_F10))
     {
@@ -2041,8 +2239,6 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
 
     if (m_machineType == MACHINEADAM && !m_adamInputModeJoystick)
     {
-        // 1. Stuur de release naar de InputWidget/Keypad mapper
-        // Dit is de fix om de 'vaststaande knop' in Keypad Mode op te lossen.
         bool handled_by_keypad = m_inputWidget->handleKey(event, false);
         if (handled_by_keypad) {
             event->accept();
@@ -2058,7 +2254,6 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
     }
 
     // ===== ADAM keyboard mode =====
-
     // F1..F6 → AdamNet (break) + F7..F10
     if (key >= Qt::Key_F1 && key <= Qt::Key_F10) {
         if (!event->isAutoRepeat()) {
@@ -2116,7 +2311,7 @@ void MainWindow::onLoadDisk(int drive)
         absoluteDiskPath,
         tr("ADAM Disk (*.dsk *.img);;All Files (*.*)"),
         nullptr,
-        CustomFileDialog::PathDisk, // Gebruik PathDisk type
+        CustomFileDialog::PathDisk,
         QFileDialog::Options()
         );
 
@@ -2131,6 +2326,12 @@ void MainWindow::onLoadDisk(int drive)
                               Qt::QueuedConnection,
                               Q_ARG(int, drive),
                               Q_ARG(QString, filePath));
+
+    // Start de ADAM Reset knop te knipperen (NIEUW)
+    if (m_resetAdamBlinkTimer && !m_resetAdamBlinkTimer->isActive()) {
+        onToggleResetAdamBlink(); // Zet direct de eerste blink-status
+        m_resetAdamBlinkTimer->start(300); // Start knipperen (300ms interval)
+    }
 }
 
 void MainWindow::onLoadTape(int drive)
@@ -2145,7 +2346,7 @@ void MainWindow::onLoadTape(int drive)
         absoluteTapePath,
         tr("ADAM Tape (*.ddp);;All Files (*.*)"),
         nullptr,
-        CustomFileDialog::PathTape, // Gebruik PathTape type
+        CustomFileDialog::PathTape,
         QFileDialog::Options()
         );
 
@@ -2160,6 +2361,13 @@ void MainWindow::onLoadTape(int drive)
                               Qt::QueuedConnection,
                               Q_ARG(int, drive),
                               Q_ARG(QString, filePath));
+
+    // Start de ADAM Reset knop te knipperen (NIEUW)
+    if (m_resetAdamBlinkTimer && !m_resetAdamBlinkTimer->isActive()) {
+        onToggleResetAdamBlink(); // Zet direct de eerste blink-status
+        m_resetAdamBlinkTimer->start(300); // Start knipperen (300ms interval)
+    }
+
 }
 
 void MainWindow::onEjectDisk(int drive)
@@ -2181,6 +2389,10 @@ void MainWindow::onEjectTape(int drive)
 void MainWindow::onDiskStatusChanged(int drive, const QString& fileName)
 {
     QIcon checkIcon = style()->standardIcon(QStyle::SP_DialogApplyButton);
+
+    if (drive >= 0 && drive < 4) {
+        m_loadedDiskNames[drive] = fileName;
+    }
 
     if (drive == 0) {
         m_isDiskLoadedA = !fileName.isEmpty();
@@ -2229,8 +2441,11 @@ void MainWindow::onDiskStatusChanged(int drive, const QString& fileName)
 
 void MainWindow::onTapeStatusChanged(int drive, const QString& fileName)
 {
-    // Haal een standaard vinkje-icoon op uit de huidige stijl
     QIcon checkIcon = style()->standardIcon(QStyle::SP_DialogApplyButton);
+
+    if (drive >= 0 && drive < 4) {
+        m_loadedTapeNames[drive] = fileName;
+    }
 
     if (drive == 0) {
         m_isTapeLoadedA = !fileName.isEmpty();
@@ -2323,6 +2538,7 @@ void MainWindow::updateMediaMenuState()
 
     if (!isAdam) {
         if (m_adamRomMenu) m_adamRomMenu->setEnabled(false);
+        if (m_colecoRomMenu) m_colecoRomMenu->setEnabled(true);
 
         if (m_tapeMenuA) m_tapeMenuA->setEnabled(false);
         if (m_tapeMenuB) m_tapeMenuB->setEnabled(false);
@@ -2353,11 +2569,12 @@ void MainWindow::updateMediaMenuState()
     }
 
     // Tape ↔ Disk exclusie
-    const bool canUseTape = true;//!m_isDiskLoadedA && !m_isDiskLoadedB && !m_isDiskLoadedC && !m_isDiskLoadedD;
-    const bool canUseDisk = true;//!m_isTapeLoadedA && !m_isTapeLoadedB && !m_isTapeLoadedC && !m_isTapeLoadedD;
+    const bool canUseTape = true;
+    const bool canUseDisk = true;
 
     // Rom
     if (m_adamRomMenu) m_adamRomMenu->setEnabled(true);
+    if (m_colecoRomMenu) m_colecoRomMenu->setEnabled(false);
 
     // Tape
     if (m_tapeMenuA) m_tapeMenuA->setEnabled(canUseTape);
@@ -2420,19 +2637,15 @@ void MainWindow::onAdamInputModeChanged()
     m_adamInputModeJoystick = m_actAdamJoystick->isChecked();
     qDebug() << "ADAM Input Mode set to:" << (m_adamInputModeJoystick ? "Joystick" : "Keyboard");
 
-    // Geef focus terug aan het scherm
     if (m_screenWidget) {
         m_screenWidget->setFocus(Qt::OtherFocusReason);
     }
 }
 
-
-// menu/actie “Open Printer Window”
 void MainWindow::onShowPrinterWindow()
 {
     PrintWindow* w = PrintWindow::instance();
 
-    // 1) Toon & focus
     if (!w->isVisible()) {
         w->show();
     }
@@ -2525,7 +2738,7 @@ void MainWindow::onSaveState()
         finalPath += ".sta";
 
     QFileInfo fileInfo(finalPath);
-    CustomFileDialog::s_lastSaveDir = fileInfo.absolutePath(); // Gebruik s_lastSaveDir voor Save dialogen!
+    CustomFileDialog::s_lastSaveDir = fileInfo.absolutePath();
 
     QMetaObject::invokeMethod(
         m_colecoController,
@@ -2613,6 +2826,28 @@ void MainWindow::onJoystickTypeChanged(QAction* action)
         m_joystick->stopPolling();
         m_joystick->startPolling(0);
     }
+}
+
+void MainWindow::onTogglePaddleMode(bool checked)
+{
+    m_usePaddleMode = checked;
+    qDebug() << "UI: Paddle Mode set to" << (checked ? "ON" : "OFF");
+
+    // Sla de status op (toe te voegen in save/loadSettings later)
+    QSettings settings;
+    settings.setValue("controller/usePaddleMode", checked);
+
+    // PUSH DE STATUS NAAR DE BRIDGE (CRUCIAAL)
+    // De bridge heeft geen setter nodig; we kunnen de volatile variabele direct zetten.
+    extern volatile uint8_t ib_paddle_mode; // Moet geëxporteerd worden in coleco.cpp om te kunnen gebruiken
+    ib_paddle_mode = checked ? 1 : 0;
+
+    // Stuur de status naar de InputWidget voor lokale filtering
+    if (m_inputWidget) {
+        m_inputWidget->setPaddleMode(checked);
+    }
+
+    // (Optioneel: Herstart de polling als de setJoystickType dit nodig heeft)
 }
 
 void MainWindow::onSaveBreakpoint()
@@ -2728,4 +2963,314 @@ void MainWindow::onLoadBreakpoint()
     file.close();
 
     m_debugWin->setBreakpointDefinitions(loadedBreakpoints);
+}
+
+void MainWindow::onResetAdamBtnClicked()
+{
+    if (!m_resetAdamBtn) return;
+
+    // Eerst de knipperfunctie stoppen en de iconen resetten (NIEUW)
+    if (m_resetAdamBlinkTimer && m_resetAdamBlinkTimer->isActive()) {
+        m_resetAdamBlinkTimer->stop();
+        m_resetAdamBtn->setChecked(false); // Zorg ervoor dat de knop 'uit' is
+        m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png")); // Standaard icoon
+    }
+
+    // 1. HARD RESET uitvoeren (dwingt de ADAM-modus af en reset de CPU/I/O)
+    switchToAdamMode();
+
+    // 2. STATUS HERBEVESTIGEN (ADAM ROM)
+    if (!m_currentARomName.isEmpty())
+    {
+        // Absolute pad logica: ga ervan uit dat m_romPath of CustomFileDialog::s_lastOpenDir de basis is
+        QString absolutePath = QDir::cleanPath(CustomFileDialog::s_lastOpenDir + QDir::separator() + m_currentARomName);
+
+        QMetaObject::invokeMethod(
+            m_colecoController,
+            "AdamCartridge",
+            Qt::QueuedConnection,
+            Q_ARG(QString, absolutePath) // Dwingt de kern de ROM opnieuw te mappen
+            );
+    }
+
+    // 3. STATUS HERBEVESTIGEN (TAPES)
+    for (int drive = 0; drive < 4; ++drive)
+    {
+        if (!m_loadedTapeNames[drive].isEmpty())
+        {
+            // We moeten het absolute pad reconstrueren om de load functie aan te roepen
+            // We gebruiken CustomFileDialog::s_lastOpenDir als basispad voor de media
+            QString absolutePath = QDir::cleanPath(CustomFileDialog::s_lastOpenDir + QDir::separator() + m_loadedTapeNames[drive]);
+
+            QMetaObject::invokeMethod(
+                m_colecoController,
+                "loadTape",
+                Qt::QueuedConnection,
+                Q_ARG(int, drive),
+                Q_ARG(QString, absolutePath) // Herlaadt de tape (koppelt de FDI structuur opnieuw)
+                );
+        }
+    }
+
+    // 4. STATUS HERBEVESTIGEN (DISKS)
+    for (int drive = 0; drive < 4; ++drive)
+    {
+        if (!m_loadedDiskNames[drive].isEmpty())
+        {
+            QString absolutePath = QDir::cleanPath(CustomFileDialog::s_lastOpenDir + QDir::separator() + m_loadedDiskNames[drive]);
+
+            QMetaObject::invokeMethod(
+                m_colecoController,
+                "loadDisk",
+                Qt::QueuedConnection,
+                Q_ARG(int, drive),
+                Q_ARG(QString, absolutePath) // Herlaadt de disk (koppelt de FDI structuur opnieuw)
+                );
+        }
+    }
+
+    // 5. GUI Updaten (bevestigt de opgeslagen namen)
+    updateMediaMenuState();
+    updateMediaStatusLabels();
+    updateHardwareWindowMediaDisplay();
+
+    // Visuele feedback: kortstondig de ON-afbeelding tonen
+    m_resetAdamBtn->setChecked(true);
+    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_on.png"));
+
+    QTimer::singleShot(250, this, [this]() {
+        if (m_resetAdamBtn) {
+            m_resetAdamBtn->setChecked(false);
+            m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
+        }
+    });
+    onhReset();
+}
+
+void MainWindow::onResetCartBtnClicked()
+{
+    if (!m_resetCartBtn) return;
+
+    if (m_resetCartBlinkTimer && m_resetCartBlinkTimer->isActive()) {
+        m_resetCartBlinkTimer->stop();
+        m_resetCartBtn->setChecked(false); // Zorg ervoor dat de knop 'uit' is
+        m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png")); // Standaard icoon
+    }
+
+    // Voer Soft Reset (Cartridge Reset) uit
+    switchToColecoMode();
+    //onReset();
+    onSgmStatusChanged(m_sgmEnabled);
+
+    if (!m_currentRomName.isEmpty())
+    {
+        // Vorm het absolute pad (we gaan ervan uit dat de ROM in m_romPath of CustomFileDialog::s_lastOpenDir staat)
+        QString absolutePath = QDir::cleanPath(CustomFileDialog::s_lastOpenDir + QDir::separator() + m_currentRomName);
+
+        // Zelfs als het absolute pad niet 100% klopt, is de naam belangrijk voor de controller logica
+        // We roepen de ColecoCartridge functie aan met de opgeslagen naam.
+        QMetaObject::invokeMethod(
+            m_colecoController,
+            "ColecoCartridge",
+            Qt::QueuedConnection,
+            Q_ARG(QString, absolutePath) // Dit dwingt de kern de ROM opnieuw te mappen
+            );
+
+        // Let op: We moeten hier de naam handhaven en NIET wissen.
+    }
+
+    updateMediaMenuState();
+    updateMediaStatusLabels();
+    updateHardwareWindowMediaDisplay();
+
+    // Visuele feedback blijft hetzelfde
+    m_resetCartBtn->setChecked(true);
+    m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_on.png"));
+
+    QTimer::singleShot(250, this, [this]() {
+        if (m_resetCartBtn) {
+            m_resetCartBtn->setChecked(false);
+            m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png"));
+        }
+    });
+    onReset();
+}
+
+void MainWindow::switchToAdamMode()
+{
+    if (!m_colecoController) return;
+
+    // 1. Maak een NIEUWE configuratie op basis van de HUIDIGE configuratie
+    HardwareConfig newCfg;
+    // Laad de actuele hardwaresetting van MainWindow in de tijdelijke config
+    newCfg.machine = MACHINE_ADAM;
+    newCfg.palette = m_paletteIndex;
+    newCfg.sgmEnabled = m_sgmEnabled; // Behoud de SGM-status (deze wordt later uitgeschakeld in applyHardwareConfig)
+    newCfg.f18aEnabled = m_f18aEnabled;
+    newCfg.steeringWheel = m_ctrlSteering;
+    newCfg.rollerCtrl = m_ctrlRoller;
+    newCfg.superAction = m_ctrlSuperAction;
+
+    // 2. Roep de controller aan om de ADAM-modus te starten
+    QMetaObject::invokeMethod(
+        m_colecoController,
+        "resetAdam", // Roept ColecoController::setMachineType(ADAM) aan en reset.
+        Qt::QueuedConnection
+        );
+
+    // 3. Update de UI en interne status van MainWindow met de nieuwe config.
+    // Dit zal m_machineType op 1 zetten, de statusbalk en de bezels updaten.
+    applyHardwareConfig(newCfg);
+}
+
+void MainWindow::switchToColecoMode()
+{
+    if (!m_colecoController) return;
+
+    // 1. Maak een NIEUWE configuratie op basis van de HUIDIGE configuratie
+    HardwareConfig newCfg;
+    newCfg.machine = MACHINE_COLECO;
+    newCfg.palette = m_paletteIndex;
+    newCfg.sgmEnabled = m_sgmEnabled; // Behoud de SGM-status
+    newCfg.f18aEnabled = m_f18aEnabled;
+    newCfg.steeringWheel = m_ctrlSteering;
+    newCfg.rollerCtrl = m_ctrlRoller;
+    newCfg.superAction = m_ctrlSuperAction;
+
+    // 2. Roep de controller aan om de COLECO-modus te starten
+    QMetaObject::invokeMethod(
+        m_colecoController,
+        "resetColeco", // Roept ColecoController::setMachineType(COLECO) aan en reset.
+        Qt::QueuedConnection
+        );
+
+    // 3. Update de UI en interne status van MainWindow met de nieuwe config.
+    applyHardwareConfig(newCfg);
+
+    QMetaObject::invokeMethod(
+        m_colecoController,
+        "setSGMEnabled",
+        Qt::QueuedConnection,
+        Q_ARG(bool, m_sgmEnabled) // Gebruik de actuele, in applyHardwareConfig ingestelde status
+        );
+}
+
+void MainWindow::onMachineTypeChanged(MachineType newType)
+{
+    // MACHINE_ADAM (2) -> 1, MACHINE_COLECO (0) -> 0
+    const int newMachineTypeInt = (newType == MACHINE_ADAM) ? 1 : 0;
+
+    // Controleer of er een verandering is, anders is de volgende logica overbodig.
+    if (m_machineType == newMachineTypeInt) {
+        return;
+    }
+
+    m_machineType = newMachineTypeInt;
+
+    qDebug() << "UI: Machine type updated to" << (m_machineType ? "ADAM" : "COLECO") << "via signal.";
+
+    HardwareConfig currentCfg;
+
+    currentCfg.machine = newType;
+    currentCfg.palette = m_paletteIndex;
+    currentCfg.sgmEnabled = m_sgmEnabled;
+    currentCfg.f18aEnabled = m_f18aEnabled;
+    currentCfg.steeringWheel = m_ctrlSteering;
+    currentCfg.rollerCtrl = m_ctrlRoller;
+    currentCfg.superAction = m_ctrlSuperAction;
+
+    applyHardwareConfig(currentCfg);
+}
+
+void MainWindow::onPowerBtnClicked()
+{
+    // Stop ADAM Reset knop knipperen
+    if (m_resetAdamBlinkTimer && m_resetAdamBlinkTimer->isActive()) {
+        m_resetAdamBlinkTimer->stop();
+        if (m_resetAdamBtn) {
+            m_resetAdamBtn->setChecked(false);
+            m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png")); // Zet standaard icoon terug
+        }
+    }
+
+    // Stop Cartridge Reset knop knipperen
+    if (m_resetCartBlinkTimer && m_resetCartBlinkTimer->isActive()) {
+        m_resetCartBlinkTimer->stop();
+        if (m_resetCartBtn) {
+            m_resetCartBtn->setChecked(false);
+            m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png")); // Zet standaard icoon terug
+        }
+    }
+
+    m_powerBtn->setChecked(true);
+    m_powerBtn->setIcon(QIcon(":/images/images/adamp_logo_power_adam_on.png"));
+
+    QTimer::singleShot(250, this, [this]() {
+        if (m_powerBtn) {
+            m_powerBtn->setChecked(false);
+            m_powerBtn->setIcon(QIcon(":/images/images/adamp_logo_power_adam_off.png"));
+        }
+    });
+
+    onReleaseAll();
+}
+
+void MainWindow::onReleaseAll()
+{
+    // Coleco Cartridge
+    onEjectColecoRom();
+
+    // ADAM Cartridge
+    onEjectAdamRom();
+
+    // Tapes (D1-D4)
+    for (int drive = 0; drive < 4; ++drive) {
+        onEjectTape(drive);
+    }
+
+    // Disks (D5-D8)
+    for (int drive = 0; drive < 4; ++drive) {
+        onEjectDisk(drive);
+    }
+
+    if (m_machineType == 1) { // ADAM
+        switchToAdamMode();
+    } else { // COLECO
+        switchToColecoMode();
+    }
+
+    updateMediaMenuState();
+    updateMediaStatusLabels();
+    updateHardwareWindowMediaDisplay();
+
+    qDebug() << "UI: Release All / Power Off executed. Back to "
+             << (m_machineType ? "ADAM" : "COLECO") << "modus.";
+}
+
+void MainWindow::onToggleResetAdamBlink()
+{
+    if (!m_resetAdamBtn) return;
+
+    // Toggle de checked-status
+    bool isChecked = m_resetAdamBtn->isChecked();
+    m_resetAdamBtn->setChecked(!isChecked);
+
+    // Wissel tussen de standaard 'off' icoon en de 'blink' icoon
+    m_resetAdamBtn->setIcon(QIcon(isChecked
+                                      ? ":/images/images/adamp_logo_reset_adam_off.png"
+                                      : ":/images/images/adamp_logo_reset_adam_blink.png"));
+}
+
+void MainWindow::onToggleResetCartBlink()
+{
+    if (!m_resetCartBtn) return;
+
+    // Toggle de checked-status
+    bool isChecked = m_resetCartBtn->isChecked();
+    m_resetCartBtn->setChecked(!isChecked);
+
+    // Wissel tussen de standaard 'off' icoon en de 'blink' icoon
+    m_resetCartBtn->setIcon(QIcon(isChecked
+                                      ? ":/images/images/adamp_logo_reset_cartridge_off.png"
+                                      : ":/images/images/adamp_logo_reset_cartridge_blink.png"));
 }

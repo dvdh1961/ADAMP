@@ -203,7 +203,6 @@ QSize ScreenWidget::minimumSizeHint() const {
     return QSize(COLECO_WIDTH, COLECO_HEIGHT);
 }
 
-#if defined(Q_OS_WIN)
 void ScreenWidget::setFullScreenMode(bool enabled)
 {
     if (m_isFullScreen == enabled) return;
@@ -217,33 +216,6 @@ void ScreenWidget::setScanlinesMode(ScanlinesMode mode)
     m_scanlinesMode = mode;
     update();
 }
-
-#endif
-#if defined(Q_OS_LINUX)
-void ScreenWidget::setFullScreenMode(bool enabled)
-{
-    if (m_isFullScreen == enabled)
-        return;
-
-    m_isFullScreen = enabled;
-
-    // Top-level venster (bv. MainWindow)
-    if (QWidget *top = window()) {
-        Qt::WindowStates st = top->windowState();
-
-        if (enabled) {
-            top->setWindowState(st | Qt::WindowFullScreen);
-            top->showFullScreen();   // extra duwtje, werkt goed op Linux
-        } else {
-            top->setWindowState(st & ~Qt::WindowFullScreen);
-            top->showNormal();
-        }
-    }
-
-    updateGeometry();
-    update();
-}
-#endif
 
 void ScreenWidget::updateFrame(const QImage &frame)
 {

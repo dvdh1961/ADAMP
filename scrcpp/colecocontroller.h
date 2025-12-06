@@ -6,7 +6,7 @@
 #include <QAudioSink>
 #include <QIODevice>
 #include <QElapsedTimer>
-
+#include <atomic>
 #include "coleco.h"
 
 #define KB_F1 0x54
@@ -37,8 +37,15 @@ class ColecoController : public QObject
 public:
     explicit ColecoController(QObject *parent = nullptr);
     ~ColecoController();
+    enum MachineType {
+        Machine_Coleco = 0,
+        Machine_Adam   = 1
+    };
+    Q_ENUM(MachineType)
 
 private:
+    std::atomic_bool m_running {false};
+    int      m_realFrames = 0;
     QImage m_frameBuffer;
     bool m_paused = false;
 
@@ -53,11 +60,13 @@ public slots:
     void stopEmulation();
     void loadRom(const QString &romPath);
     void AdamCartridge(const QString &romPath);
+    void ejectAdamCartridge();
+    void ColecoCartridge(const QString &romPath);
+    void ejectColecoCartridge();
     void resetMachine();
     void resethMachine();
     void setSGMEnabled(bool enabled);
     void setVideoStandard(bool isNTSC);
-    void setMachineType(int machineType); // 0=Coleco/Phoenix, 1=ADAM
     void onAdamKeyEvent(int adamKeyCode);
     void pauseEmulation();
     void resumeEmulation();
@@ -71,6 +80,10 @@ public slots:
     void ejectTape(int drive);
     void saveState(const QString& filePath);
     void loadState(const QString& filePath);
+    Q_INVOKABLE void setMachineType(int machineType); // 0=Coleco/Phoenix, 1=ADAM
+    Q_INVOKABLE void setMachineType(MachineType machineType);
+    Q_INVOKABLE void resetAdam();
+    Q_INVOKABLE void resetColeco();
 
 signals:
     void frameReady(const QImage &frame);
@@ -81,11 +94,10 @@ signals:
     void sgmStatusChanged(bool enabled);
     void diskStatusChanged(int drive, const QString& fileName);
     void tapeStatusChanged(int drive, const QString& fileName);
+    void machineTypeChanged(MachineType newType);
+    void cartridgeStatusChanged(const QString& colecoName, const QString& adamName);
 
 private:
-    bool     m_running = false;
-    int      m_realFrames = 0;
-
     bool   m_isNTSC;
     int    m_Clock;
     int    m_SampleRate;
@@ -95,11 +107,14 @@ private:
     int    m_BytesPerSampleStereo;
     QString m_currentDiskPath[MAX_DISKS];
     QString m_currentTapePath[MAX_TAPES];
+    QString m_currentColecoCartPath;
+    QString m_currentAdamCartPath;
 
     QElapsedTimer m_fpsCalcTimer;
     int m_fpsFrameCount;
 
     QImage frameFromBridge();
+    void doHardReset();
 };
 
 #endif

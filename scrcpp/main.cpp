@@ -38,13 +38,13 @@ int main(int argc, char *argv[])
             background: transparent;
             padding: 6px 10px;
         }
-        QMenuBar::item:selected {            /* hover */
+        QMenuBar::item:selected {
             background: #3a3a3a;
             color: #ffffff;
         }
-        QMenuBar::item:pressed,              /* open/ingedrukt */
+        QMenuBar::item:pressed,
         QMenuBar::item:open {
-            background: #4c5a66;             /* accent */
+            background: #4c5a66;
             color: #ffffff;
         }
 
@@ -61,11 +61,11 @@ int main(int argc, char *argv[])
             margin: 6px 8px;
         }
         QMenu::item {
-            padding: 6px 24px;               /* ruimte voor icon/checkbox */
+            padding: 6px 24px;
             border-radius: 3px;
         }
-        QMenu::item:selected {               /* hover in menu */
-            background: #4c5a66;             /* zelfde accent als menubalk */
+        QMenu::item:selected {
+            background: #4c5a66;
             color: #ffffff;
         }
         QMenu::item:disabled {
@@ -74,13 +74,18 @@ int main(int argc, char *argv[])
         QMenu::item:selected:disabled {
             background: #3a3a3a;
         }
-
+        QMenu::indicator {
+            width: 16px; height: 16px;
+        }
         /* Checkbox/checked items in menu */
         QMenu::indicator:checked {
-            background: #6b7c8a;
-            border: 1px solid #8da0ae;
+            background: transparent;
+            border: 0px;
+            image: url(:/images/images/Check.png);
         }
     )");
+
+
 
     LogWidget::installQtHandler();
 

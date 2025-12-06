@@ -1,6 +1,8 @@
 #include "simplejoystick.h"
 #include <QDebug>
+#include <algorithm> // Nodig voor std::min/max
 
+// Nodige OS headers
 #ifdef Q_OS_WIN
 #include <windows.h>
 #include <mmsystem.h>
@@ -13,110 +15,216 @@
 #include <linux/input.h>
 #include <dirent.h>
 #include <cstring>
+#include <sys/ioctl.h>
+#include <cstdio>
 #endif
-
-SimpleJoystick::SimpleJoystick(QObject *parent)
-    : QObject(parent)
-{
-    connect(&m_pollTimer, &QTimer::timeout,
-            this, &SimpleJoystick::onPollTimer);
-}
-
-SimpleJoystick::~SimpleJoystick()
-{
-    stopPolling();
-}
-
-void SimpleJoystick::startPolling(int joystickIndex)
-{
-    stopPolling();
-    m_joystickIndex = joystickIndex;
-    m_firstRun = true; // Reset kalibratie
-
-#ifdef Q_OS_LINUX
-    openLinuxJoystick(joystickIndex);
-    qDebug() << "SimpleJoystick: openLinuxJoystick called";
-    qDebug() << "Joystick index =" << joystickIndex;
-#endif
-
-#ifdef Q_OS_WIN
-    openWindowsJoystick(joystickIndex);
-#endif
-
-    m_pollTimer.start(16); // ~60 Hz
-}
-
-void SimpleJoystick::stopPolling()
-{
-    m_pollTimer.stop();
-
-#ifdef Q_OS_LINUX
-    closeLinux();
-#endif
-
-#ifdef Q_OS_WIN
-    closeWindows();
-#endif
-}
-
-void SimpleJoystick::onPollTimer()
-{
-#ifdef Q_OS_LINUX
-    if (m_fd < 0) return;
-
-    if (m_usingEvdev)
-        readLinuxEvdev();
-    else
-        readLinuxJoystick();
-#endif
-
-#ifdef Q_OS_WIN
-    readWindowsJoystick();
-#endif
-}
-
-void SimpleJoystick::onSocketActivated(int /*fd*/)
-{
-    // Indien je QSocketNotifier wilt gebruiken i.p.v. timer
-    onPollTimer();
-}
 
 // =====================================================================
-// LINUX-IMPLEMENTATIE
+// 1. ABSTRACTE BASISKLASSE EN GEDEELDE MAPPING LOGICA (PUUR C++)
 // =====================================================================
+
+// Nieuwe struct om ruwe input door te geven (uniforme data structuur)
+struct RawJoystickInput {
+    int buttonID = -1;
+    bool buttonPressed = false;
+    int axisID = -1;
+    int axisValue = 0;
+    enum HatDirection { Neutral, Up, Down, Left, Right, UpLeft, UpRight, DownLeft, DownRight };
+    HatDirection hatDirection = Neutral;
+};
+
+
+class SimpleJoystickPrivate // GEEN Q_OBJECT MEER!
+{
+public:
+    // De constructor ontvangt een pointer naar de callback-interface (SimpleJoystick)
+    explicit SimpleJoystickPrivate(IJoystickCallback* callback) : m_callback(callback) {}
+    virtual ~SimpleJoystickPrivate() = default;
+
+    // Pure virtuele functies (de interface)
+    virtual bool start(int joystickIndex) = 0;
+    virtual void stop() = 0;
+    virtual void update() = 0; // Wordt aangeroepen door de QTimer
+    void setType(int type) { m_joystickType = type; m_firstRun = true; } // Gedeeld
+
+protected:
+    IJoystickCallback* m_callback; // De callback om signalen te simuleren
+    int m_joystickType = 0;
+    bool m_firstRun = true;
+
+    // Status geheugen (in de basisklasse voor de gedeelde mapping)
+    bool m_lastUp = false;
+    bool m_lastDown = false;
+    bool m_lastLeft = false;
+    bool m_lastRight = false;
+    bool m_lastFireL = false;
+    bool m_lastFireR = false;
+    bool m_lastStart = false;
+    bool m_lastSelect = false;
+
+    // Gedeelde mapping functie!
+    void mapAndEmitInput(const RawJoystickInput& input);
+};
+
+
+void SimpleJoystickPrivate::mapAndEmitInput(const RawJoystickInput& input)
+{
+    bool up    = m_lastUp;
+    bool down  = m_lastDown;
+    bool left  = m_lastLeft;
+    bool right = m_lastRight;
+    bool fireL = m_lastFireL;
+    bool fireR = m_lastFireR;
+    bool select = m_lastSelect;
+    bool start = m_lastStart;
+
+    const int TH = 16000; // Dead zone threshold
+
+    // 1. ANALOGE SPINNER/X-AS (Axis 0)
+    if (input.axisID == 0) {
+        m_callback->dispatchAnalogX(input.axisValue);
+    }
+
+    // 2. AXIS MAPPING (voor D-pad/richting via analoge sticks)
+    if (input.axisID != -1 && input.axisID != 0) {
+        // Horizontale as
+        if (input.axisID == 0 || input.axisID == 6) {
+            left  = (input.axisValue < -TH);
+            right = (input.axisValue >  TH);
+        }
+        // Verticale as
+        if (input.axisID == 1 || input.axisID == 7) {
+            up   = (input.axisValue < -TH);
+            down = (input.axisValue >  TH);
+        }
+    }
+
+
+    // 3. BUTTON MAPPING (voor Fire, Start/Select en D-pad knoppen)
+    if (input.buttonID != -1) {
+        bool pressed = input.buttonPressed;
+
+        switch (m_joystickType) {
+        case 0:
+        case 1:
+        {
+            if (input.buttonID == 0) fireL = pressed;
+            if (input.buttonID == 1) fireR = pressed;
+
+            if (input.buttonID == 8) select = pressed;
+            if (input.buttonID == 9) start = pressed;
+
+// Platform-specifieke knoppen binnen de gedeelde functie
+#ifdef Q_OS_WIN
+            if (input.buttonID == 6) select = pressed;
+            if (input.buttonID == 7) start = pressed;
+#endif
+
+            if (input.buttonID >= 11 && input.buttonID <= 14) {
+                if (pressed) {
+                    up = down = left = right = false;
+                    if (input.buttonID == 11) up = true;
+                    if (input.buttonID == 12) down = true;
+                    if (input.buttonID == 13) left = true;
+                    if (input.buttonID == 14) right = true;
+                } else { up = down = left = right = false; }
+            }
+            break;
+        }
+
+        case 2: // XBOX 360 Mapping
+        {
+            if (input.buttonID == 0) fireL = pressed;
+            if (input.buttonID == 1) fireR = pressed;
+
+            if (input.buttonID == 6) select = pressed;
+            if (input.buttonID == 7) start = pressed;
+
+            if (input.buttonID >= 11 && input.buttonID <= 14) {
+                if (pressed) {
+                    up = down = left = right = false;
+                    if (input.buttonID == 11) up = true;
+                    if (input.buttonID == 12) down = true;
+                    if (input.buttonID == 13) left = true;
+                    if (input.buttonID == 14) right = true;
+                } else { up = down = left = right = false; }
+            }
+            break;
+        }
+        } // einde switch (m_joystickType)
+    }
+
+    // 4. HAT/POV MAPPING (D-pad via hoed-switch)
+    if (input.hatDirection != RawJoystickInput::Neutral) {
+        up    = (input.hatDirection == RawJoystickInput::Up || input.hatDirection == RawJoystickInput::UpLeft || input.hatDirection == RawJoystickInput::UpRight);
+        down  = (input.hatDirection == RawJoystickInput::Down || input.hatDirection == RawJoystickInput::DownLeft || input.hatDirection == RawJoystickInput::DownRight);
+        left  = (input.hatDirection == RawJoystickInput::Left || input.hatDirection == RawJoystickInput::UpLeft || input.hatDirection == RawJoystickInput::DownLeft);
+        right = (input.hatDirection == RawJoystickInput::Right || input.hatDirection == RawJoystickInput::UpRight || input.hatDirection == RawJoystickInput::DownRight);
+    } else if (input.hatDirection == RawJoystickInput::Neutral) {
+        if (input.axisID == -1 && input.buttonID == -1) {
+            up = down = left = right = false;
+        }
+    }
+
+
+    // --- DISPATCH (EMIT SIMULATIE) UITSLUITEND ALS DE WAARDE IS GEWIJZIGD ---
+
+    if (up != m_lastUp || down != m_lastDown || left != m_lastLeft || right != m_lastRight) {
+        m_callback->dispatchDirection(up, down, left, right);
+        m_lastUp = up; m_lastDown = down; m_lastLeft = left; m_lastRight = right;
+    }
+    if (fireL != m_lastFireL) { m_callback->dispatchFireLeft(fireL); m_lastFireL = fireL; }
+    if (fireR != m_lastFireR) { m_callback->dispatchFireRight(fireR); m_lastFireR = fireR; }
+    if (start != m_lastStart) { m_callback->dispatchStart(start); m_lastStart = start; }
+    if (select!= m_lastSelect) { m_callback->dispatchSelect(select); m_lastSelect = select; }
+}
+
+
+// =====================================================================
+// 2. CONCRETE IMPLEMENTATIES (per OS) - PURE C++ KLASSEN
+// =====================================================================
+
 #ifdef Q_OS_LINUX
 
-// Probeer /dev/input/jsX te openen (oude joystick-API)
-bool SimpleJoystick::tryOpenJs(int index)
+class SimpleJoystickLinux : public SimpleJoystickPrivate
 {
-    qDebug() << "Trying to get js device";
+public:
+    // Ontvangt de IJoystickCallback* van de publieke SimpleJoystick
+    SimpleJoystickLinux(IJoystickCallback* callback) : SimpleJoystickPrivate(callback) {}
+    ~SimpleJoystickLinux() override { closeLinux(); }
+
+    bool start(int joystickIndex) override;
+    void stop() override { closeLinux(); }
+    void update() override;
+
+private:
+    int m_fd = -1;
+    // QSocketNotifier blijft nodig, maar wordt geconnecteerd buiten de private klasse
+    QSocketNotifier *m_notifier = nullptr;
+    bool m_usingEvdev = false;
+
+    void closeLinux();
+    void readLinuxJoystick();
+    void readLinuxEvdev();
+    bool tryOpenJs(int index);
+    bool tryOpenEvdev();
+    // onSocketActivated is niet meer nodig als interne slot
+};
+
+bool SimpleJoystickLinux::tryOpenJs(int index)
+{
     QString path = QString("/dev/input/js%1").arg(index);
-    qDebug() << "Trying js device:" << QString("/dev/input/js%1").arg(index);
     m_fd = ::open(path.toLocal8Bit().constData(), O_RDONLY | O_NONBLOCK);
     if (m_fd >= 0) {
         m_usingEvdev = false;
-
-        // eventueel basiswaarden inlezen (optioneel)
-        m_baseX = 0;
-        m_baseY = 0;
-
-        if (!m_notifier) {
-            m_notifier = new QSocketNotifier(m_fd, QSocketNotifier::Read, this);
-            connect(m_notifier, &QSocketNotifier::activated,
-                    this, &SimpleJoystick::onSocketActivated);
-        } else {
-            m_notifier->setSocket(m_fd);
-            m_notifier->setEnabled(true);
-        }
-
+        // NIEUW: De notifier wordt NU geconnecteerd in de SimpleJoystick::startPolling
         qDebug() << "SimpleJoystick: opened" << path;
         return true;
     }
     return false;
 }
 
-// Zoek een geschikt /dev/input/eventX device (Bluetooth / evdev)
-bool SimpleJoystick::tryOpenEvdev()
+bool SimpleJoystickLinux::tryOpenEvdev()
 {
     DIR *dir = ::opendir("/dev/input");
     if (!dir) return false;
@@ -126,316 +234,111 @@ bool SimpleJoystick::tryOpenEvdev()
     int fdTest = -1;
 
     while ((entry = ::readdir(dir)) != nullptr) {
-        if (strncmp(entry->d_name, "event", 5) != 0)
-            continue;
-
+        if (strncmp(entry->d_name, "event", 5) != 0) continue;
         snprintf(namePath, sizeof(namePath), "/dev/input/%s", entry->d_name);
         fdTest = ::open(namePath, O_RDONLY | O_NONBLOCK);
-        if (fdTest < 0)
-            continue;
+        if (fdTest < 0) continue;
 
-        // Check apparaatnaam
         char devName[256] = {0};
         if (ioctl(fdTest, EVIOCGNAME(sizeof(devName)), devName) >= 0) {
             QString qname = QString::fromLocal8Bit(devName);
-            // heuristiek: controller / xbox / gamepad
             if (qname.contains("xbox", Qt::CaseInsensitive) ||
                 qname.contains("gamepad", Qt::CaseInsensitive) ||
                 qname.contains("controller", Qt::CaseInsensitive)) {
-
-                // Dit is onze jongen
                 m_fd = fdTest;
                 m_usingEvdev = true;
-
-                if (!m_notifier) {
-                    m_notifier = new QSocketNotifier(m_fd, QSocketNotifier::Read, this);
-                    connect(m_notifier, &QSocketNotifier::activated,
-                            this, &SimpleJoystick::onSocketActivated);
-                } else {
-                    m_notifier->setSocket(m_fd);
-                    m_notifier->setEnabled(true);
-                }
-
+                // De notifier is in dit model nog steeds een probleem,
+                // we vertrouwen op de SimpleJoystick::onPollTimer voor polling
                 qDebug() << "SimpleJoystick: opened evdev" << namePath << "name:" << qname;
                 ::closedir(dir);
                 return true;
             }
         }
-
         ::close(fdTest);
     }
-
     ::closedir(dir);
     return false;
 }
 
-void SimpleJoystick::openLinuxJoystick(int joystickIndex)
+bool SimpleJoystickLinux::start(int joystickIndex)
 {
     closeLinux();
-
-    // 1) Eerst proberen jsX (PS4, Nintendo clone, USB Xbox, ...)
-    if (tryOpenJs(joystickIndex))
-        return;
-
-    // 2) Als dat faalt, proberen evdev voor bv. Bluetooth Xbox
-    if (tryOpenEvdev())
-        return;
-
+    if (tryOpenJs(joystickIndex)) return true;
+    if (tryOpenEvdev()) return true;
     qWarning() << "SimpleJoystick: no joystick / evdev device opened";
+    return false;
 }
 
-void SimpleJoystick::closeLinux()
+void SimpleJoystickLinux::closeLinux()
 {
-    if (m_notifier) {
-        m_notifier->setEnabled(false);
-        m_notifier->deleteLater();
-        m_notifier = nullptr;
-    }
-
+    // De notifier wordt NU VERWIJDERD EN BEHEERD IN SimpleJoystick
     if (m_fd >= 0) {
         ::close(m_fd);
         m_fd = -1;
     }
 }
 
-// ---------------------------------------------------------
-// /dev/input/jsX : klassieke joystick-API
-// Houdt PS4 / Nintendo-clone gedrag in stand
-// ---------------------------------------------------------
-void SimpleJoystick::readLinuxJoystick()
-{
-#ifdef Q_OS_LINUX
-    if (m_fd < 0)
-        return;
-
-    struct js_event e;
-    const int TH = 16000;
-
-    while (read(m_fd, &e, sizeof(e)) > 0) {
-        // Init-bit wegfilteren
-        e.type &= ~JS_EVENT_INIT;
-
-        if (e.type == JS_EVENT_BUTTON) {
-            bool pressed = (e.value != 0);
-
-            switch (e.number) {
-            // ---- bestaande knoppen (laten we gewoon zo) ----
-            case 0: // Fire links
-                if (pressed != m_lastFireL) {
-                    emit fireLeftChanged(pressed);
-                    m_lastFireL = pressed;
-                }
-                break;
-            case 1: // Fire rechts
-                if (pressed != m_lastFireR) {
-                    emit fireRightChanged(pressed);
-                    m_lastFireR = pressed;
-                }
-                break;
-            case 8: // Select
-                if (pressed != m_lastSelect) {
-                    emit selectPressed(pressed);
-                    m_lastSelect = pressed;
-                }
-                break;
-            case 9: // Start
-                if (pressed != m_lastStart) {
-                    emit startPressed(pressed);
-                    m_lastStart = pressed;
-                }
-                break;
-
-            // ---- XBOX 360 D-pad als buttons 11–14 ----
-            // Dit breekt PS4/Nintendo niet, die gebruiken deze knoppen normaal niet
-            case 11: // UP
-            case 12: // DOWN
-            case 13: // LEFT
-            case 14: // RIGHT
-            {
-                bool up    = m_lastUp;
-                bool down  = m_lastDown;
-                bool left  = m_lastLeft;
-                bool right = m_lastRight;
-
-                if (pressed) {
-                    // simpele mapping: 1 richting tegelijk actief
-                    up = down = left = right = false;
-                    if (e.number == 11) up    = true;
-                    if (e.number == 12) down  = true;
-                    if (e.number == 13) left  = true;
-                    if (e.number == 14) right = true;
-                } else {
-                    // bij loslaten: alle D-pad richtingen uit
-                    up = down = left = right = false;
-                }
-
-                if (up != m_lastUp || down != m_lastDown ||
-                    left != m_lastLeft || right != m_lastRight) {
-
-                    emit directionChanged(up, down, left, right);
-                    m_lastUp    = up;
-                    m_lastDown  = down;
-                    m_lastLeft  = left;
-                    m_lastRight = right;
-                }
-                break;
-            }
-
-            default:
-                break;
-            }
-        }
-        else if (e.type == JS_EVENT_AXIS) {
-            // ---- ANALOGE STICKS / HAT-AXES ----
-            // PS4 + Nintendo-clone gebruiken meestal axis 0/1 voor D-pad of stick
-            // Xbox 360 kan 0/1 voor stick, 6/7 voor D-pad zijn.
-            bool up    = m_lastUp;
-            bool down  = m_lastDown;
-            bool left  = m_lastLeft;
-            bool right = m_lastRight;
-
-            switch (e.number) {
-            // horizontaal: links/rechts
-            case 0: // klassieke X-as
-            case 6: // vaak D-pad X bij Xbox-drivers
-                left  = (e.value < -TH);
-                right = (e.value >  TH);
-                break;
-
-            // verticaal: boven/onder
-            case 1: // klassieke Y-as
-            case 7: // vaak D-pad Y bij Xbox-drivers
-                up   = (e.value < -TH);
-                down = (e.value >  TH);
-                break;
-
-            default:
-                break;
-            }
-
-            if (up != m_lastUp || down != m_lastDown ||
-                left != m_lastLeft || right != m_lastRight) {
-
-                emit directionChanged(up, down, left, right);
-                m_lastUp    = up;
-                m_lastDown  = down;
-                m_lastLeft  = left;
-                m_lastRight = right;
-            }
-        }
-    }
-#endif
-}
-
-// ---------------------------------------------------------
-// /dev/input/eventX : evdev (Bluetooth Xbox 360, enz.)
-// ---------------------------------------------------------
-void SimpleJoystick::readLinuxEvdev()
+void SimpleJoystickLinux::update()
 {
     if (m_fd < 0) return;
+    if (m_usingEvdev)
+        readLinuxEvdev();
+    else
+        readLinuxJoystick();
+}
 
+void SimpleJoystickLinux::readLinuxJoystick()
+{
+    if (m_fd < 0) return;
+    struct js_event e;
+    while (read(m_fd, &e, sizeof(e)) > 0) {
+        e.type &= ~JS_EVENT_INIT;
+        RawJoystickInput input;
+
+        if (e.type == JS_EVENT_BUTTON) {
+            input.buttonID = e.number;
+            input.buttonPressed = (e.value != 0);
+            mapAndEmitInput(input);
+        }
+        else if (e.type == JS_EVENT_AXIS) {
+            input.axisID = e.number;
+            input.axisValue = e.value;
+            if (input.axisID == 0) {
+                input.axisValue = -input.axisValue;
+            }
+            mapAndEmitInput(input);
+        }
+    }
+}
+
+void SimpleJoystickLinux::readLinuxEvdev()
+{
+    if (m_fd < 0) return;
     struct input_event ev;
     while (::read(m_fd, &ev, sizeof(ev)) > 0) {
+        RawJoystickInput input;
         if (ev.type == EV_KEY) {
-            bool pressed = (ev.value != 0);
-
-            switch (ev.code) {
-            // --- D-pad via EV_KEY BTN_DPAD_* (sommige drivers) ---
-            case BTN_DPAD_UP:
-            case BTN_DPAD_DOWN:
-            case BTN_DPAD_LEFT:
-            case BTN_DPAD_RIGHT:
-            {
-                bool up    = m_lastUp;
-                bool down  = m_lastDown;
-                bool left  = m_lastLeft;
-                bool right = m_lastRight;
-
-                // Simpel model: 1 richting per keer
-                if (pressed) {
-                    up = down = left = right = false;
-                    if (ev.code == BTN_DPAD_UP)    up    = true;
-                    if (ev.code == BTN_DPAD_DOWN)  down  = true;
-                    if (ev.code == BTN_DPAD_LEFT)  left  = true;
-                    if (ev.code == BTN_DPAD_RIGHT) right = true;
-                } else {
-                    // loslaten -> alles uit
-                    up = down = left = right = false;
-                }
-
-                if (up != m_lastUp || down != m_lastDown ||
-                    left != m_lastLeft || right != m_lastRight) {
-
-                    emit directionChanged(up, down, left, right);
-                    m_lastUp    = up;
-                    m_lastDown  = down;
-                    m_lastLeft  = left;
-                    m_lastRight = right;
-                }
-                break;
-            }
-
-            // --- Basis knoppen mapping (optioneel, Xbox A/B/Start/Select) ---
-            case BTN_A: // Fire L
-                if (pressed != m_lastFireL) {
-                    emit fireLeftChanged(pressed);
-                    m_lastFireL = pressed;
-                }
-                break;
-            case BTN_B: // Fire R
-                if (pressed != m_lastFireR) {
-                    emit fireRightChanged(pressed);
-                    m_lastFireR = pressed;
-                }
-                break;
-            case BTN_START:
-                if (pressed != m_lastStart) {
-                    emit startPressed(pressed);
-                    m_lastStart = pressed;
-                }
-                break;
-            case BTN_SELECT:
-            case BTN_BACK:
-                if (pressed != m_lastSelect) {
-                    emit selectPressed(pressed);
-                    m_lastSelect = pressed;
-                }
-                break;
-
-            default:
-                break;
-            }
+            input.buttonID = ev.code;
+            input.buttonPressed = (ev.value != 0);
+            mapAndEmitInput(input);
         }
         else if (ev.type == EV_ABS) {
-            // D-pad via ABS_HAT0X / ABS_HAT0Y (zeer typisch Bluetooth)
+            if (ev.code == ABS_X || ev.code == ABS_Y) {
+                input.axisID = ev.code == ABS_X ? 0 : 1;
+                input.axisValue = ev.value;
+                mapAndEmitInput(input);
+            }
             if (ev.code == ABS_HAT0X || ev.code == ABS_HAT0Y) {
-                int hatX = 0;
-                int hatY = 0;
+                int hatX = ev.code == ABS_HAT0X ? ev.value : (m_lastLeft ? -1 : (m_lastRight ? 1 : 0));
+                int hatY = ev.code == ABS_HAT0Y ? ev.value : (m_lastUp ? -1 : (m_lastDown ? 1 : 0));
 
-                // We hebben alleen de laatste waardes nodig
-                if (ev.code == ABS_HAT0X) {
-                    hatX = ev.value; // -1 links, 0 neutraal, 1 rechts
-                    // hou Y zoals hij was, we reconstrueren uit m_last*
-                    hatY = (m_lastUp ? -1 : (m_lastDown ? 1 : 0));
-                } else {
-                    hatY = ev.value; // -1 boven, 0, 1 onder
-                    hatX = (m_lastLeft ? -1 : (m_lastRight ? 1 : 0));
-                }
-
-                bool up    = (hatY < 0);
-                bool down  = (hatY > 0);
-                bool left  = (hatX < 0);
-                bool right = (hatX > 0);
-
-                if (up != m_lastUp || down != m_lastDown ||
-                    left != m_lastLeft || right != m_lastRight) {
-
-                    emit directionChanged(up, down, left, right);
-                    m_lastUp    = up;
-                    m_lastDown  = down;
-                    m_lastLeft  = left;
-                    m_lastRight = right;
-                }
+                if (hatX == 0 && hatY == 0) input.hatDirection = RawJoystickInput::Neutral;
+                else if (hatX == 0 && hatY < 0) input.hatDirection = RawJoystickInput::Up;
+                else if (hatX == 0 && hatY > 0) input.hatDirection = RawJoystickInput::Down;
+                else if (hatX < 0 && hatY == 0) input.hatDirection = RawJoystickInput::Left;
+                else if (hatX > 0 && hatY == 0) input.hatDirection = RawJoystickInput::Right;
+                // Diagonalen...
+                mapAndEmitInput(input);
             }
         }
     }
@@ -444,219 +347,207 @@ void SimpleJoystick::readLinuxEvdev()
 #endif // Q_OS_LINUX
 
 // =====================================================================
-// WINDOWS-IMPLEMENTATIE
-// =====================================================================
 #ifdef Q_OS_WIN
 
-// Hulpvariabele om te weten of de joystick geopend is
-static bool s_is_windows_joystick_open = false;
-
-void SimpleJoystick::openWindowsJoystick(int joystickIndex)
+class SimpleJoystickWindows : public SimpleJoystickPrivate
 {
-    s_is_windows_joystick_open = false;
+public:
+    SimpleJoystickWindows(IJoystickCallback* callback) : SimpleJoystickPrivate(callback) {}
+    ~SimpleJoystickWindows() override { closeWindows(); }
+
+    bool start(int joystickIndex) override;
+    void stop() override { closeWindows(); }
+    void update() override;
+
+private:
+    int m_joystickIndex = 0;
+    bool m_is_joystick_open = false;
+
+    void openWindowsJoystick(int joystickIndex);
+    void closeWindows();
+    void readWindowsJoystick();
+};
+
+void SimpleJoystickWindows::openWindowsJoystick(int joystickIndex)
+{
+    m_is_joystick_open = false;
     m_joystickIndex = joystickIndex;
 
     for (int i = 0; i < 16; ++i) {
-        // Probeer de joystick te detecteren
         JOYINFOEX joyInfo;
         joyInfo.dwSize = sizeof(JOYINFOEX);
         joyInfo.dwFlags = JOY_RETURNALL;
 
         if (joyGetPosEx(JOYSTICKID1 + i, &joyInfo) == JOYERR_NOERROR) {
             m_joystickIndex = i;
-            s_is_windows_joystick_open = true;
+            m_is_joystick_open = true;
             qDebug() << "Joystick: found at ID" << i;
             break;
         }
     }
 
-    if (!s_is_windows_joystick_open) {
+    if (!m_is_joystick_open) {
         qWarning() << "Joystick: NO joystick found.";
     }
 }
 
-void SimpleJoystick::closeWindows()
+void SimpleJoystickWindows::closeWindows()
 {
-    // Geen expliciete sluiting nodig voor de Windows Multimedia API
-    s_is_windows_joystick_open = false;
+    m_is_joystick_open = false;
 }
 
-void SimpleJoystick::readWindowsJoystick()
+bool SimpleJoystickWindows::start(int joystickIndex)
 {
-    if (!s_is_windows_joystick_open) return;
+    closeWindows();
+    openWindowsJoystick(joystickIndex);
+    return m_is_joystick_open;
+}
 
-    // We gebruiken JOYINFOEX om POV en knoppen uit te lezen
+void SimpleJoystickWindows::update()
+{
+    if (m_firstRun) {
+        m_firstRun = false;
+    }
+    readWindowsJoystick();
+}
+
+void SimpleJoystickWindows::readWindowsJoystick()
+{
+    if (!m_is_joystick_open) return;
+
     JOYINFOEX joyInfo;
     joyInfo.dwSize = sizeof(JOYINFOEX);
     joyInfo.dwFlags = JOY_RETURNALL | JOY_RETURNPOV | JOY_RETURNBUTTONS;
 
     if (joyGetPosEx(JOYSTICKID1 + m_joystickIndex, &joyInfo) != JOYERR_NOERROR)
     {
-        qWarning() << "Joystick: Error reading position from ID" << m_joystickIndex;
-        s_is_windows_joystick_open = false;
+        m_is_joystick_open = false;
         return;
     }
 
-    // We beginnen met alles op FALSE
-    bool up = false, down = false, left = false, right = false;
+    const int IDEAL_CENTER = 32768;
+    const int MAX_SAFE_VALUE = 32767;
+
+    // 1. ANALOGE X-AS (SPINNER)
+    RawJoystickInput analogXInput;
+    analogXInput.axisID = 0; // X-as
+
+    // Bereken de waarde (Left = +32768, Right = -32767)
+    int calculatedValue = -((int)joyInfo.dwXpos - IDEAL_CENTER);
+
+    // NIEUW: Klem de waarde om te garanderen dat 32768 niet wordt verzonden.
+    if (calculatedValue > MAX_SAFE_VALUE) {
+        calculatedValue = MAX_SAFE_VALUE;
+    } else if (calculatedValue < -MAX_SAFE_VALUE) {
+        calculatedValue = -MAX_SAFE_VALUE;
+    }
+
+    analogXInput.axisValue = calculatedValue;
+    mapAndEmitInput(analogXInput);
+
+    // 2. KNOPPEN
     int b = joyInfo.dwButtons;
-    // De knopbits 0-9 zijn 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, etc.
-    bool fireL;     // A
-    bool fireR;     // B
-    bool select;    // Select
-    bool start;     // Start
-
-    // JOYSTICK 1 GENERAL
-    if (m_joystickType == 0)
-    {
-        // --- AUTO-KALIBRATIE ---
-        if (m_firstRun)
-        {
-            m_baseX = joyInfo.dwXpos;
-            m_baseY = joyInfo.dwYpos;
-            m_firstRun = false;
-            qDebug() << "Joystick CALIBRATION: Center set at X:" << m_baseX << " Y:" << m_baseY;
-        }
-
-        int deltaX = (int)joyInfo.dwXpos - m_baseX;
-        int deltaY = (int)joyInfo.dwYpos - m_baseY;
-        const int TH = 15000;
-
-        if (deltaY < -TH) up = true;
-        if (deltaY >  TH) down = true;
-        if (deltaX < -TH) left = true;
-        if (deltaX >  TH) right = true;
-
-        // Knop 13 (Bit 12) = Vaak OMHOOG
-        if (b & 0x1000) up = true;
-        // Knop 14 (Bit 13) = Vaak RECHTS
-        if (b & 0x2000) right = true;
-        // Knop 15 (Bit 14) = Vaak OMLAAG
-        if (b & 0x4000) down = true;
-        // Knop 16 (Bit 15) = Vaak LINKS
-        if (b & 0x8000) left = true;
-
-        // A / FireL (Knop 1)
-        fireL  = (b & 1);
-        // B / FireR (Knop 2)
-        fireR  = (b & 2);
-        // Select (Vaak knop 7 of 9)
-        select = (b & 64) || (b & 256);
-        // Start (Vaak knop 8 of 10)
-        start  = (b & 128) || (b & 512);
+    for (int i = 0; i < 16; ++i) {
+        bool pressed = (b & (1 << i));
+        RawJoystickInput buttonInput;
+        buttonInput.buttonID = i;
+        buttonInput.buttonPressed = pressed;
+        mapAndEmitInput(buttonInput);
     }
 
-    // JOYSTICK 2 PS
-    if (m_joystickType == 1)
-    {
-        // POV HAT (Digitaal Kruisje)
-        if (joyInfo.dwPOV != 65535) { // 65535 = JOY_POVCENTERED
-        if (joyInfo.dwPOV == 0)     up = true;
-        if (joyInfo.dwPOV == 18000) down = true;
-        if (joyInfo.dwPOV == 27000) left = true;
-        if (joyInfo.dwPOV == 9000)  right = true;
-        // Diagonalen
-        if (joyInfo.dwPOV == 4500)  { up=true; right=true; }
-        if (joyInfo.dwPOV == 13500) { down=true; right=true; }
-        if (joyInfo.dwPOV == 22500) { down=true; left=true; }
-        if (joyInfo.dwPOV == 31500) { up=true; left=true; }
-        }
+    // 3. POV HAT
+    if (joyInfo.dwPOV != 65535) {
+        RawJoystickInput hatInput;
 
-        //  D-Pad via Knoppen
+        if (joyInfo.dwPOV == 0) hatInput.hatDirection = RawJoystickInput::Up;
+        else if (joyInfo.dwPOV == 4500) hatInput.hatDirection = RawJoystickInput::UpRight;
+        else if (joyInfo.dwPOV == 9000) hatInput.hatDirection = RawJoystickInput::Right;
+        else if (joyInfo.dwPOV == 13500) hatInput.hatDirection = RawJoystickInput::DownRight;
+        else if (joyInfo.dwPOV == 18000) hatInput.hatDirection = RawJoystickInput::Down;
+        else if (joyInfo.dwPOV == 22500) hatInput.hatDirection = RawJoystickInput::DownLeft;
+        else if (joyInfo.dwPOV == 27000) hatInput.hatDirection = RawJoystickInput::Left;
+        else if (joyInfo.dwPOV == 31500) hatInput.hatDirection = RawJoystickInput::UpLeft;
 
-        // Knop 13 (Bit 12) = Vaak OMHOOG
-        if (b & 0x1000) up = true;
-        // Knop 14 (Bit 13) = Vaak RECHTS
-        if (b & 0x2000) right = true;
-        // Knop 15 (Bit 14) = Vaak OMLAAG
-        if (b & 0x4000) down = true;
-        // Knop 16 (Bit 15) = Vaak LINKS
-        if (b & 0x8000) left = true;
-
-        // A / FireL (Knop 1)
-        fireL  = (b & 1);
-        // B / FireR (Knop 2)
-        fireR  = (b & 2);
-        // Select (Vaak knop 7 of 9)
-        select = (b & 64) || (b & 256);
-        // Start (Vaak knop 8 of 10)
-        start  = (b & 128) || (b & 512);
+        mapAndEmitInput(hatInput);
     }
-
-    // JOYSTICK 3 XBOX 360
-    if (m_joystickType == 2) // Xbox 360/XInput
-    {
-        // --- AUTO-KALIBRATIE (Sticks) ---
-        if (m_firstRun)
-        {
-            m_baseX = joyInfo.dwXpos;
-            m_baseY = joyInfo.dwYpos;
-            m_firstRun = false;
-            qDebug() << "Joystick CALIBRATION: Center set at X:" << m_baseX << " Y:" << m_baseY;
-        }
-
-        int deltaX = (int)joyInfo.dwXpos - m_baseX;
-        int deltaY = (int)joyInfo.dwYpos - m_baseY;
-        const int TH = 15000;
-
-        // Beweging via de Linker Analog Stick (Axis 0/1)
-        if (deltaY < -TH) up = true;
-        if (deltaY >  TH) down = true;
-        if (deltaX < -TH) left = true;
-        if (deltaX >  TH) right = true;
-
-        // D-Pad via POV HAT (Dit is de meest betrouwbare D-pad input voor XInput op Windows)
-        if (joyInfo.dwPOV != 65535) {
-            if (joyInfo.dwPOV == 0)     up = true;
-            if (joyInfo.dwPOV == 18000) down = true;
-            if (joyInfo.dwPOV == 27000) left = true;
-            if (joyInfo.dwPOV == 9000)  right = true;
-            // Diagonalen
-            if (joyInfo.dwPOV == 4500)  { up=true; right=true; }
-            if (joyInfo.dwPOV == 13500) { down=true; right=true; }
-            if (joyInfo.dwPOV == 22500) { down=true; left=true; }
-            if (joyInfo.dwPOV == 31500) { up=true; left=true; }
-        }
-
-        // Knoppen Mapping (gebaseerd op veelgebruikte DirectInput indices)
-        // A (FireL) is Bit 0
-        fireL  = (b & 1);
-        // B (FireR) is Bit 1
-        fireR  = (b & 2);
-        // Back/Select is Bit 6 (64)
-        select = (b & 64);
-        // Start is Bit 7 (128)
-        start  = (b & 128);
-    }
-
-    // Verstuur als er iets verandert (ongeacht welke methode het triggerde)
-    if (up != m_lastUp || down != m_lastDown || left != m_lastLeft || right != m_lastRight)
-        {
-            emit directionChanged(up, down, left, right);
-            m_lastUp = up; m_lastDown = down; m_lastLeft = left; m_lastRight = right;
-        }
-    if (fireL != m_lastFireL)
-        {
-            emit fireLeftChanged(fireL);
-            m_lastFireL = fireL;
-        }
-    if (fireR != m_lastFireR)
-        {
-            emit fireRightChanged(fireR);
-            m_lastFireR = fireR;
-        }
-    if (start != m_lastStart)
-        {
-            emit startPressed(start);
-            m_lastStart = start;
-        }
-    if (select!= m_lastSelect)
-        {
-            emit selectPressed(select);
-            m_lastSelect = select;
-        }
 }
+
 #endif // Q_OS_WIN
+
+// =====================================================================
+// 3. PUBLIEKE IMPLEMENTATIE (SimpleJoystick) - DE CALLBACK FUNCTIES
+// =====================================================================
+
+// De publieke SimpleJoystick implementeert de callback-interface.
+
+void SimpleJoystick::dispatchDirection(bool up, bool down, bool left, bool right) {
+    emit directionChanged(up, down, left, right);
+}
+void SimpleJoystick::dispatchFireLeft(bool pressed) {
+    emit fireLeftChanged(pressed);
+}
+void SimpleJoystick::dispatchFireRight(bool pressed) {
+    emit fireRightChanged(pressed);
+}
+void SimpleJoystick::dispatchStart(bool pressed) {
+    emit startPressed(pressed);
+}
+void SimpleJoystick::dispatchSelect(bool pressed) {
+    emit selectPressed(pressed);
+}
+void SimpleJoystick::dispatchAnalogX(int value) {
+    emit analogXChanged(value);
+}
+
+SimpleJoystick::SimpleJoystick(QObject *parent)
+    : QObject(parent)
+{
+    // De constructor roept nu de juiste C++ klasse aan met 'this' als callback (IJoystickCallback*)
+#ifdef Q_OS_LINUX
+    m_privateImpl = new SimpleJoystickLinux(this);
+#elif defined(Q_OS_WIN)
+    m_privateImpl = new SimpleJoystickWindows(this);
+#else
+    m_privateImpl = nullptr;
+    qWarning() << "SimpleJoystick: Unsupported operating system.";
+#endif
+
+    connect(&m_pollTimer, &QTimer::timeout,
+            this, &SimpleJoystick::onPollTimer);
+
+    // ALLE QObject::connect() calls van m_privateImpl zijn verwijderd.
+}
+
+SimpleJoystick::~SimpleJoystick()
+{
+    stopPolling();
+    // Handmatige verwijdering, omdat m_privateImpl geen QObject parent meer heeft.
+    delete m_privateImpl;
+    m_privateImpl = nullptr;
+}
+
+void SimpleJoystick::startPolling(int joystickIndex)
+{
+    if (!m_privateImpl) return;
+
+    stopPolling();
+    m_privateImpl->setType(m_joystickType);
+
+    if (m_privateImpl->start(joystickIndex)) {
+        m_pollTimer.start(16); // ~60 Hz
+        qDebug() << "SimpleJoystick: Polling started.";
+    } else {
+        qWarning() << "SimpleJoystick: Failed to start platform device.";
+    }
+}
+
+void SimpleJoystick::stopPolling()
+{
+    m_pollTimer.stop();
+    if (m_privateImpl) {
+        m_privateImpl->stop();
+    }
+}
 
 void SimpleJoystick::setJoystickType(int type)
 {
@@ -667,19 +558,26 @@ void SimpleJoystick::setJoystickType(int type)
     m_joystickType = type;
     qDebug() << "SimpleJoystick: Type set to" << type;
 
-    // Als de timer actief is, sluiten we de driver/device om de verbinding te resetten,
-    // en laten we de MainWindow de herstart doen.
     if (m_pollTimer.isActive()) {
-
-// Timer loopt, dus we sluiten ALLEEN de driver, NIET de timer.
-#ifdef Q_OS_LINUX
-        closeLinux(); // Dit sluit de file descriptor m_fd
-#endif
-
-#ifdef Q_OS_WIN
-        closeWindows(); // Dit reset de Windows handle
-#endif
-
-        // De MainWindow moet nu de startPolling opnieuw aanroepen.
+        m_privateImpl->setType(m_joystickType);
+    } else if (m_privateImpl) {
+        m_privateImpl->setType(m_joystickType);
     }
 }
+
+void SimpleJoystick::onPollTimer()
+{
+    if (m_privateImpl) {
+        m_privateImpl->update();
+    }
+}
+
+#ifdef Q_OS_LINUX
+// Dit slot is nu herbruikt en roept de update aan wanneer de socket een event detecteert.
+void SimpleJoystick::onSocketActivated(int /*fd*/)
+{
+    if (m_privateImpl) {
+        m_privateImpl->update();
+    }
+}
+#endif

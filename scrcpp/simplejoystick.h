@@ -5,9 +5,25 @@
 #include <QTimer>
 #include <QSocketNotifier>
 
-class SimpleJoystick : public QObject
+// Forward declaration van de privé-interface
+class SimpleJoystickPrivate;
+
+// Nieuw: Definieer IJoystickCallback hier zodat SimpleJoystick ervan kan erven
+class IJoystickCallback {
+public:
+    virtual ~IJoystickCallback() = default;
+    virtual void dispatchDirection(bool up, bool down, bool left, bool right) = 0;
+    virtual void dispatchFireLeft(bool pressed) = 0;
+    virtual void dispatchFireRight(bool pressed) = 0;
+    virtual void dispatchStart(bool pressed) = 0;
+    virtual void dispatchSelect(bool pressed) = 0;
+    virtual void dispatchAnalogX(int value) = 0;
+};
+
+class SimpleJoystick : public QObject, public IJoystickCallback
 {
     Q_OBJECT
+
 public:
     explicit SimpleJoystick(QObject *parent = nullptr);
     ~SimpleJoystick();
@@ -15,60 +31,44 @@ public:
     // joystickIndex = 0 => /dev/input/js0 of eerste beschikbare controller
     void startPolling(int joystickIndex = 0);
     void stopPolling();
+    /*
+      * 0: Generiek (Default)
+      * 1: PS (PlayStation/Nintendo Clone)
+      * 2: XBOX 360/XInput
+    */
     void setJoystickType(int type);
 
 signals:
+    // De publieke signalen blijven hier
     void directionChanged(bool up, bool down, bool left, bool right);
     void fireLeftChanged(bool pressed);
     void fireRightChanged(bool pressed);
     void startPressed(bool pressed);
     void selectPressed(bool pressed);
+    void analogXChanged(int value);
 
 private slots:
     void onPollTimer();
+#ifdef Q_OS_LINUX
+    // Dit is nu een gewoon slot/functie, niet geconnecteerd via QSocketNotifier connect
+    // De QSocketNotifier wordt binnen de Linux implementatie geconnecteerd aan de update() functie.
     void onSocketActivated(int fd);
+#endif
 
 private:
-    int m_joystickType;
-#ifdef Q_OS_LINUX
-    void openLinuxJoystick(int joystickIndex);
-    void closeLinux();
-    void readLinuxJoystick();   // /dev/input/jsX
-    void readLinuxEvdev();      // /dev/input/eventX
-    bool tryOpenJs(int index);
-    bool tryOpenEvdev();
-#endif
-
-#ifdef Q_OS_WIN
-    void openWindowsJoystick(int joystickIndex);
-    void closeWindows();
-    void readWindowsJoystick();
-#endif
-
+    int m_joystickType = 0; // Default op 0
     QTimer m_pollTimer;
-    int    m_joystickIndex = 0;
 
-#ifdef Q_OS_LINUX
-    int              m_fd = -1;
-    QSocketNotifier *m_notifier = nullptr;
-    bool             m_usingEvdev = false; // false = js*, true = event*
-#endif
+    // Pointer naar de platform-specifieke implementatie (PIMPL)
+    SimpleJoystickPrivate *m_privateImpl = nullptr;
 
-    // Basiswaarden voor analoge sticks (PS4 / Nintendo clone)
-    bool m_firstRun = true;
-    int m_joysticktype = 0;
-    int  m_baseX = 0;
-    int  m_baseY = 0;
-
-    // Status geheugen
-    bool m_lastUp = false;
-    bool m_lastDown = false;
-    bool m_lastLeft = false;
-    bool m_lastRight = false;
-    bool m_lastFireL = false;
-    bool m_lastFireR = false;
-    bool m_lastStart = false;
-    bool m_lastSelect = false;
+    // Nieuwe callback functie om de signalen van SimpleJoystickPrivate te vervangen
+    void dispatchDirection(bool up, bool down, bool left, bool right);
+    void dispatchFireLeft(bool pressed);
+    void dispatchFireRight(bool pressed);
+    void dispatchStart(bool pressed);
+    void dispatchSelect(bool pressed);
+    void dispatchAnalogX(int value);
 };
 
 #endif // SIMPLEJOYSTICK_H

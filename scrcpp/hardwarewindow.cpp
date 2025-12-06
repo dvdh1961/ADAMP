@@ -26,6 +26,8 @@
 #include <QPixmap>
 #include <QDebug>
 
+bool HardwareWindow::m_sgmSelectionState = false;
+
 static QWidget* makeHSpacer(QWidget* parent=nullptr) {
     auto *w = new QWidget(parent);
     w->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -52,7 +54,6 @@ HardwareWindow::HardwareWindow(const HardwareConfig& initial, QWidget *parent)
 void HardwareWindow::buildUi()
 {
     m_loading = true;
-
     {
         QPalette pal = QToolTip::palette();
         pal.setColor(QPalette::ToolTipBase, QColor("#dcdcdc"));
@@ -171,6 +172,7 @@ void HardwareWindow::buildUi()
     layHw->addStretch(1);
     m_groupAddHw->setLayout(layHw);
 
+    connect(m_btnSGM,  &QToolButton::toggled, this, &HardwareWindow::onToggleSGM);
     connect(m_btnSGM,  &QToolButton::clicked, this, &HardwareWindow::updateAvailability);
     connect(m_btnF18A, &QToolButton::clicked, this, &HardwareWindow::updateAvailability);
     connect(m_btnPrinter, &QToolButton::clicked, this, &HardwareWindow::onPrinterClicked);
@@ -230,9 +232,102 @@ void HardwareWindow::buildUi()
     updatePaletteSwatches();
 
     // === Emulation ===
-    m_groupEmu = new QGroupBox("Emulation", this);
+    m_groupEmu = new QGroupBox("Hardware", this);
 
+    // Image
+    QLabel* imgEmu = new QLabel(m_groupEmu);
+    imgEmu->setPixmap(QPixmap(":/images/images/Hardware.png"));
+    imgEmu->setAlignment(Qt::AlignHCenter);
+
+    // CSS voor de donkergrijze randkleur
+    const QString borderColor = "#404040";
+    const QString baseBorderStyle = QString("1px solid %1").arg(borderColor);
+
+    // Tabel voor beschrijvingen
+    QGridLayout* layEmuGrid = new QGridLayout;
+    layEmuGrid->setContentsMargins(10, 15, 10, 10);
+    layEmuGrid->setSpacing(0); // Zorgt dat de randen naadloos aansluiten
+
+    // STRETCH FACTOR
+    layEmuGrid->setColumnStretch(0, 1); // Code Label (Smalle kolom)
+    layEmuGrid->setColumnStretch(1, 8); // Beschrijving Label (Brede kolom)
+
+    // --- Headers (Rij 0) ---
+    QLabel *lblHwCol = new QLabel("Code", m_groupEmu);
+    QLabel *lblDescCol = new QLabel("Program/Game Description", m_groupEmu);
+
+    // Stijl voor de linker header (Kolom 0): top, bottom, right, left border
+    lblHwCol->setStyleSheet(
+        QString("font-weight: bold; padding: 4px; border: %1;")
+            .arg(baseBorderStyle)
+        );
+
+    // Stijl voor de rechter header (Kolom 1): top, bottom, right border (geen left border om overlap te voorkomen)
+    lblDescCol->setStyleSheet(
+        QString("font-weight: bold; padding: 4px; border-top: %1; border-bottom: %1; border-right: %1;")
+            .arg(baseBorderStyle)
+        );
+
+    layEmuGrid->addWidget(lblHwCol, 0, 0);
+    layEmuGrid->addWidget(lblDescCol, 0, 1);
+
+    auto createEmuLabel = [&](const QString& defaultText) -> QLabel* {
+        QLabel *lbl = new QLabel(defaultText, m_groupEmu);
+        lbl->setWordWrap(true);
+        lbl->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+        // Stijl voor de rechterkolom (Kolom 1): top, right, bottom border (geen left border)
+        lbl->setStyleSheet(
+            QString("font-size: 10px; padding: 4px; border-top: %1; border-right: %1; border-bottom: %1;")
+                .arg(baseBorderStyle)
+            );
+        return lbl;
+    };
+
+    auto addTableRow = [&](int row, const QString& hwCode, QLabel*& lblEmu) {
+        QLabel *lblHw = new QLabel(hwCode, m_groupEmu);
+        lblHw->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+
+        // Stijl voor de linkerkolom (Kolom 0): volledige rand, behalve dubbele border in het midden.
+        lblHw->setStyleSheet(
+            QString("font-size: 10px; padding: 4px; border-top: %1; border-left: %1; border-right: %1; border-bottom: %1;")
+                .arg(baseBorderStyle)
+            );
+
+        layEmuGrid->addWidget(lblHw, row, 0);
+        layEmuGrid->addWidget(lblEmu, row, 1);
+    };
+
+
+    // Rijen toevoegen en labels initialiseren met default waarden
+    m_lblEmuCC = createEmuLabel("No coleco cartridge");
+    addTableRow(1, "CC", m_lblEmuCC);
+
+    m_lblEmuCA = createEmuLabel("No adam cartridge");
+    addTableRow(2, "CA", m_lblEmuCA);
+
+    m_lblEmuD1 = createEmuLabel("No tape");
+    addTableRow(3, "D1", m_lblEmuD1);
+
+    m_lblEmuD2 = createEmuLabel("No tape");
+    addTableRow(4, "D2", m_lblEmuD2);
+
+    m_lblEmuD5 = createEmuLabel("No disc");
+    addTableRow(5, "D5", m_lblEmuD5);
+
+    m_lblEmuD6 = createEmuLabel("No disc");
+    addTableRow(6, "D6", m_lblEmuD6);
+
+    m_lblEmuD7 = createEmuLabel("No disc");
+    addTableRow(7, "D7", m_lblEmuD7);
+
+    // Emu Layout (combineert image, widgets en grid)
     auto *layEmu = new QVBoxLayout;
+    layEmu->addWidget(imgEmu, 0, Qt::AlignHCenter);
+    layEmu->addWidget(m_chkStartDebug);
+    layEmu->addWidget(m_chkNoDelayBios);
+    layEmu->addWidget(m_chkPatchBiosPAL);
+    layEmu->addWidget(m_cboFrequency);
+    layEmu->addLayout(layEmuGrid);
     layEmu->addStretch(1);
     m_groupEmu->setLayout(layEmu);
 
@@ -269,13 +364,13 @@ void HardwareWindow::buildUi()
     connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
 
     // === Hoofd-layout ===
-    auto *colLeft  = new QVBoxLayout;   // Machine / Controllers / Hardware
+    auto *colLeft  = new QVBoxLayout;
     colLeft->addWidget(m_groupMachine);
     colLeft->addWidget(m_groupCtrl);
     colLeft->addWidget(m_groupAddHw);
     colLeft->addStretch(1);
 
-    auto *colRight = new QVBoxLayout;   // Video / Emulation
+    auto *colRight = new QVBoxLayout;
     colRight->addWidget(m_groupVideo);
     colRight->addWidget(m_groupEmu, 1);
 
@@ -294,6 +389,9 @@ void HardwareWindow::buildUi()
     setLayout(mainLayout);
     mainLayout->setSizeConstraint(QLayout::SetFixedSize);
     m_loading = false;
+
+    m_btnSGM->setCheckable(true);
+
 }
 
 void HardwareWindow::loadFromConfig(const HardwareConfig& c)
@@ -307,8 +405,11 @@ void HardwareWindow::loadFromConfig(const HardwareConfig& c)
     m_cboDisplay->setCurrentIndex(qBound(0, c.renderMode, m_cboDisplay->count()-1));
     m_cboPalette->setCurrentIndex(qBound(0, c.palette,    m_cboPalette->count()-1));
 
+    if (!m_loading) { // Zorg dat dit alleen gebeurt bij het openen van de dialoog
+        HardwareWindow::m_sgmSelectionState = c.sgmEnabled;
+    }
     // Additional hardware
-    m_btnSGM->setChecked(c.sgmEnabled);
+    m_btnSGM->setChecked(HardwareWindow::m_sgmSelectionState);
     m_btnF18A->setChecked(c.f18aEnabled);
 
     // Controllers
@@ -319,6 +420,7 @@ void HardwareWindow::loadFromConfig(const HardwareConfig& c)
     if (m_btnRoller->isChecked() && m_btnSuperAction->isChecked()) {
         m_btnSuperAction->setChecked(false);
     }
+    updateAvailability();
 }
 
 HardwareConfig HardwareWindow::readFromUi() const
@@ -335,7 +437,7 @@ HardwareConfig HardwareWindow::readFromUi() const
     c.palette    = m_cboPalette->currentIndex();
 
     // Additional hardware
-    c.sgmEnabled  = m_btnSGM->isChecked();
+    c.sgmEnabled  = !m_btnAdam->isChecked() && m_btnSGM->isChecked();
     c.f18aEnabled = m_btnF18A->isChecked();
 
     c.steeringWheel = m_btnSteering->isChecked();
@@ -356,10 +458,13 @@ void HardwareWindow::updateAvailability()
     const bool isAdam    = m_btnAdam->isChecked();
 
     if (isAdam) {
+
+        HardwareWindow::m_sgmSelectionState = m_btnSGM->isChecked();
         m_btnSGM->setEnabled(false);
-        m_btnSGM->setChecked(false);
+
     } else {
         m_btnSGM->setEnabled(true);
+        m_btnSGM->setChecked(HardwareWindow::m_sgmSelectionState);
     }
     m_btnF18A->setEnabled(true);
     m_btnPrinter->setEnabled(true);
@@ -391,6 +496,11 @@ void HardwareWindow::updateAvailability()
     setBorder(m_btnSGM);
     setBorder(m_btnF18A);
     setBorder(m_btnPrinter);
+}
+
+void HardwareWindow::onToggleSGM(bool checked)
+{
+    m_sgmSelectionState = checked;
 }
 
 void HardwareWindow::onPrinterClicked()
@@ -452,6 +562,9 @@ void HardwareWindow::onPaletteChanged(int idx)
 
 void HardwareWindow::onMachineChanged()
 {
+    if (m_btnSGM->isEnabled()) {
+        m_sgmSelectionState = m_btnSGM->isChecked();
+    }
     updateAvailability();
 }
 
@@ -464,4 +577,64 @@ void HardwareWindow::onOk()
 HardwareConfig HardwareWindow::config() const
 {
     return m_result;
+}
+
+void HardwareWindow::updateLoadedMedia(const QString& cartridgeName)
+{
+    if (m_lblEmuCC) {
+        m_lblEmuCC->setText(cartridgeName.isEmpty() ? "No coleco cartridge" : cartridgeName);
+    }
+}
+
+// In hardwarewindow.cpp, implementatie van de setter methode:
+
+void HardwareWindow::setLoadedMediaDisplayNames(
+    const QString& colecoCartridgeName,
+    const QString& adamCartridgeName,
+    const QString& tape1Name,
+    const QString& tape2Name,
+    const QString& disc1Name,
+    const QString& disc2Name,
+    const QString& disc3Name)
+{
+    // Functie om de juiste weergavetekst en kleur te bepalen
+    auto setLabelStatus = [&](QLabel* label, const QString& name, const QString& defaultText) {
+        if (!label) return;
+
+        bool isLoaded = !name.isEmpty() && name != defaultText;
+
+        // Bepaal de tekst: naam als geladen, defaultText anders
+        QString displayText = isLoaded ? name : defaultText;
+
+        // Bepaal de kleur: Groen voor geladen, Donkergrijs voor default
+        // #A0A0A0 is lichtgrijs (default), #50C878 is groen (loaded)
+        const QString textColor = isLoaded ? "#50C878" : "#A0A0A0";
+
+        // De basis border style uit buildUi()
+        const QString borderColor = "#404040";
+        const QString baseBorderStyle = QString("1px solid %1").arg(borderColor);
+
+        // De labelstijl toepassen (behoudt de rand, voegt kleur toe)
+        label->setStyleSheet(
+            QString("font-size: 10px; padding: 4px; border-top: %1; border-right: %1; border-bottom: %1; color: %2;")
+                .arg(baseBorderStyle).arg(textColor)
+            );
+
+        label->setText(displayText);
+    };
+
+    // Stijl voor de linkerkolom (Code, die geen kleurstijl nodig heeft, maar wel de rand)
+    // We moeten deze opnieuw definiëren in de buildUi context,
+    // maar voor de beschrijvingskolom is dit voldoende.
+
+    // Noot: We gaan ervan uit dat de QLabel van Kolom 0 (Code) zijn stijl behoudt
+    // en dat Kolom 1 (Beschrijving) deze statusmethode gebruikt.
+
+    setLabelStatus(m_lblEmuCC, colecoCartridgeName, "No coleco cartridge");
+    setLabelStatus(m_lblEmuCA, adamCartridgeName, "No adam cartridge");
+    setLabelStatus(m_lblEmuD1, tape1Name, "No tape");
+    setLabelStatus(m_lblEmuD2, tape2Name, "No tape");
+    setLabelStatus(m_lblEmuD5, disc1Name, "No disc");
+    setLabelStatus(m_lblEmuD6, disc2Name, "No disc");
+    setLabelStatus(m_lblEmuD7, disc3Name, "No disc");
 }
