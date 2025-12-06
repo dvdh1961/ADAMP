@@ -37,11 +37,11 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 Version 0.5.12.25 x86_64 Windows & Linux
 
-To approximate the behavior of the original Coleco Adam as closely as possible, 
-we have modified the method for handling ROMs, Tapes, and Disks using the buttons that
-are also present on the original hardware.
+- To approximate the behavior of the original Coleco Adam as closely as possible, 
+  we have modified the method for handling ROMs, Tapes, and Disks using the buttons that
+  are also present on the original hardware.
 
-The revised workflow is as follows:
+  The revised workflow is as follows:
     Media Load & Run: Load the desired media (ROM, Tape, or Disk) and subsequently 
     press the corresponding RESET button to initiate the media:
 
@@ -51,10 +51,11 @@ The revised workflow is as follows:
     Full Media Unload: 
     - To fully release or unload all currently mounted media (ROMs/Tapes/Disks), 
       press the 'POWER' button.
-We have implemented a paddle function. If a joystick has been selected, the user can verify the functionality 
-of their analog stick using the small keypad widget. 
-To play a game requiring a paddle, the user must select the paddle mode in the menubar. 
-When activated, the left and right cursor keys are replaced by the left/right axis input from the analog stick.      
+
+- We have implemented a paddle function. If a joystick has been selected, the user can verify the functionality 
+  of their analog stick using the small keypad widget. 
+  To play a game requiring a paddle, the user must select the paddle mode in the menubar. 
+  When activated, the left and right cursor keys are replaced by the left/right axis input from the analog stick.      
 
 
 
