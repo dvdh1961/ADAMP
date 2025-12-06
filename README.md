@@ -33,7 +33,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/dvdh1961)](https://github.com/sponsors/dvdh1961)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://www.paypal.com/donate?business=dannyvdh@pandora.be)
 
-## 🚀 Features
+## 🚀 Versions
 
 Version 0.5.12.25 x86_64 Windows & Linux
 
