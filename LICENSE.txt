@@ -1,7 +1,28 @@
-ADAM+ Emulator - Version 0.4.11.25
+ADAM+ Emulator
 ©2025 DannyVdH - VDH Productions
 
 https://github.com/dvdh1961/ADAMP
+
+Emulation Media Handling Workflow (Adam Mode)
+
+NOTE!
+-----
+
+To approximate the behavior of the original Coleco Adam as closely as possible, 
+we have modified the method for handling ROMs, Tapes, and Disks using the buttons that
+are also present on the original hardware.
+
+The revised workflow is as follows:
+    Media Load & Run: Load the desired media (ROM, Tape, or Disk) and subsequently 
+    press the corresponding RESET button to initiate the media:
+
+    - Use the 'CARTRIDGE RESET' button to start ColecoVision ROMs.
+    - Use the 'COMPUTER RESET' button to start Adam-specific media (Tapes and Disks).
+
+    Full Media Unload: 
+    - To fully release or unload all currently mounted media (ROMs/Tapes/Disks), 
+      press the 'POWER' button.
+
 
 This software is free to use for personal, educational, and non-profit purposes
 Some software components are subject to licensing agreements held by the rightful owners
