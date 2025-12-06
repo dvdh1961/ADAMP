@@ -35,7 +35,8 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ## 🚀 Features
 
-Vesion 0.5.12.25 x86_64 Windows & Linux
+Version 0.5.12.25 x86_64 Windows & Linux
+
 To approximate the behavior of the original Coleco Adam as closely as possible, 
 we have modified the method for handling ROMs, Tapes, and Disks using the buttons that
 are also present on the original hardware.
