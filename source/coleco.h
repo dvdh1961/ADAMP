@@ -108,6 +108,7 @@ extern BYTE ReadInputPort(int Address, int *tstates);
 extern BYTE coleco_readport(int Address, int *tstates);
 extern int coleco_contend(int Address, int states, int time);
 extern int coleco_do_scanline(void);
+extern void coleco_paddle(void);
 
 extern void coleco_setval(BYTE whichaddr, unsigned short addr, BYTE y);
 
@@ -121,6 +122,7 @@ extern void coleco_setupsgm(void);
 extern void Printer(BYTE V);
 
 extern void coleco_set_machine_type(int isAdam);
+extern void coleco_setSpinner(int player, int analogValue);
 
 #ifdef __cplusplus
 extern "C" {

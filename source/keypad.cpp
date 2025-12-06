@@ -18,6 +18,7 @@
  */
 
 #include "keypad.h"
+#include "input_bridge.h"
 
 static ColecoStrobe s_strobe = ColecoStrobe::Joystick;
 static volatile ColecoControllerState s_pad[2]{};
@@ -38,6 +39,20 @@ static const uint8_t KEYPAD_NIBBLE[12] = {
     /* * */ 0x6,
     /* # */ 0x9
 };
+
+// NIEUW: Pusht de D-pad status van de bridge naar de interne s_pad structuur
+void coleco_push_direction_from_bridge(int idx) {
+    if (idx < 0 || idx >= 2) return;
+
+    // Gebruik de bridge-maskers om de s_pad[idx] te manipuleren
+    s_pad[idx].up    = (ib_joy1_dir & IB_UP) != 0;
+    s_pad[idx].down  = (ib_joy1_dir & IB_DOWN) != 0;
+    s_pad[idx].left  = (ib_joy1_dir & IB_LEFT) != 0;
+    s_pad[idx].right = (ib_joy1_dir & IB_RIGHT) != 0;
+
+    // Fire knoppen en Keypad worden hier NIET aangeraakt,
+    // want die worden door andere functies beheerd.
+}
 
 // NB: Sommige bronnen tonen kleine variaties; deze tabel volgt de bekende “CV-Tech” mapping.
 // Voel je vrij om per game te patchen als iets afwijkt.
@@ -106,3 +121,4 @@ void coleco_io_write(uint8_t port, uint8_t /*value*/) {
     if ((port & 0xE0) == 0x80) s_strobe = ColecoStrobe::Keypad;
     else if ((port & 0xE0) == 0xC0) s_strobe = ColecoStrobe::Joystick;
 }
+

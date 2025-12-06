@@ -33,3 +33,4 @@ struct ColecoControllerState {
 void coleco_setController(int idx, const ColecoControllerState& s); // 0=port1, 1=port2
 uint8_t coleco_io_read(uint8_t port);   // Z80 IN
 void    coleco_io_write(uint8_t port, uint8_t value); // Z80 OUT
+void coleco_push_direction_from_bridge(int idx);

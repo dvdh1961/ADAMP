@@ -42,6 +42,8 @@
 #include "bios_adam.h"
 #include "fdidisk.h"
 
+#include "input_bridge.h"
+
 // BIOS loader prototype
 static int loadBios(const char *filename, BYTE *memory, int sizerm);
 static void Out42(BYTE Val);
@@ -1248,139 +1250,131 @@ BYTE coleco_readport(int Address, int * /*tstates*/) // Interne leesfunctie poor
         else // Odd addresses: 0xA1, 0xA3... 0xBF (STATUS READ)
             return /*(emulator->F18A ? f18a_readctrl() :*/ tms9918_readctrl(); //);
 
-    case 0xE0: // 0xE0..0xE3 brede controller-reads (A1 = pad)
-    case 0xFC: // smal: pad 1
-    case 0xFF: // smal: pad 2
-         return coleco_io_read((uint8_t)Address); // alleen doorsturen
-     }
+    // case 0xE0: // 0xE0..0xE3 brede controller-reads (A1 = pad)
+    // case 0xFC: // smal: pad 1
+    // case 0xFF: // smal: pad 2
+    // case 0xC0: // 0xC0 - 0xDF: Controller 2 Write (Mode Select)
+    //     return coleco_io_read((uint8_t)Address); // alleen doorsturen
 
+    case 0xE0: // 0xE0..0xFF: Controller 1/2, Sound Write
+    case 0xC0: // 0xC0..0xDF: Controller 2
+        {
+            // Vraag eerst de basis digitale/keypad status op van de keypad-module.
+            uint8_t digital_result = coleco_io_read((uint8_t)Address);
+
+            // --- Analoge/Spinner Override (ALLEEN VOOR POORT 0xE0/0xE1 VAN CONTROLLER 1) ---
+            // Adressen 0xE0 en 0xE1 (Controller 1) worden door games gebruikt voor de spinner.
+
+            if ((Address & 0x02) == 0) // Dit is Controller 1 (Pad 0, want A1=0)
+            {
+                //qDebug() << "ADRES:"<<Address;
+
+                if (Address == 0xE0)
+                {
+                    // 1. MSB van de 16-bit spinner positie teruggeven (Hoge Byte).
+                    // De Spinner is 10-bit, maar we gebruiken de HOGE 8 bits van de 16-bit variabele.
+                    return (BYTE)(coleco_spinpos[0] >> 8);
+                }
+
+                if (Address == 0xE1)
+                {
+                    // 1. LSB van de 16-bit spinner positie (Lage Byte).
+                    uint8_t spinner_lsb = (uint8_t)(coleco_spinpos[0] & 0xFF);
+
+                    // 2. Haal de lage 4 bits (de digitale status) uit het resultaat van coleco_io_read.
+                    // Dit is cruciaal om de keypad/joystick-status te behouden!
+                    uint8_t digital_status = digital_result & 0x0F;
+
+                    // 3. Combineer: gebruik de hoge 4 bits van de LSB (voor de 10-bit paddle)
+                    // en de lage 4 bits van de digitale status.
+                    uint8_t paddle_high_bits = (spinner_lsb & 0xF0);
+
+                    return paddle_high_bits | digital_status;
+                }
+
+            }
+
+            // Als het 0xE2, 0xE3 of een andere controller leesactie is,
+            // retourneren we het digitale resultaat van coleco_io_read.
+            return digital_result;
+        }
+    }
     return idleDataBus; // Geen geldige poort
 }
 
 //---------------------------------------------------------------------------
-int coleco_contend(int /*Address*/, int /*states*/, int time) { return(time); } // Geen contentie gemodelleerd
+int coleco_contend(int /*Address*/, int /*states*/, int time) { return(time); }
 
 //---------------------------------------------------------------------------
-// // do a Z80 instruction or frame
-// // Simuleert één scanline
-// int coleco_do_scanline(void)
-// {
-//     // int ts;
-//     // int MaxScanLen = machine.tperscanline;
+// --- Spinner input handler ---
+// Deze functie ontvangt de analoge stickwaarde via de Qt slot.
+void coleco_setSpinner(int player, int analogValue)
+{
+    if (player < 0 || player > 1) return;
 
-//     // // VANGNET: als niet gezet, neem ~228 T-states per lijn (NTSC)
-//     // if (MaxScanLen <= 0) MaxScanLen = 228;
+    // De ruwe analoge waarde wordt al in ib_analog_x1 gezet door de bridge,
+    // maar we kunnen dit ook direct gebruiken voor directe pad-connectie.
+    // (We kiezen ervoor om ib_analog_x1 te gebruiken in de update-loop
+    // voor consistentie met de emulatie-thread).
 
-//     // int CurScanLine_len = MaxScanLen;
-//     // int tstotal = 0;
+    // Voor nu: we slaan de waarde direct op in de emulatie-variabelen.
+    // Dit overschrijft de lees-cyclus in coleco_do_scanline als je het hier doet.
+    // Best is om DIT NIET TE DOEN, en de core dit zelf uit de bridge te laten lezen
+    // in de `coleco_do_scanline` of een vergelijkbare periodieke functie.
+    (void)analogValue; // Markeer als ongebruikt om warnings te vermijden
+    // coleco_spinpos[player] = analogValue; // -> NIET DOEN HIER.
+}
 
-//     // ts = z80_checknmi(); // NMI check at start of line
-//     // CurScanLine_len -= ts;
-//     // tstotal += ts;
+//---------------------------------------------------------------------------
+// coleco.cpp
 
-//     // do {
-//     //     // --- BREAKPOINT HOOK ---
-//     //     DebugUpdate(); // Roep de check AAN VOOR de opcode
-//     //     if (emulator->stop || emulator->singlestep) {
-//     //         break; // Stop de 'do-while' loop als de vlag is gezet
-//     //     }
+void coleco_paddle(void)
+{
+    static int s_pulse_counter = 0;
+    const int PULSE_THRESHOLD = 512;
+    const int ANALOG_DEAD_ZONE = 8000;
 
-//     //     ts = z80_do_opcode();
-//     //     CurScanLine_len -= ts;
+    const int SPINNER_SCALING_FACTOR = 64;
 
-//     //     if (emulator->F18A) {
-//     //         // TODO: F18A GPU timing
-//     //     }
+    if (ib_paddle_mode == 0) {
+        s_pulse_counter = 0;
+        ib_set_joy1_dir(IB_LEFT, 0);
+        ib_set_joy1_dir(IB_RIGHT, 0);
+        return;
+    }
 
-//     //     frametstates += ts;
-//     //     tStatesCount += ts;
-//     //     tstotal += ts;
+    const int16_t analogX = ib_analog_x1;
+    ib_set_joy1_dir(IB_LEFT, 0);
+    ib_set_joy1_dir(IB_RIGHT, 0);
 
-//     // } while (CurScanLine_len > 0 && !(emulator->stop) && !(emulator->singlestep));
+    if (qAbs(analogX) > ANALOG_DEAD_ZONE)
+    {
+        int movement = analogX / SPINNER_SCALING_FACTOR;
+        int absMovement = qAbs(movement);
 
-//     int ts;
-//     int MaxScanLen = machine.tperscanline;
+        if (absMovement > (PULSE_THRESHOLD - 10)) absMovement = PULSE_THRESHOLD - 10;
 
-//     if (MaxScanLen <= 0) MaxScanLen = 228;
+        s_pulse_counter += absMovement;
 
-//     int CurScanLine_len = MaxScanLen;
-//     int tstotal = 0;
+        if (s_pulse_counter >= PULSE_THRESHOLD)
+        {
+            if (movement < 0) {
+                ib_set_joy1_dir(IB_RIGHT, 1);
+            } else {
+                ib_set_joy1_dir(IB_LEFT, 1);
+            }
+            s_pulse_counter -= PULSE_THRESHOLD;
+        }
+        coleco_push_direction_from_bridge(0);
+    }
+    else
+    {
+        s_pulse_counter = 0;
+        coleco_push_direction_from_bridge(0);
+    }
+}
 
-//     ts = z80_checknmi(); // NMI check at start of line
-//     CurScanLine_len -= ts;
-//     tstotal += ts;
-
-//     do {
-//         // Als de emulatie gepauzeerd is, doe niks meer
-//         if (emulator->stop) {
-//             break;
-//         }
-
-//         // --- BREAKPOINT HOOK ---
-//         // Check ALLEEN breakpoints hier
-//         DebugUpdate(); // kan emulator->stop = 1 zetten
-//         if (emulator->stop) {
-//             // Breakpoint of UI-pause geraakt
-//             break;
-//         }
-
-//         // ÉÉN OPCODE uitvoeren
-//         ts = z80_do_opcode();
-//         CurScanLine_len -= ts;
-
-//         if (emulator->F18A) {
-//             // TODO: F18A GPU timing
-//         }
-
-//         frametstates += ts;
-//         tStatesCount += ts;
-//         tstotal += ts;
-
-//         // --- SINGLE STEP LOGICA ---
-//         // Als single step aangevraagd was, stop NA deze opcode
-//         if (emulator->singlestep) {
-//             emulator->stop = 1;        // pauzeer weer
-//             emulator->singlestep = 0;  // stap is "opgebruikt"
-//             break;
-//         }
-
-//     } while (CurScanLine_len > 0 && !emulator->stop);
-
-
-//     /*
-//       NMI is edge-insensitive op Z80: bij level-hoog verlaat de CPU HALT zodra de lijn actief is.
-//       Door NMI hoog te laten totdat de game het VBlank-statusbit wist (ack), garanderen we dat de CPU het nooit mist —
-//       ook niet als je per scanline maar weinig opcodes draait of de puls net tussen twee calls viel.
-//       Zodra de game de TMS-status leest in zijn ISR, wordt tms.SR & TMS9918_STAT_VBLANK 0 → we clearen NMI → alles zoals hardware.
-// .   */
-
-//     static int nmi_active = 0;
-
-//     // --- VDP update ---
-//     if (emulator->F18A) f18a_loop();
-//     else tms9918_loop();
-
-//     // --- NMI level-driven interrupt ---
-//     // Level: NMI = aan als (IRQ enable in R1) EN (VBlank-bit in SR)
-//     const bool vdp_irq_level =
-//         ( (tms.VR[1] & TMS9918_REG1_IRQ) != 0 ) &&
-//         ( (tms.SR    & TMS9918_STAT_VBLANK) != 0 );
-
-//     if (vdp_irq_level) {
-//         if (!nmi_active) {
-//             z80_set_irq_line(INPUT_LINE_NMI, ASSERT_LINE);
-//             nmi_active = 1;
-//         }
-//     }
-//     else {
-//         if (nmi_active) {
-//             z80_set_irq_line(INPUT_LINE_NMI, CLEAR_LINE);
-//             nmi_active = 0;
-//         }
-//     }
-//     return tstotal;
-// }
-
+//---------------------------------------------------------------------------
 int coleco_do_scanline(void)
 {
     int ts = 0;
@@ -1390,8 +1384,7 @@ int coleco_do_scanline(void)
     int CurScanLine_len = MaxScanLen;
     int tstotal = 0;
 
-    // *** NIEUW: als we gestopt/singlestep zijn: geen NMI, geen opcodes ***
-    if (!emulator->stop && !emulator->singlestep)
+     if (!emulator->stop && !emulator->singlestep)
     {
         ts = z80_checknmi(); // NMI check at start of line
         CurScanLine_len -= ts;
@@ -1401,6 +1394,9 @@ int coleco_do_scanline(void)
             DebugUpdate();
             if (emulator->stop || emulator->singlestep)
                 break;
+
+            // --- PADDLE/ANALOGE UPDATE ---
+            coleco_paddle();
 
             ts = z80_do_opcode();
             CurScanLine_len -= ts;
@@ -1418,7 +1414,9 @@ int coleco_do_scanline(void)
                  !emulator->singlestep);
     }
 
-    // --- VDP + NMI level logic (optioneel ook bevriezen bij stop) ---
+    // --- VDP + NMI level logic ---
+    // De NMI-logica is nu gescheiden van de Z80-opcode-executie.
+
     static int nmi_active = 0;
 
     if (emulator->F18A) f18a_loop();
@@ -1445,7 +1443,6 @@ int coleco_do_scanline(void)
     return tstotal;
 }
 
-
 //---------------------------------------------------------------------------
 void Printer(BYTE V) // Dummy Printer functie
 {
@@ -1454,10 +1451,6 @@ void Printer(BYTE V) // Dummy Printer functie
 }
 
 //---------------------------------------------------------------------------
-// Save/Load State (Minimalistische versie, alleen compilatie focus)
-// !! LET OP: Deze functies zijn zeer incompleet en zullen waarschijnlijk crashen !!
-// !! Ze zijn hier alleen om compilatie mogelijk te maken. Logica moet later volledig herzien worden. !!
-
 BYTE coleco_savestate(char *filename)
 {
     BYTE stateheader[25] = "adamp state\032\1\0\0\0\0\0\0\0\0\0";
