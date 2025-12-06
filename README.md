@@ -1,5 +1,7 @@
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP.png)
 
+---
+
 This software is free to use for personal, educational, and non-profit purposes.
 
 - Certain portions of the software are subject to third-party copyright, prohibiting the commercial use of this compilation.
@@ -15,8 +17,12 @@ Language Models (LLMs), we can achieve the full potential of our programming ski
 
 It serves as a central platform for integrating a wide range of hardware-related devices, all developed as part of the broader ADAM+ hardware project.
 
+---
+
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_EMU_HARDWARE_SNAP.png)
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_EMU_HARDWARE_SNAP2.png)
+
+---
 
 ## 💾 Downloads
 
