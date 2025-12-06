@@ -57,7 +57,7 @@ Version 0.5.12.25 x86_64 Windows & Linux
   To play a game requiring a paddle, the user must select the paddle mode in the menubar. 
   When activated, the left and right cursor keys are replaced by the left/right axis input from the analog stick.      
 
-
+---
 
 Version 0.4.11.25 x86_64 Windows (Linux will be in a couple of days)
 - Some software components are subject to licensing agreements held by the rightful owners
