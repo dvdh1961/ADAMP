@@ -17,11 +17,13 @@ SOURCES += \
            $$PWD/scrcpp/inputwidget.cpp \
            $$PWD/scrcpp/logwindow.cpp \
            $$PWD/scrcpp/mainwindow.cpp \
+           $$PWD/scrcpp/memoryeditdialog.cpp \
            $$PWD/scrcpp/ntablewindow.cpp \
            $$PWD/scrcpp/patternwindow.cpp \
            $$PWD/scrcpp/printwindow.cpp \
            $$PWD/scrcpp/screenwidget.cpp \
            $$PWD/scrcpp/setbreakpointdialog.cpp \
+           $$PWD/scrcpp/setsymboldialog.cpp \
            $$PWD/scrcpp/settingswindow.cpp \
            $$PWD/scrcpp/simplejoystick.cpp \
            $$PWD/scrcpp/soundmanager.cpp \
@@ -41,11 +43,13 @@ HEADERS += \
            $$PWD/scrcpp/debuggerwindow.h \
            $$PWD/scrcpp/inputwidget.h \
            $$PWD/scrcpp/logwindow.h \
+           $$PWD/scrcpp/memoryeditdialog.h \
            $$PWD/scrcpp/ntablewindow.h \
            $$PWD/scrcpp/patternwindow.h \
            $$PWD/scrcpp/printwindow.h \
            $$PWD/scrcpp/screenwidget.h \
            $$PWD/scrcpp/setbreakpointdialog.h \
+           $$PWD/scrcpp/setsymboldialog.h \
            $$PWD/scrcpp/settingswindow.h \
            $$PWD/scrcpp/simplejoystick.h \
            $$PWD/scrcpp/soundmanager.h \
