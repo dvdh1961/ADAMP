@@ -38,6 +38,16 @@ enum ScanlinesMode {
     ScanlinesLCD,
     ScanlinesRaster  };
 
+enum ColorFilterMode {
+    ColorFilterOff = 0,
+    ColorFilterMonochrome,
+    ColorFilterSepia,
+    ColorFilterGreenCRT,
+    ColorFilterAmberCRT,
+    ColorFilterCMY,
+    ColorFilterRGB
+};
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -120,6 +130,9 @@ private slots:
     void onCartridgeStatusChanged(const QString& colecoName, const QString& adamName);
     void onPowerBtnClicked();
     void onTogglePaddleMode(bool checked);
+    void onSaveSymbolDefinitions();
+    void onLoadSymbolDefinitions();
+    void onColorFilterModeChanged(QAction* action);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -243,6 +256,8 @@ private:
 
     QAction* m_actSaveState       = nullptr;
     QAction* m_actLoadState       = nullptr;
+    QAction* m_actSaveSymbols     = nullptr;
+    QAction* m_actLoadSymbols     = nullptr;
     QAction* m_actResetSize       = nullptr;
     QAction* m_actToggleBezels    = nullptr;
     QAction* m_actToggleSnap = nullptr;
@@ -301,6 +316,9 @@ private:
     QAction *m_actScalingSmooth = nullptr;
     QAction *m_actScalingSharp = nullptr;
     QAction *m_actScalingEPX = nullptr;
+    ColorFilterMode m_colorFilterMode = ColorFilterOff;
+    QMenu *m_colorFilterMenu = nullptr;
+    QActionGroup *m_colorFilterGroup = nullptr;
 
     QString m_loadedTapeNames[4]; // D1 t/m D4
     QString m_loadedDiskNames[4]; // D5 t/m D8
@@ -334,6 +352,9 @@ private:
     QString m_statePath;
     QString m_breakpointPath;
     QString m_screenshotsPath;
+    QString m_symbolsPath;
+    QString m_adamBezelPath;
+    QString m_cvBezelPath;
 
     QMenu *m_adamRomMenu = nullptr;
     QMenu *m_colecoRomMenu = nullptr;

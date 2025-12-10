@@ -8,6 +8,13 @@
 #include <QTableWidgetItem>
 #include <QPainter>
 #include <QStyledItemDelegate>
+#include <QEvent>
+#include <QKeyEvent>
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QMenu>
+#include <QAction>
+#include <QClipboard>
 
 class LogZebraDelegate : public QStyledItemDelegate
 {
@@ -44,11 +51,18 @@ LogWidget::LogWidget(QWidget *parent)
     m_table->horizontalHeader()->setVisible(false);
     m_table->verticalHeader()->setVisible(false);
     m_table->setShowGrid(false);
-    m_table->setSelectionMode(QAbstractItemView::NoSelection);
+    m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+
+    m_table->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_table, &QWidget::customContextMenuRequested,
+            this, &LogWidget::onTableContextMenu);
+
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setWordWrap(false);
     m_table->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_table->installEventFilter(this);
 
     m_monoFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     m_table->setFont(m_monoFont);
@@ -100,7 +114,7 @@ void LogWidget::onAppendRequested(const QString &line)
 
     auto* item = new QTableWidgetItem(stamp + line);
     item->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    item->setFlags(Qt::ItemIsEnabled);
+    item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
     m_table->setItem(row, 0, item);
 
     if (auto* it = m_table->item(row, 0)) {
@@ -141,4 +155,72 @@ static void qtLogForwarder(QtMsgType type,
 void LogWidget::installQtHandler()
 {
     qInstallMessageHandler(qtLogForwarder);
+}
+
+bool LogWidget::eventFilter(QObject *obj, QEvent *event)
+{
+    if (obj == m_table && event->type() == QEvent::KeyPress) {
+        QKeyEvent *key = static_cast<QKeyEvent*>(event);
+        if (key->matches(QKeySequence::Copy)) {
+
+            QList<QTableWidgetItem*> items = m_table->selectedItems();
+            QString text;
+
+            for (auto* it : items) {
+                text += it->text() + "\n";
+            }
+
+            QClipboard *cb = QGuiApplication::clipboard();
+            cb->setText(text.trimmed());
+
+            return true;
+        }
+    }
+    return QWidget::eventFilter(obj, event);
+}
+
+void LogWidget::onTableContextMenu(const QPoint &pos)
+{
+    if (!m_table)
+        return;
+
+    QMenu menu(this);
+    QAction *actCopySel = menu.addAction("Copy selected lines");
+    QAction *actCopyAll = menu.addAction("Copy all");
+    QAction *actClear   = menu.addAction("Clear log");
+
+    QAction *chosen = menu.exec(m_table->viewport()->mapToGlobal(pos));
+    if (!chosen)
+        return;
+
+    QString text;
+
+    if (chosen == actCopySel) {
+        // Alle geselecteerde rijen kopiëren
+        auto ranges = m_table->selectedRanges();
+        for (const auto &r : ranges) {
+            for (int row = r.topRow(); row <= r.bottomRow(); ++row) {
+                if (auto *it = m_table->item(row, 0)) {
+                    text += it->text();
+                    text += "\n";
+                }
+            }
+        }
+    } else if (chosen == actCopyAll) {
+        // Volledige log kopiëren
+        int rows = m_table->rowCount();
+        for (int row = 0; row < rows; ++row) {
+            if (auto *it = m_table->item(row, 0)) {
+                text += it->text();
+                text += "\n";
+            }
+        }
+    } else if (chosen == actClear) {
+        clear();
+        return;
+    }
+
+    if (!text.isEmpty()) {
+        QGuiApplication::clipboard()->setText(text.trimmed());
+    }
 }

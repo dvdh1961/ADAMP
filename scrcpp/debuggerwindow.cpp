@@ -4,6 +4,7 @@
 #include "coleco.h"
 #include "z80.h"
 #include "gotoaddressdialog.h"
+#include "tms9928a.h" // Noodzakelijk voor tms.VR[i] access
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -30,14 +31,55 @@
 #include <QTabWidget>
 #include "setbreakpointdialog.h"
 #include <algorithm>
+#include <QMenu>
+#include <QClipboard>
+#include <QGuiApplication>
+#include "setbreakpointdialog.h"
+#include "setsymboldialog.h"
+#include "memoryeditdialog.h"
 
+// Externe declaratie voor VDP-status structuur
+extern tTMS9981A tms;
+
+static BreakpointType breakpointTypeFromString(const QString& text)
+{
+    QString upper = text.trimmed().toUpper();
+
+    if (upper.startsWith("REG "))   return BreakpointType::BP_REG_VAL;
+    if (upper.startsWith("FLAG "))  return BreakpointType::BP_FLAG_VAL;
+    if (upper.startsWith("MEM "))   return BreakpointType::BP_MEM_VAL;
+
+    if (upper.startsWith("RD "))    return BreakpointType::BP_READ;
+    if (upper.startsWith("WR "))    return BreakpointType::BP_WRITE;
+
+    if (upper.startsWith("INH "))   return BreakpointType::BP_IO_IN;
+    if (upper.startsWith("INL "))   return BreakpointType::BP_IO_IN;
+    if (upper.startsWith("IN "))    return BreakpointType::BP_IO_IN;
+
+    if (upper.startsWith("OUTH "))  return BreakpointType::BP_IO_OUT;
+    if (upper.startsWith("OUTL "))  return BreakpointType::BP_IO_OUT;
+    if (upper.startsWith("OUT "))   return BreakpointType::BP_IO_OUT;
+
+    if (upper.startsWith("CLK "))   return BreakpointType::BP_CLOCK;
+    if (upper.startsWith("EXE "))   return BreakpointType::BP_EXECUTE;
+
+    bool ok = false;
+    text.toUShort(&ok, 16);
+    if (ok)
+        return BreakpointType::BP_EXECUTE;
+
+    return BreakpointType::BP_EXECUTE;
+}
 
 DebuggerWindow::DebuggerWindow(QWidget *parent)
     : QMainWindow(parent),
     m_controller(nullptr)
 {
     setWindowTitle("ADAM+ Debugger");
-    resize(770, 700);
+
+    int x = 1080, y = 800;
+    this->setMinimumSize(x, y);
+    resize(x, y);
 
     QWidget *central = new QWidget(this);
     setCentralWidget(central);
@@ -46,6 +88,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
     QFont tableFont1("Roboto", 10);
     QFont tableFont2("Roboto", 11);
     QFont fixedFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    QFont smallFont("Roboto", 8);
 
     QString buttonStyle =
         "QPushButton { border: none; background: transparent; }"
@@ -69,50 +112,96 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
 
     QHBoxLayout *topRow = new QHBoxLayout();
 
-    // --- DISASSEMBLY (links) ---
+    // --- 1. DISASSEMBLY (Program Tab Widget) ---
     {
-        QVBoxLayout *disLayout = new QVBoxLayout();
-        QLabel *lblDis = new QLabel("<b>Disassembly (around PC)</b>", this);
-        disLayout->addWidget(lblDis);
-        m_disasmView = new QTableWidget(0, 3, this);
-        m_disasmView->setHorizontalHeaderLabels(QStringList() << "Addr" << "Bytes" << "Instruction");
+        m_disasmTabWidget = new QTabWidget(this);
+        m_disasmTabWidget->setFont(tableFont1);
+        m_disasmTabWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        m_disasmTabWidget->setMinimumWidth(260);
+
+        QWidget *disasmTab = new QWidget(m_disasmTabWidget);
+        QVBoxLayout *disLayout = new QVBoxLayout(disasmTab);
+        disLayout->setContentsMargins(4, 4, 4, 4);
+
+        // WIJZIGING 1: 5 Kolommen in plaats van 4
+        m_disasmView = new QTableWidget(0, 5, this);
+        // WIJZIGING 2: Nieuwe header voor de Label-injectie
+        m_disasmView->setHorizontalHeaderLabels(QStringList() << "Label" << "Addr" << "Code" << "Mnemonic" << "Target");
         m_disasmView->verticalHeader()->hide();
         m_disasmView->setEditTriggers(QAbstractItemView::NoEditTriggers);
         m_disasmView->setFont(tableFont1);
         m_disasmView->setMinimumHeight(442);
-        m_disasmView->setMinimumWidth(260);
         m_disasmView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         m_disasmView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        m_disasmView->setColumnWidth(0, 60);
-        m_disasmView->setColumnWidth(1, 80);
-        m_disasmView->setColumnWidth(2, 100);
+        // WIJZIGING 3: Kolombreedtes aanpassen
+        m_disasmView->setColumnWidth(0, 160); // Label
+        m_disasmView->setColumnWidth(1, 50);  // Adres
+        m_disasmView->setColumnWidth(2, 80);  // Code
+        m_disasmView->setColumnWidth(3, 100); // Mnemonic
+        m_disasmView->setColumnWidth(4, 160); // Target Label (NIEUW)
+        m_disasmView->setSelectionBehavior(QAbstractItemView::SelectRows);
+        m_disasmView->setSelectionMode(QAbstractItemView::ExtendedSelection);
+        m_disasmView->setContextMenuPolicy(Qt::CustomContextMenu);
+
+        connect(m_disasmView, &QTableWidget::customContextMenuRequested,
+                this, &DebuggerWindow::onDisasmContextMenu);
+
         disLayout->addWidget(m_disasmView, 1);
-        topRow->addLayout(disLayout, 1);
+        m_disasmTabWidget->addTab(disasmTab, tr("Program"));
+
+        topRow->addWidget(m_disasmTabWidget, 1); // Neemt de meeste horizontale stretch
     }
 
-    // --- REGISTERS (midden) ---
+    // --- 2. REGISTERS (Z80 Tab Widget) ---
     {
-        QVBoxLayout *regLayout = new QVBoxLayout();
-        QLabel *lblRegs = new QLabel("<b>Registers</b>", this);
-        regLayout->addWidget(lblRegs);
+        m_regsTabWidget = new QTabWidget(this);
+        m_regsTabWidget->setFont(tableFont1);
+        m_regsTabWidget->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+        m_regsTabWidget->setMinimumWidth(140);
+        m_regsTabWidget->setMaximumWidth(140);
+
+        QWidget *regTab = new QWidget(m_regsTabWidget);
+        QVBoxLayout *regLayout = new QVBoxLayout(regTab);
+        regLayout->setContentsMargins(4, 4, 4, 4);
+
         m_regTable = new QTableWidget(0, 2, this);
-        m_regTable->setHorizontalHeaderLabels(QStringList() << "Register" << "Value");
+        m_regTable->setHorizontalHeaderLabels(QStringList() << "Reg" << "Value");
         m_regTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
         m_regTable->verticalHeader()->hide();
         m_regTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
         m_regTable->setFont(tableFont2);
-        m_regTable->setMinimumWidth(140);
-        m_regTable->setMaximumWidth(160);
+        m_regTable->setMinimumWidth(120);
+        m_regTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+        m_regTable->setSelectionMode(QAbstractItemView::ExtendedSelection);
+        m_regTable->setContextMenuPolicy(Qt::CustomContextMenu);
+
+        connect(m_regTable, &QTableWidget::customContextMenuRequested,
+                this, &DebuggerWindow::onRegistersContextMenu);
+
         regLayout->addWidget(m_regTable, 1);
-        topRow->addLayout(regLayout, 0);
+        m_regsTabWidget->addTab(regTab, tr("Z80"));
+
+        topRow->addWidget(m_regsTabWidget, 0); // Vaste breedte
     }
 
-    // --- Rechter Kolom (Flags, Stack, Breakpoints) ---
+    // --- 3. FLAGS, STACK, en VDP Regs Kolom ---
     {
-        QVBoxLayout *rightColumnLayout = new QVBoxLayout();
+        // Wrapper voor de vlaggen/stack en VDP registers, die de breedte van 320px vastlegt.
+        QVBoxLayout *rightTabsWrapper = new QVBoxLayout();
+        rightTabsWrapper->setContentsMargins(0, 0, 0, 0);
 
-        // --- Flags Table (Bovenaan) ---
-        rightColumnLayout->addWidget(new QLabel("<b>Flags</b>", this));
+        // 3.1 Flags/Stack Tab Widget
+        m_flagsStackTabWidget = new QTabWidget(this);
+        m_flagsStackTabWidget->setFont(tableFont1);
+        m_flagsStackTabWidget->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+        m_flagsStackTabWidget->setMinimumWidth(320);
+        m_flagsStackTabWidget->setMaximumWidth(320);
+
+        QWidget *fsTab = new QWidget(m_flagsStackTabWidget);
+        QVBoxLayout *fsLayout = new QVBoxLayout(fsTab);
+        fsLayout->setContentsMargins(4, 4, 4, 4);
+
+        // Flags Table
         m_flagsTable = new QTableWidget(1, 6, this);
         m_flagsTable->setHorizontalHeaderLabels(QStringList() << "S" << "Z" << "H" << "P/V" << "N" << "C");
         m_flagsTable->verticalHeader()->hide();
@@ -125,11 +214,9 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
         int flagsHeight = (m_flagsTable->horizontalHeader()->height() + 2) + (1 * 20);
         m_flagsTable->setMinimumHeight(flagsHeight);
         m_flagsTable->setMaximumHeight(flagsHeight);
-        rightColumnLayout->addWidget(m_flagsTable, 0);
+        fsLayout->addWidget(m_flagsTable, 0);
 
-
-        // --- Stack Table (Midden) ---
-        rightColumnLayout->addWidget(new QLabel("<b>Stack (Top)</b>", this));
+        // Stack Table
         m_stackTable = new QTableWidget(7, 4, this);
         m_stackTable->setHorizontalHeaderLabels(QStringList() << "Addr 0..7" << "Val" << "Addr 8..14" << "Val");
         m_stackTable->verticalHeader()->hide();
@@ -138,153 +225,301 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
         m_stackTable->setFont(fixedFont);
         m_stackTable->setFocusPolicy(Qt::NoFocus);
         m_stackTable->setSelectionMode(QAbstractItemView::NoSelection);
-        rightColumnLayout->addWidget(m_stackTable, 1 /* stretch 1 */);
+        fsLayout->addWidget(m_stackTable, 1 /* stretch 1 */);
+
+        m_flagsStackTabWidget->addTab(fsTab, tr("Flags/Stack"));
+
+        rightTabsWrapper->addWidget(m_flagsStackTabWidget, 1); // Flags/Stack krijgt stretch 1
 
 
-        // --- TAB WIDGET (Breakpoint / Patches) ---
-        m_rightTabWidget = new QTabWidget(this);
-        m_rightTabWidget->setFont(tableFont1); // Kleinere font voor de tabs
-        m_rightTabWidget->setFixedHeight(140); // Vaste hoogte
+        // --- 3.2 VDP Registers Tab Widget ---
+        m_vdpRegsTabWidget = new QTabWidget(this);
+        m_vdpRegsTabWidget->setFont(tableFont1);
 
-        // --- Breakpoints ---
-        {
-            QWidget *bpTab = new QWidget(m_rightTabWidget);
-            QVBoxLayout *bpTabLayout = new QVBoxLayout(bpTab);
-            bpTabLayout->setContentsMargins(4, 4, 4, 4);
-            bpTabLayout->setSpacing(4);
+        // ** VASTE HOOGTE INSTELLING **
+        m_vdpRegsTabWidget->setFixedHeight(209);
+        m_vdpRegsTabWidget->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        // ******************************
 
-            // Breakpoint Lijst
-            m_bpList = new QListWidget(this);
-            m_bpList->setFont(fixedFont);
-            m_bpList->setSelectionMode(QAbstractItemView::SingleSelection);
-            m_bpList->setFixedHeight(80);
-            bpTabLayout->addWidget(m_bpList, 0);
+        m_vdpRegsTabWidget->setMinimumWidth(320);
+        m_vdpRegsTabWidget->setMaximumWidth(320);
 
-            // Breakpoint Knoppen
-            QHBoxLayout *bpButtons = new QHBoxLayout();
-            bpButtons->setSpacing(4);
-            QString bpBtnStyle = "QPushButton { padding: 2px 5px; }";
+        QWidget *vdpTab = new QWidget(m_vdpRegsTabWidget);
+        QVBoxLayout *vdpLayout = new QVBoxLayout(vdpTab);
+        vdpLayout->setContentsMargins(4, 4, 4, 4);
 
-            m_bpAddButton = new QPushButton(tr("Add"), this);
-            m_bpAddButton->setStyleSheet(bpBtnStyle);
+        // VDP Registers Tabel (4 rijen x 4 kolommen: R0-Waarde R1-Waarde ...)
+        m_vdpRegTable = new QTableWidget(6, 4, this);
+        m_vdpRegTable->setHorizontalHeaderLabels(QStringList() << "Reg" << "Val" << "Reg" << "Val");
+        m_vdpRegTable->verticalHeader()->hide();
+        m_vdpRegTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        m_vdpRegTable->setFont(tableFont1);
+        m_vdpRegTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+        m_vdpRegTable->verticalHeader()->setDefaultSectionSize(25);
+        m_vdpRegTable->setFocusPolicy(Qt::NoFocus);
+        m_vdpRegTable->setSelectionMode(QAbstractItemView::NoSelection);
 
-            m_bpDelButton = new QPushButton(tr("Delete"), this);
-            m_bpDelButton->setStyleSheet(bpBtnStyle);
+        vdpLayout->addWidget(m_vdpRegTable, 1); // Stretch 1
+        m_vdpRegsTabWidget->addTab(vdpTab, tr("VDP Regs"));
 
-            m_bpEditButton = new QPushButton(tr("Edit"), this);
-            m_bpEditButton->setStyleSheet(bpBtnStyle);
+        rightTabsWrapper->addWidget(m_vdpRegsTabWidget, 0); // VDP Regs krijgt stretch 0 (vaste hoogte)
 
-            m_bpLoadButton = new QPushButton(tr("Load"), this);
-            m_bpLoadButton->setStyleSheet(bpBtnStyle);
-
-            m_bpSaveButton = new QPushButton(tr("Save"), this);
-            m_bpSaveButton->setStyleSheet(bpBtnStyle);
-
-            m_bpEnableButton = new QPushButton("Enabled",this);
-            m_bpEnableButton->setCheckable(true);
-            m_bpEnableButton->setChecked(true);
-            m_bpEnableButton->setStyleSheet(
-                "background-color: #009900; color: white; font-weight: bold; padding: 2px 5px;"
-                );
-
-            bpButtons->addWidget(m_bpAddButton);
-            bpButtons->addWidget(m_bpDelButton);
-            bpButtons->addWidget(m_bpEditButton);
-            bpButtons->addWidget(m_bpLoadButton);
-            bpButtons->addWidget(m_bpSaveButton);
-            bpButtons->addStretch();
-            bpButtons->addWidget(m_bpEnableButton);
-
-            bpTabLayout->addLayout(bpButtons, 0);
-
-            m_rightTabWidget->addTab(bpTab, tr("Breakpoints"));
-
-            // Connect breakpoint signalen
-            connect(m_bpEnableButton, &QPushButton::clicked,
-                    this, &DebuggerWindow::onToggleBreakpoints);
-            connect(m_bpAddButton, &QPushButton::clicked, this, &DebuggerWindow::onBpAdd);
-            connect(m_bpDelButton, &QPushButton::clicked, this, &DebuggerWindow::onBpDel);
-            connect(m_bpEditButton, &QPushButton::clicked, this, &DebuggerWindow::onBpEdit);
-            connect(m_bpList, &QListWidget::itemDoubleClicked, this, &DebuggerWindow::onBpEdit);
-            connect(m_bpLoadButton, &QPushButton::clicked, this, &DebuggerWindow::onBpLoad);
-            connect(m_bpSaveButton, &QPushButton::clicked, this, &DebuggerWindow::onBpSave);
-        }
-
-        // --- Patches ---
-        {
-            QWidget *patchTab = new QWidget(m_rightTabWidget);
-            QVBoxLayout *patchLayout = new QVBoxLayout(patchTab);
-            patchLayout->setContentsMargins(4, 4, 4, 4);
-
-            QLabel *patchLabel = new QLabel(tr("Patch functionality coming soon."), patchTab);
-            patchLabel->setAlignment(Qt::AlignCenter);
-            patchLayout->addWidget(patchLabel);
-
-            m_rightTabWidget->addTab(patchTab, tr("Patches"));
-        }
-
-        rightColumnLayout->addWidget(m_rightTabWidget, 0 /* stretch 0 */);
-
-        topRow->addLayout(rightColumnLayout, 1);
+        topRow->addLayout(rightTabsWrapper, 0); // De Wrapper heeft een vaste breedte
     }
 
     rootLayout->addLayout(topRow, 1);
 
-    // ======= MEMORY DUMP (volledige breedte onderaan) =======
+
+    // Initialisatie van het Tab Widget voor Breakpoints/Patches (apart gehouden)
+    m_rightTabWidget = new QTabWidget(this);
+    m_rightTabWidget->setFont(tableFont1);
+    m_rightTabWidget->setMinimumWidth(320);
+    m_rightTabWidget->setMaximumWidth(320);
+
+
+    // --- Breakpoints ---
     {
-        QLabel *lblMem = new QLabel("<b>Memory Dump</b>", this);
-        rootLayout->addWidget(lblMem);
-        m_memTable = new QTableWidget(0, 18, this);
-        QStringList headers;
-        headers << "Addr";
-        for (int i = 0; i < 16; ++i) headers << QString("%1").arg(i, 2, 16, QChar('0')).toUpper();
-        headers << "ASCII";
-        m_memTable->setHorizontalHeaderLabels(headers);
-        m_memTable->verticalHeader()->hide();
-        m_memTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-        m_memTable->setSelectionMode(QAbstractItemView::SingleSelection);
-        m_memTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-        m_memTable->setAlternatingRowColors(true);
-        m_memTable->setFont(fixedFont);
-        m_memTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Fixed);
-        m_memTable->verticalHeader()->setDefaultSectionSize(20);
-        m_memTable->setColumnWidth(0, 60);
-        for (int i = 1; i <= 16; ++i) m_memTable->setColumnWidth(i, 28);
-        m_memTable->setColumnWidth(17, 120);
-        rootLayout->addWidget(m_memTable, 1);
+        QWidget *bpTab = new QWidget(m_rightTabWidget);
+        QVBoxLayout *bpTabLayout = new QVBoxLayout(bpTab);
+        bpTabLayout->setContentsMargins(4, 4, 4, 4);
+        bpTabLayout->setSpacing(4);
+
+        // Breakpoint Lijst (vult resterende ruimte)
+        m_bpList = new QListWidget(this);
+        m_bpList->setFont(fixedFont);
+        m_bpList->setSelectionMode(QAbstractItemView::SingleSelection);
+
+        // Vult de resterende ruimte
+        bpTabLayout->addWidget(m_bpList, 1);
+
+        // Breakpoint Knoppen
+        QHBoxLayout *bpButtons = new QHBoxLayout();
+        bpButtons->setSpacing(4);
+        QString bpBtnStyle = "QPushButton { padding: 2px 5px; }";
+
+        m_bpAddButton = new QPushButton(tr("Add"), this);
+        m_bpAddButton->setStyleSheet(bpBtnStyle);
+
+        m_bpDelButton = new QPushButton(tr("Delete"), this);
+        m_bpDelButton->setStyleSheet(bpBtnStyle);
+
+        m_bpEditButton = new QPushButton(tr("Edit"), this);
+        m_bpEditButton->setStyleSheet(bpBtnStyle);
+
+        m_bpLoadButton = new QPushButton(tr("Load"), this);
+        m_bpLoadButton->setStyleSheet(bpBtnStyle);
+
+        m_bpSaveButton = new QPushButton(tr("Save"), this);
+        m_bpSaveButton->setStyleSheet(bpBtnStyle);
+
+        m_bpEnableButton = new QPushButton(tr("Break ON"), this);
+        m_bpEnableButton->setCheckable(true);
+
+        // Interpretatie:
+        //  - unchecked  (false) = ON  (rood)
+        //  - checked    (true)  = OFF (groen)
+        m_bpEnableButton->setChecked(false);
+
+        // master-flag overeen laten komen met rood = aan
+        m_breakpointsEnabled = true;
+
+        m_bpEnableButton->setStyleSheet(
+            "background-color: #888800; color: white; font-weight: bold; padding: 2px 5px;"
+            );
+
+        bpButtons->addWidget(m_bpAddButton);
+        bpButtons->addWidget(m_bpDelButton);
+        bpButtons->addWidget(m_bpEditButton);
+        bpButtons->addWidget(m_bpLoadButton);
+        bpButtons->addWidget(m_bpSaveButton);
+        bpButtons->addStretch();
+        bpButtons->addWidget(m_bpEnableButton);
+
+        // Knoppen-layout (blijft compact onderaan)
+        bpTabLayout->addLayout(bpButtons, 0);
+
+        m_rightTabWidget->addTab(bpTab, tr("Breakpoints"));
+
+        // Connect breakpoint signalen
+        connect(m_bpEnableButton, &QPushButton::clicked,
+                this, &DebuggerWindow::onToggleBreakpoints);
+        connect(m_bpAddButton, &QPushButton::clicked, this, &DebuggerWindow::onBpAdd);
+        connect(m_bpDelButton, &QPushButton::clicked, this, &DebuggerWindow::onBpDel);
+        connect(m_bpEditButton, &QPushButton::clicked, this, &DebuggerWindow::onBpEdit);
+        connect(m_bpList, &QListWidget::itemDoubleClicked, this, &DebuggerWindow::onBpEdit);
+        connect(m_bpLoadButton, &QPushButton::clicked, this, &DebuggerWindow::onBpLoad);
+        connect(m_bpSaveButton, &QPushButton::clicked, this, &DebuggerWindow::onBpSave);
     }
 
-    // ======= MEMORY CONTROLS =======
+    // --- Symbols ---
     {
-        QHBoxLayout *memControlsLayout = new QHBoxLayout();
-        memControlsLayout->addWidget(new QLabel("Bron:", this));
-        m_memSourceComboBox = new QComboBox(this);
-        m_memSourceComboBox->addItems({"Z80 CPU Space", "TMS VDP VRAM", "Main RAM", "SGM RAM", "EEPROM", "SRAM"});
-        memControlsLayout->addWidget(m_memSourceComboBox);
-        memControlsLayout->addSpacing(20);
-        memControlsLayout->addWidget(new QLabel("Adres:", this));
-        m_memAddrPrevButton = new QPushButton("<", this);
-        m_memAddrPrevButton->setFixedSize(24, 24);
-        m_memAddrPrevButton->setFont(fixedFont);
-        memControlsLayout->addWidget(m_memAddrPrevButton);
-        m_memAddrEdit = new QLineEdit("0000", this);
-        m_memAddrEdit->setFont(fixedFont);
-        m_memAddrEdit->setFixedWidth(60);
-        m_memAddrEdit->setValidator(new QRegularExpressionValidator(QRegularExpression("[0-9a-fA-F]{1,5}"), this));
-        memControlsLayout->addWidget(m_memAddrEdit);
-        m_memAddrNextButton = new QPushButton(">", this);
-        m_memAddrNextButton->setFixedSize(24, 24);
-        m_memAddrNextButton->setFont(fixedFont);
-        memControlsLayout->addWidget(m_memAddrNextButton);
-        m_memAddrHomeButton = new QPushButton(this);
-        m_memAddrHomeButton->setText("-0-");
-        m_memAddrHomeButton->setFont(fixedFont);
-        m_memAddrHomeButton->setFixedSize(24, 24);
-        m_memAddrHomeButton->setToolTip("Ga naar adres 0");
-        memControlsLayout->addWidget(m_memAddrHomeButton);
-        memControlsLayout->addStretch();
-        rootLayout->addLayout(memControlsLayout);
+        QWidget *symbolsTab = new QWidget(m_rightTabWidget);
+        QVBoxLayout *symbolsLayout = new QVBoxLayout(symbolsTab);
+        symbolsLayout->setContentsMargins(4, 4, 4, 4);
+        symbolsLayout->setSpacing(4);
 
+        // Symbolen Lijst
+        m_symList = new QListWidget(this); // NIEUW: Symbolen Lijst
+        m_symList->setFont(fixedFont);
+        m_symList->setSelectionMode(QAbstractItemView::SingleSelection);
+
+        symbolsLayout->addWidget(m_symList, 1);
+
+        // Symbolen Knoppen (zonder Enable/Disable knop)
+        QHBoxLayout *symButtons = new QHBoxLayout();
+        symButtons->setSpacing(4);
+        QString symBtnStyle = "QPushButton { padding: 2px 5px; }";
+
+        m_symAddButton = new QPushButton(tr("Add"), this); // NIEUW
+        m_symAddButton->setStyleSheet(symBtnStyle);
+
+        m_symDelButton = new QPushButton(tr("Delete"), this); // NIEUW
+        m_symDelButton->setStyleSheet(symBtnStyle);
+
+        m_symEditButton = new QPushButton(tr("Edit"), this); // NIEUW
+        m_symEditButton->setStyleSheet(symBtnStyle);
+
+        m_symLoadButton = new QPushButton(tr("Load"), this); // NIEUW
+        m_symLoadButton->setStyleSheet(symBtnStyle);
+
+        m_symSaveButton = new QPushButton(tr("Save"), this); // NIEUW
+        m_symSaveButton->setStyleSheet(symBtnStyle);
+
+        m_symEnableButton = new QPushButton(tr("Sym ON"), this); // NIEUW
+        m_symEnableButton->setCheckable(true);
+        m_symEnableButton->setChecked(false); // unchecked = ON (rood)
+        m_symbolsEnabled = true; // master-flag AAN
+        m_symEnableButton->setStyleSheet(
+            "background-color: #888800; color: white; font-weight: bold; padding: 2px 5px;"
+            );
+
+        symButtons->addWidget(m_symAddButton);
+        symButtons->addWidget(m_symDelButton);
+        symButtons->addWidget(m_symEditButton);
+        symButtons->addWidget(m_symLoadButton);
+        symButtons->addWidget(m_symSaveButton);
+        symButtons->addStretch(); // Geen Enable/Disable knop hier
+        symButtons->addWidget(m_symEnableButton);
+
+        symbolsLayout->addLayout(symButtons, 0);
+
+        m_rightTabWidget->addTab(symbolsTab, tr("Symbols"));
+
+        // Connect symbol signalen
+        connect(m_symAddButton, &QPushButton::clicked, this, &DebuggerWindow::onSymAdd);
+        connect(m_symDelButton, &QPushButton::clicked, this, &DebuggerWindow::onSymDel);
+        connect(m_symEditButton, &QPushButton::clicked, this, &DebuggerWindow::onSymEdit);
+        connect(m_symList, &QListWidget::itemDoubleClicked, this, &DebuggerWindow::onSymEdit);
+        connect(m_symLoadButton, &QPushButton::clicked, this, &DebuggerWindow::onSymLoad);
+        connect(m_symSaveButton, &QPushButton::clicked, this, &DebuggerWindow::onSymSave);
+        connect(m_symEnableButton, &QPushButton::clicked, this, &DebuggerWindow::onToggleSymbols);
+    }
+
+    // ======= BOTTOM ROW (MEMORY DUMP TABS LINKS / BREAKPOINTS RECHTS) =======
+    {
+        QHBoxLayout *bottomRow = new QHBoxLayout();
+
+        // --- 1. Memory Tab Widget (Links) ---
+
+        m_memSourceTabWidget = new QTabWidget(this);
+        m_memSourceTabWidget->setFont(tableFont1);
+        m_memSourceTabWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+        // --- De enige Memory Tab ---
+        {
+            QWidget *memTab = new QWidget(m_memSourceTabWidget);
+            QVBoxLayout *memTabLayout = new QVBoxLayout(memTab);
+            memTabLayout->setContentsMargins(4, 4, 4, 4);
+            memTabLayout->setSpacing(4);
+
+            // Memory Dump Tabel
+            m_memTable = new QTableWidget(0, 19, this);
+            QStringList headers;
+            headers << ""; // Adres
+            for (int i = 0; i < 16; ++i) headers << QString("%1").arg(i, 2, 16, QChar('0')).toUpper();
+            headers << ""; // Nieuwe lege scheidingskolom
+            headers << "ASCII"; // ASCII
+            m_memTable->setHorizontalHeaderLabels(headers);
+
+            m_memTable->verticalHeader()->hide();
+            m_memTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+            m_memTable->setSelectionMode(QAbstractItemView::SingleSelection);
+            m_memTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+            m_memTable->setAlternatingRowColors(true);
+            m_memTable->setFont(fixedFont);
+
+            m_memTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+            m_memTable->verticalHeader()->setDefaultSectionSize(20);
+            m_memTable->setColumnWidth(0, 40); // Adres
+            for (int i = 1; i <= 16; ++i) m_memTable->setColumnWidth(i, 28); // Hex Bytes
+
+            // WIJZIGING: Kolom 17 (de nieuwe lege kolom) de breedte geven
+            m_memTable->setColumnWidth(17, 40); // Lege scheiding van 40 pixels
+
+            // WIJZIGING: Kolom 18 is nu de ASCII-kolom
+            m_memTable->setColumnWidth(18, 120);
+            memTabLayout->addWidget(m_memTable, 1); // Stretch 1
+
+            // Memory Controls
+            QHBoxLayout *memControlsLayout = new QHBoxLayout();
+            memControlsLayout->addWidget(new QLabel("Source:", this));
+
+            // Combobox
+            m_memSourceComboBox = new QComboBox(this);
+            m_memSourceComboBox->addItems({"Z80 CPU Space", "TMS VDP VRAM", "Main RAM", "SGM RAM", "EEPROM", "SRAM"});
+            m_memSourceComboBox->setMinimumWidth(200);
+            memControlsLayout->addWidget(m_memSourceComboBox);
+
+            memControlsLayout->addStretch();
+
+            memControlsLayout->addSpacing(20);
+            memControlsLayout->addWidget(new QLabel("Address:", this));
+
+            m_memAddrPrevButton = new QPushButton("<", this);
+            m_memAddrPrevButton->setFixedSize(24, 24);
+            m_memAddrPrevButton->setFont(fixedFont);
+            memControlsLayout->addWidget(m_memAddrPrevButton);
+
+            m_memAddrEdit = new QLineEdit("0000", this);
+            m_memAddrEdit->setFont(fixedFont);
+            m_memAddrEdit->setFixedWidth(60);
+            m_memAddrEdit->setValidator(new QRegularExpressionValidator(QRegularExpression("[0-9a-fA-F]{1,5}"), this));
+            memControlsLayout->addWidget(m_memAddrEdit);
+
+            m_memAddrNextButton = new QPushButton(">", this);
+            m_memAddrNextButton->setFixedSize(24, 24);
+            m_memAddrNextButton->setFont(fixedFont);
+            memControlsLayout->addWidget(m_memAddrNextButton);
+
+            m_memAddrHomeButton = new QPushButton(this);
+            m_memAddrHomeButton->setText("-0-");
+            m_memAddrHomeButton->setFont(fixedFont);
+            m_memAddrHomeButton->setFixedSize(24, 24);
+            memControlsLayout->addWidget(m_memAddrHomeButton);
+
+            memTabLayout->addLayout(memControlsLayout, 0);
+
+            // Voeg de Memory Tab toe aan het Tab Widget
+            m_memSourceTabWidget->addTab(memTab, tr("Memory"));
+        }
+
+        bottomRow->addWidget(m_memSourceTabWidget, 1); // Neemt de meeste breedte
+
+        // --- 2. Breakpoints/Symbols Tab Wrapper (Rechts) ---
+        QVBoxLayout *bpWrapper = new QVBoxLayout();
+        bpWrapper->setContentsMargins(4, 0, 0, 0);
+
+        m_rightTabWidget->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+        m_rightTabWidget->setMinimumHeight(100);
+
+        bpWrapper->addWidget(m_rightTabWidget, 1);
+
+        bottomRow->addLayout(bpWrapper, 0); // Vaste breedte (stretch 0)
+
+        // Voeg de Bottom Row toe aan de Root Layout
+        rootLayout->addLayout(bottomRow, 1);
+
+        // Koppel de controls aan de lay-out
         connect(m_memSourceComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &DebuggerWindow::onMemSourceChanged);
         connect(m_memAddrEdit, &QLineEdit::returnPressed, this, &DebuggerWindow::onMemAddrChanged);
         connect(m_memAddrPrevButton, &QPushButton::clicked, this, &DebuggerWindow::onMemAddrPrev);
@@ -292,15 +527,20 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
         connect(m_memAddrHomeButton, &QPushButton::clicked, this, &DebuggerWindow::onMemAddrHome);
     }
 
+    // Koppel het dubbelklik signaal aan de nieuwe slot
+    connect(m_memTable, &QTableWidget::cellDoubleClicked,
+            this, &DebuggerWindow::onMemTableDoubleClicked);
+
     // ======= DEBUGGER CONTROLS (knoppen) =======
     QHBoxLayout *buttons = new QHBoxLayout;
 
-    QPushButton *btnStep        = createImageButton(":/images/images/STEP.png");
-    QPushButton *btnRun         = createImageButton(":/images/images/RUN.png");
-    QPushButton *btnBreak       = createImageButton(":/images/images/BREAK.png");
-    QPushButton *btnRefresh     = createImageButton(":/images/images/REFRESH.png");
-    QPushButton *btnGotoAddr    = createImageButton(":/images/images/GOTO.png");
-    QPushButton *btnSinglestep  = createImageButton(":/images/images/SSTEP.png");
+    btnStep        = createImageButton(":/images/images/STEP.png");
+    btnRun         = createImageButton(":/images/images/RUN.png");
+    btnBreak       = createImageButton(":/images/images/BREAK.png");
+    btnRefresh     = createImageButton(":/images/images/REFRESH.png");
+    btnGotoAddr    = createImageButton(":/images/images/GOTO.png");
+    btnSinglestep  = createImageButton(":/images/images/SSTEP.png");
+    btnStepOver    = createImageButton(":/images/images/STEPOVER.png");
 
     connect(btnBreak, &QPushButton::clicked, this, [this](){
         if (m_controller) m_controller->pauseEmulation();
@@ -329,11 +569,14 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
             m_disasmView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         }
     });
+    connect(btnStepOver, &QPushButton::clicked, this, &DebuggerWindow::onStepOver);
+
+    buttons->addWidget(btnSinglestep);
     buttons->addWidget(btnStep);
+    buttons->addWidget(btnStepOver);
+    buttons->addWidget(btnGotoAddr);
     buttons->addWidget(btnRun);
     buttons->addWidget(btnBreak);
-    buttons->addWidget(btnGotoAddr);
-    buttons->addWidget(btnSinglestep);
     buttons->addStretch();
     buttons->addWidget(btnRefresh);
     rootLayout->addLayout(buttons, 0);
@@ -343,7 +586,26 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
 
 void DebuggerWindow::setController(ColecoController *controller)
 {
+    if (m_controller) {
+        // Verbreek oude verbindingen
+        disconnect(m_controller, nullptr, this, nullptr);
+    }
+
     m_controller = controller;
+
+    // Nieuwe verbindingen
+    if (m_controller) {
+        // [Andere verbindingen...]
+
+        // DE CRUCIALE KOPPELING: Wanneer de emulator stopt (door een breakpoint)
+        // moet de GUI alle vensters vernieuwen.
+        connect(m_controller, &ColecoController::emulationStopped,
+                this, &DebuggerWindow::updateAllViews);
+
+        // Optioneel: Voor de knoppen (Run/Step/Break) status:
+        connect(m_controller, &ColecoController::emuPausedChanged,
+                this, &DebuggerWindow::onEmuPausedChanged); // *U moet deze slot toevoegen*
+    }
 }
 
 void DebuggerWindow::updateAllViews()
@@ -353,6 +615,7 @@ void DebuggerWindow::updateAllViews()
     updateMemoryDump();
     updateFlags();
     updateStack();
+    updateVdpRegisters();
 }
 
 void DebuggerWindow::updateRegisters()
@@ -378,6 +641,8 @@ void DebuggerWindow::updateRegisters()
         nameItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         valItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         if (row == 0) { nameItem->setForeground(QColor("#4FC3F7")); valItem->setForeground(QColor("#4FC3F7")); }
+        else if (row == 1) { nameItem->setForeground(QColor("#BF8040")); valItem->setForeground(QColor("#BF8040")); }
+        else if (row > 11) { nameItem->setForeground(QColor("#BFBF00")); valItem->setForeground(QColor("#BFBF00")); }
         else { nameItem->setForeground(QColor("#9E9E9E")); valItem->setForeground(QColor("#FFFFFF")); }
         m_regTable->setItem(row, 0, nameItem);
         m_regTable->setItem(row, 1, valItem);
@@ -387,47 +652,188 @@ void DebuggerWindow::updateRegisters()
 void DebuggerWindow::updateDisassembly()
 {
     if (!m_disasmView) return;
+
+    // FONT DEFINITIES
+    QFont labelFont("Roboto", 7);   // Kolom 0 en 4
+    QFont instructionFont("Roboto", 10); // Kolom 1,2,3
+    const QColor symbolColor = QColor("#FFA500");
+
     m_disasmView->setRowCount(0);
-    const unsigned short pc = Z80.pc.w.l;
-    const int MAX_LINES = 64;
-    const int CONTEXT_BACK = 0x20;
-    unsigned short startAddr = (pc > CONTEXT_BACK) ? (pc - CONTEXT_BACK) : 0x0000;
+
+    const uint16_t pc = Z80.pc.w.l;
+    const int MAX_LINES        = 64;
+    const int LINES_BEFORE_PC  = MAX_LINES / 2;
+    const uint16_t SEARCH_BACK_BYTES = 0x0200; // zoek maximaal 0x200 bytes terug
+
+    // ---------------------------------------------------------
+    // 1) Bepaal startadres o.b.v. AANTAL INSTRUCTIES, niet bytes
+    // ---------------------------------------------------------
+    uint16_t searchStart = (pc > SEARCH_BACK_BYTES) ? pc - SEARCH_BACK_BYTES : 0x0000;
+
+    QVector<uint16_t> instrAddrs;
+    instrAddrs.reserve(256);
+
+    uint16_t cur = searchStart;
+    int pcIndex = -1;
+
+    while (cur <= pc && cur <= 0xFFFF) {
+        uint16_t thisAddr = cur;
+        int oplen = 0;
+        (void)disasmOneAt(cur, oplen);
+
+        // Safety: forceer altijd vooruitgang
+        if (oplen <= 0 || oplen > 4) {
+            oplen = 1;
+        }
+
+        instrAddrs.push_back(thisAddr);
+
+        if (thisAddr == pc) {
+            pcIndex = instrAddrs.size() - 1;
+        }
+
+        // Bescherm tegen overflow/wrap
+        if (thisAddr == 0xFFFF)
+            break;
+
+        cur = thisAddr + static_cast<uint16_t>(oplen);
+        if (cur == thisAddr) {
+            ++cur;
+        }
+        if (cur == 0) { // wrap rond 0xFFFF→0
+            break;
+        }
+
+        if (thisAddr > pc) {
+            break;
+        }
+    }
+
+    uint16_t startAddr = 0x0000;
+
+    if (pcIndex >= 0 && !instrAddrs.isEmpty()) {
+        int startIndex = pcIndex - LINES_BEFORE_PC;
+        if (startIndex < 0) startIndex = 0;
+        if (startIndex >= instrAddrs.size()) startIndex = instrAddrs.size() - 1;
+        startAddr = instrAddrs[startIndex];
+    } else {
+        // Fallback: oude gedrag als PC niet netjes in de lijst zit
+        const int CONTEXT_BACK_BYTES = 100;
+        startAddr = (pc > CONTEXT_BACK_BYTES) ? (pc - CONTEXT_BACK_BYTES) : 0x0000;
+    }
+
+    // ---------------------------------------------------------
+    // 2) Tabel vullen vanaf startAddr, PC-rij markeren
+    // ---------------------------------------------------------
     int pcRow = -1;
-    unsigned short cur = startAddr;
+    cur = startAddr;
+
     for (int line = 0; line < MAX_LINES; ++line) {
         int oplen = 0;
         QString instr = disasmOneAt(cur, oplen);
-        if (oplen <= 0 || oplen > 4) oplen = 1;
+
+        if (oplen <= 0 || oplen > 4) {
+            oplen = 1;
+            instr = QString("DB $%1").arg(coleco_ReadByte(cur), 2, 16, QChar('0')).toUpper();
+        }
+
+        // Label opzoeken
+        QString label = getSymbolLabelForAddress(cur);
+
+        // Bytes string opbouwen
         QString bytesStr;
         for (int b = 0; b < oplen; ++b) {
             bytesStr += QString("%1 ").arg(coleco_ReadByte(cur + b), 2, 16, QChar('0')).toUpper();
         }
         bytesStr = bytesStr.trimmed();
+
         int row = m_disasmView->rowCount();
         m_disasmView->insertRow(row);
+
+        // Kolom 0: Label
+        QTableWidgetItem *lblItem;
+        if (m_symbolsEnabled && !label.isEmpty()) {
+            lblItem = new QTableWidgetItem(label);
+        } else {
+            lblItem = new QTableWidgetItem("");
+        }
+        lblItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        lblItem->setForeground(symbolColor);
+        lblItem->setFont(labelFont);
+
+        // Kolom 1: Adres
         auto addrItem = new QTableWidgetItem(QString("%1").arg(cur, 4, 16, QChar('0')).toUpper());
         addrItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         addrItem->setForeground(QColor("#4FC3F7"));
+        addrItem->setFont(instructionFont);
+
+        // Kolom 2: Bytes
         auto bytesItem = new QTableWidgetItem(bytesStr);
         bytesItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         bytesItem->setForeground(QColor("#81C784"));
+        bytesItem->setFont(instructionFont);
+
+        // Kolom 3 + 4: Mnemonic + Target label
+        QString targetLabelText;
+        int tagIndex = instr.indexOf("$$");
+        if (m_symbolsEnabled && tagIndex != -1) {
+            QString targetAddrStr = instr.mid(tagIndex - 4, 4);
+            bool ok;
+            uint16_t targetAddr = targetAddrStr.toUShort(&ok, 16);
+
+            instr.chop(2); // "$$" weg
+
+            if (ok) {
+                QString targetLabel = getSymbolLabelForAddress(targetAddr);
+                if (!targetLabel.isEmpty()) {
+                    targetLabelText = "< " + targetLabel;
+                }
+            }
+        }
+
         auto instrItem = new QTableWidgetItem(instr);
         instrItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         instrItem->setForeground(QColor("#E0E0E0"));
-        m_disasmView->setItem(row, 0, addrItem);
-        m_disasmView->setItem(row, 1, bytesItem);
-        m_disasmView->setItem(row, 2, instrItem);
-        if (cur == pc) { pcRow = row; }
-        cur = cur + (unsigned short)oplen;
+        instrItem->setFont(instructionFont);
+
+        QTableWidgetItem *targetItem = new QTableWidgetItem(targetLabelText);
+        targetItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        targetItem->setForeground(symbolColor);
+        targetItem->setFont(labelFont);
+
+        m_disasmView->setItem(row, 0, lblItem);
+        m_disasmView->setItem(row, 1, addrItem);
+        m_disasmView->setItem(row, 2, bytesItem);
+        m_disasmView->setItem(row, 3, instrItem);
+        m_disasmView->setItem(row, 4, targetItem);
+
+        // PC gevonden binnen deze instructie?
+        if (cur <= pc && pc < cur + static_cast<uint16_t>(oplen)) {
+            pcRow = row;
+        }
+
+        uint16_t next = cur + static_cast<uint16_t>(oplen);
+        if (next <= cur) { // protect tegen overflow/wrap
+            break;
+        }
+        cur = next;
+        if (cur > 0xFFFF) {
+            break;
+        }
     }
+
+    // ---------------------------------------------------------
+    // 3) Scrollen + highlighten van de PC-rij
+    // ---------------------------------------------------------
     if (pcRow >= 0) {
-        m_disasmView->setSelectionMode(QAbstractItemView::NoSelection);
-        m_disasmView->setFocusPolicy(Qt::NoFocus);
-        m_disasmView->scrollToItem(m_disasmView->item(pcRow, 0), QAbstractItemView::PositionAtCenter);
+        m_disasmView->scrollToItem(m_disasmView->item(pcRow, 0),
+                                   QAbstractItemView::PositionAtCenter);
+
         QColor redLine(200, 30, 30);
         QBrush bg(redLine);
         QBrush fg(Qt::white);
-        for (int col = 0; col < m_disasmView->columnCount(); ++col) {
+
+        for (int col = 0; col < 5; ++col) {
             if (QTableWidgetItem *it = m_disasmView->item(pcRow, col)) {
                 it->setBackground(bg);
                 it->setForeground(fg);
@@ -436,9 +842,13 @@ void DebuggerWindow::updateDisassembly()
     }
 }
 
+
 void DebuggerWindow::updateMemoryDump()
 {
     if (!m_memTable) return;
+
+    // De Memory Dump is altijd zichtbaar, we gebruiken de m_currentMemSourceIndex.
+
     m_memTable->setRowCount(0);
     const int bytesPerLine = 16;
     const int numLines = 32;
@@ -459,11 +869,109 @@ void DebuggerWindow::updateMemoryDump()
             m_memTable->setItem(line, 1 + i, itm);
             ascii += (b >= 32 && b <= 126) ? QChar(b) : '.';
         }
+
+        // We laten m_memTable->setItem(line, 17, NULL) weg, omdat de kolom leeg moet blijven.
+        // De kolom is al een lege QTableWidgetItem omdat we deze niet expliciet instellen.
+
         auto ascItem = new QTableWidgetItem(ascii);
         ascItem->setForeground(Qt::darkGray);
         ascItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-        m_memTable->setItem(line, 17, ascItem);
+
+        // WIJZIGING: Plaats de ASCII-weergave in kolom 18
+        m_memTable->setItem(line, 18, ascItem);
     }
+}
+
+void DebuggerWindow::updateVdpRegisters()
+{
+    if (!m_vdpRegTable) return;
+
+    // We hebben 4 rijen voor R0-R7 + 2 rijen voor status = 6 rijen
+    if (m_vdpRegTable->rowCount() != 6) {
+        m_vdpRegTable->setRowCount(6);
+    }
+
+    // Helper functie om items in te stellen
+    auto setItem = [&](int r, int c, const QString& regText, const QString& valText, QColor regCol, QColor valCol) {
+        QTableWidgetItem *regItem = m_vdpRegTable->item(r, c);
+        if (!regItem) {
+            regItem = new QTableWidgetItem();
+            regItem->setFlags(Qt::ItemIsEnabled);
+            m_vdpRegTable->setItem(r, c, regItem);
+        }
+        regItem->setText(regText);
+        regItem->setForeground(regCol);
+
+        QTableWidgetItem *valItem = m_vdpRegTable->item(r, c + 1);
+        if (!valItem) {
+            valItem = new QTableWidgetItem();
+            valItem->setFlags(Qt::ItemIsEnabled);
+            m_vdpRegTable->setItem(r, c + 1, valItem);
+        }
+        valItem->setText(valText);
+        valItem->setForeground(valCol);
+    };
+
+    // Stijlen
+    QColor regCol = QColor("#A0A0A0");
+    QColor valCol = Qt::white;
+    // Gebruik de bestaande definitie voor de font
+    QFont fixedFont("Roboto", 11);
+
+    // VUL RIJEN 0 T/M 3: TMS VDP REGISTERS R0 T/M R7
+    for (int r = 0; r < 4; ++r) {
+        // Linker paar: R0 t/m R3 (kolommen 0 en 1)
+        int regIndexL = r;
+        uint8_t valL = tms.VR[regIndexL];
+
+        setItem(r, 0,
+                QString("R%1").arg(regIndexL),
+                QString("$%1").arg(valL, 2, 16, QChar('0')).toUpper(),
+                regCol, valCol);
+
+        // Rechter paar: R4 t/m R7 (kolommen 2 en 3)
+        int regIndexR = r + 4;
+        uint8_t valR = tms.VR[regIndexR];
+
+        setItem(r, 2,
+                QString("R%1").arg(regIndexR),
+                QString("$%1").arg(valR, 2, 16, QChar('0')).toUpper(),
+                regCol, valCol);
+    }
+
+    // VUL RIJEN 4 EN 5: EXTRA STATUSWAARDEN
+
+    // RIJ 4: SR (S0) en VRAM Mask (VRMP)
+    // De VRAM Maskerwaarde is afgeleid van R1, gedefinieerd in tms9928a.h
+    uint32_t vramMask = TMS9918_VRAMMask;
+    QColor statusValCol = QColor("#FF8C00");
+
+    // Kolom 0/1: S0 (SR)
+    setItem(4, 0,
+            "S0",
+            QString("$%1").arg(tms.SR, 2, 16, QChar('0')).toUpper(),
+            regCol, statusValCol);
+
+    // Kolom 2/3: VRMP (VRAM Mask)
+    setItem(4, 2,
+            "VRMP",
+            QString("$%1").arg(vramMask, 4, 16, QChar('0')).toUpper(),
+            regCol, statusValCol);
+
+
+    // RIJ 5: CurLine (SCAN) en ScanLines (LNTM)
+
+    // Kolom 0/1: SCAN (CurLine)
+    setItem(5, 0,
+            "SCAN",
+            QString("%1").arg(tms.CurLine, 3, 10, QChar('0')), // Weergegeven in decimaal
+            regCol, statusValCol);
+
+    // Kolom 2/3: LNTM (ScanLines)
+    setItem(5, 2,
+            "LNTM",
+            QString("%1").arg(tms.ScanLines, 3, 10, QChar('0')), // Weergegeven in decimaal
+            regCol, statusValCol);
 }
 
 uint8_t DebuggerWindow::readMemoryByte(uint32_t address)
@@ -628,17 +1136,28 @@ void DebuggerWindow::gotoAddress()
 {
     uint16_t currentPC = Z80.pc.w.l;
     uint16_t addr = 0;
+
     if (m_disasmView) {
         m_disasmView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     }
+
+    // Pauzeer de emulator voor de adreswijziging
     if (m_controller) {
         m_controller->pauseEmulation();
     }
+
     if (!GotoAddressDialog::getAddress(this, currentPC, addr)) {
         return;
     }
-    Z80.pc.w.l = addr-1;
-    m_controller->sstepOnce();
+
+    // --- FIX: Stel de PC direct en exact in op het gevraagde adres ---
+    Z80.pc.w.l = addr; // PC = Gevraagde adres
+
+    // VERWIJDERD: m_controller->sstepOnce();
+    // We roepen GEEN uitvoeringsfunctie aan, zodat de instructie NIET wordt uitgevoerd.
+
+    // Vernieuw de weergave om de nieuwe PC-locatie te tonen
+    //m_controller->sstepOnce();
     updateRegisters();
     updateDisassembly();
     updateMemoryDump();
@@ -731,18 +1250,19 @@ void DebuggerWindow::onMemAddrHome()
 
 void DebuggerWindow::syncBreakpointsToCore()
 {
-    if (!m_controller) return;
+    // Neem alle GUI-breakpoints over
+    QList<CoreBreakpoint> guiBreakpoints = getBreakpointDefinitions();
 
-    QStringList activeBreakpoints;
-
-    if (m_breakpointsEnabled) {
-        for (const DebuggerBreakpoint& bp : m_breakpoints) {
-            if (bp.enabled) {
-                activeBreakpoints.append(bp.definition);
-            }
-        }
+    // Master bepaalt of ze effectief "enabled" zijn
+    for (CoreBreakpoint &bp : guiBreakpoints) {
+        bp.enabled = m_breakpointsEnabled && bp.enabled;
     }
-    debug_sync_breakpoints(m_controller, activeBreakpoints);
+
+    qDebug() << "[DebuggerWindow] syncBreakpointsToCore: masterEnabled="
+             << m_breakpointsEnabled
+             << "defs=" << guiBreakpoints.size();
+
+    DebugBridge::instance().syncBreakpoints(guiBreakpoints);
 }
 
 void DebuggerWindow::updateBreakpointList()
@@ -760,7 +1280,7 @@ void DebuggerWindow::updateBreakpointList()
         layout->setContentsMargins(2, 0, 4, 0);
         layout->setSpacing(4);
 
-        QLabel* label = new QLabel(bp.definition);
+        QLabel* label = new QLabel(bp.definition_text);
         label->setFont(fixedFont);
 
         bool isEffectivelyEnabled = m_breakpointsEnabled && bp.enabled;
@@ -770,7 +1290,7 @@ void DebuggerWindow::updateBreakpointList()
         QCheckBox* checkBox = new QCheckBox();
         checkBox->setChecked(bp.enabled);
 
-        checkBox->setProperty("bpDefinition", bp.definition);
+        checkBox->setProperty("bpDefinition", bp.definition_text);
 
         connect(checkBox, &QCheckBox::toggled, this, &DebuggerWindow::onBpCheckboxToggled);
 
@@ -799,20 +1319,24 @@ void DebuggerWindow::onBpAdd()
 
     auto it = std::find_if(m_breakpoints.begin(), m_breakpoints.end(),
                            [&bpString](const DebuggerBreakpoint& bp) {
-                               return bp.definition == bpString;
+                               return bp.definition_text == bpString;
                            });
 
     if (it == m_breakpoints.end()) {
         qDebug() << "[DebuggerWindow] Adding new breakpoint:" << bpString;
-        m_breakpoints.append({bpString, true});
-        std::sort(m_breakpoints.begin(), m_breakpoints.end());
+
+        DebuggerBreakpoint newBp;
+        newBp.enabled = true;
+        newBp.definition_text = bpString;
+        newBp.type = breakpointTypeFromString(bpString);
+
+        m_breakpoints.append(newBp);
         updateBreakpointList();
         syncBreakpointsToCore();
     } else {
-        qDebug() << "[DebuggerWindow] Breakpoint already exists. Ignoring.";
+        qDebug() << "[DebuggerWindow] Breakpoint already exists, not adding duplicate.";
     }
 }
-
 
 void DebuggerWindow::onBpDel()
 {
@@ -836,7 +1360,7 @@ void DebuggerWindow::onBpEdit()
     int row = m_bpList->currentRow();
     if (row < 0 || row >= m_breakpoints.size()) return;
 
-    QString currentAddr = m_breakpoints.at(row).definition;
+    QString currentAddr = m_breakpoints.at(row).definition_text;
     bool originalState = m_breakpoints.at(row).enabled;
 
     QString bpString = SetBreakpointDialog::getBreakpointString(this, currentAddr);
@@ -846,11 +1370,12 @@ void DebuggerWindow::onBpEdit()
 
     auto it = std::find_if(m_breakpoints.begin(), m_breakpoints.end(),
                            [&bpString](const DebuggerBreakpoint& bp) {
-                               return bp.definition == bpString;
+                               return bp.definition_text == bpString;
                            });
 
     if (it == m_breakpoints.end()) {
-        m_breakpoints[row].definition = bpString;
+        m_breakpoints[row].definition_text = bpString;
+        m_breakpoints[row].type = breakpointTypeFromString(bpString);
         m_breakpoints[row].enabled = originalState;
 
         std::sort(m_breakpoints.begin(), m_breakpoints.end());
@@ -858,7 +1383,7 @@ void DebuggerWindow::onBpEdit()
 
         auto newIt = std::find_if(m_breakpoints.begin(), m_breakpoints.end(),
                                   [&bpString](const DebuggerBreakpoint& bp) {
-                                      return bp.definition == bpString;
+                                      return bp.definition_text == bpString;
                                   });
         if (newIt != m_breakpoints.end()) {
             m_bpList->setCurrentRow(std::distance(m_breakpoints.begin(), newIt));
@@ -870,33 +1395,38 @@ void DebuggerWindow::onBpEdit()
         needsSync = true;
     }
 
-    if(needsSync) {
+    if (needsSync) {
         syncBreakpointsToCore();
     }
 }
 
 void DebuggerWindow::onToggleBreakpoints()
 {
-    m_breakpointsEnabled = m_bpEnableButton->isChecked();
+    bool checked = m_bpEnableButton->isChecked();
+
+    // Button checked = OFF (groen), unchecked = ON (rood)
+    m_breakpointsEnabled = !checked;
 
     if (m_breakpointsEnabled) {
-        m_bpEnableButton->setText("Enabled");
+        // AAN → rood
+        m_bpEnableButton->setText(tr("Break ON"));
+        m_bpEnableButton->setStyleSheet(
+            "background-color: #888800; color: white; font-weight: bold; padding: 2px 5px;"
+            );
+
+        // Als je bij inschakelen meteen wil pauzeren:
+        // emit requestBreakCPU();
+    } else {
+        // UIT → groen
+        m_bpEnableButton->setText(tr("Break OFF"));
         m_bpEnableButton->setStyleSheet(
             "background-color: #009900; color: white; font-weight: bold; padding: 2px 5px;"
             );
-    } else {
-        m_bpEnableButton->setText("Disabled");
-        m_bpEnableButton->setStyleSheet(
-            "background-color: #CC0000; color: white; font-weight: bold; padding: 2px 5px;"
-            );
-
-        emit requestBreakCPU();
     }
 
     updateBreakpointList();
     syncBreakpointsToCore();
 }
-
 
 void DebuggerWindow::onBpCheckboxToggled(bool checked)
 {
@@ -908,7 +1438,7 @@ void DebuggerWindow::onBpCheckboxToggled(bool checked)
 
     auto it = std::find_if(m_breakpoints.begin(), m_breakpoints.end(),
                            [&bpDef](const DebuggerBreakpoint& bp) {
-                               return bp.definition == bpDef;
+                               return bp.definition_text == bpDef;
                            });
 
     if (it != m_breakpoints.end()) {
@@ -962,3 +1492,531 @@ void DebuggerWindow::setBreakpointDefinitions(const QList<DebuggerBreakpoint>& l
     syncBreakpointsToCore();
     QMessageBox::information(this, tr("Success"), tr("Breakpoints loaded."));
 }
+
+void DebuggerWindow::onDisasmContextMenu(const QPoint &pos)
+{
+    if (!m_disasmView) return;
+
+    QTableWidgetItem *item = m_disasmView->itemAt(pos);
+    if (!item) return;
+
+    QMenu menu(this);
+    QAction *copyAct = menu.addAction(tr("Copy selection to clipboard"));
+    QAction *chosen = menu.exec(m_disasmView->viewport()->mapToGlobal(pos));
+    if (chosen != copyAct)
+        return;
+
+    QList<int> rowList;
+    for (QTableWidgetItem *sel : m_disasmView->selectedItems()) {
+        int r = sel->row();
+        if (!rowList.contains(r))
+            rowList.append(r);
+    }
+    if (rowList.isEmpty())
+        return;
+
+    std::sort(rowList.begin(), rowList.end());
+
+    QStringList lines;
+    for (int row : rowList) {
+        QString label, addr, bytes, instr, target;
+
+        // Kolom 0: Label
+        if (auto it = m_disasmView->item(row, 0)) label = it->text();
+        // Kolom 1: Adres
+        if (auto it = m_disasmView->item(row, 1)) addr  = it->text();
+        // Kolom 2: Code (Bytes)
+        if (auto it = m_disasmView->item(row, 2)) bytes = it->text();
+        // Kolom 3: Mnemonic (Instructie)
+        if (auto it = m_disasmView->item(row, 3)) instr = it->text();
+        // Kolom 4: Target Label (NIEUW)
+        if (auto it = m_disasmView->item(row, 4)) target = it->text();
+
+        // Mooie, simpele tekstvorm met alle 5 kolommen.
+        // Gebruik vaste breedtes voor alignatie:
+        // Label (10), Adres (4), Bytes (15), Instructie (15), Target
+        lines << QString("%1  %2  %3  %4  %5")
+                     .arg(label, -10)
+                     .arg(addr, -4)
+                     .arg(bytes, -15)
+                     .arg(instr, -15)
+                     .arg(target);
+    }
+
+    QClipboard *cb = QGuiApplication::clipboard();
+    cb->setText(lines.join('\n'));
+}
+
+void DebuggerWindow::onRegistersContextMenu(const QPoint &pos)
+{
+    if (!m_regTable)
+        return;
+
+    // Enkel menu tonen als er op een cel/rij geklikt is
+    QTableWidgetItem *clickedItem = m_regTable->itemAt(pos);
+    if (!clickedItem)
+        return;
+
+    QMenu menu(this);
+    QAction *copyAct = menu.addAction(tr("Copy registers to clipboard"));
+    QAction *chosen = menu.exec(m_regTable->viewport()->mapToGlobal(pos));
+    if (chosen != copyAct)
+        return;
+
+    // Alle unieke geselecteerde rijen verzamelen
+    QList<int> rows;
+    for (QTableWidgetItem *selItem : m_regTable->selectedItems()) {
+        int r = selItem->row();
+        if (!rows.contains(r))
+            rows.append(r);
+    }
+
+    if (rows.isEmpty()) {
+        rows.append(clickedItem->row());
+    }
+
+    std::sort(rows.begin(), rows.end());
+
+    QStringList lines;
+    for (int r : rows) {
+        QString regName;
+        QString regValue;
+
+        if (auto it = m_regTable->item(r, 0))
+            regName = it->text();
+        if (auto it = m_regTable->item(r, 1))
+            regValue = it->text();
+
+        if (!regName.isEmpty())
+            lines << QString("%1 = %2").arg(regName, regValue);
+    }
+
+    if (lines.isEmpty())
+        return;
+
+    QClipboard *cb = QGuiApplication::clipboard();
+    cb->setText(lines.join('\n'));
+}
+
+void DebuggerWindow::onEmuPausedChanged(bool paused)
+{
+    if (btnRun)
+        btnRun->setEnabled(paused);
+
+    if (btnStep)
+        btnStep->setEnabled(paused);
+
+    if (btnBreak)
+        btnBreak->setEnabled(!paused);
+
+    if (btnGotoAddr)
+        btnGotoAddr->setEnabled(paused);
+
+    if (btnSinglestep)
+        btnSinglestep->setEnabled(paused);
+
+    if (btnStepOver)
+        btnStepOver->setEnabled(paused);
+
+    if (paused) {
+        updateAllViews();
+    }
+}
+
+void DebuggerWindow::writeMemoryByte(uint32_t address, uint8_t data)
+{
+    uint32_t addr = address & 0xFFFF; // Zorg voor 16-bits adresbereik
+
+    switch (m_currentMemSourceIndex) {
+    case 0: // Z80 Mapped Memory: FORCE WRITE
+        if (addr < 0x2000) {
+            // 0x0000 - 0x1FFF (BIOS) - Werkt nu
+            BIOS_Memory[addr] = data;
+        } else if (addr < 0x6000) {
+            // 0x2000 - 0x5FFF (Cartridge ROM)
+            // Gebruik hier de functie die u heeft laten werken voor 0x1700
+            // Als Cartridge ROM een andere array is, moet u die hier patchen.
+            // Voor nu laten we coleco_writebyte staan als fallback voor bankswitching
+            coleco_writebyte(addr, data);
+        } else if (addr < 0x8000) {
+            // 0x6000 - 0x7FFF (Standaard RAM) - Werkt al
+            RAM_Memory[addr - 0x6000] = data; // Directe patch, geef de offset aan
+        } else {
+            // *** OPLOSSING VOOR $C040 (0x8000 - 0xFFFF) ***
+            // Dit is het uitgebreide RAM-bereik (ADAM RAM).
+            // We patchen hier de fysieke RAM array direct.
+            // Dit negeert I/O registers en bankswitching.
+            // De index is hier waarschijnlijk de Z80-adres zelf:
+            RAM_Memory[addr] = data;
+        }
+        break;
+
+    case 1: VDP_Memory[addr & 0x3FFF] = data; break;
+    case 2: RAM_Memory[addr & 0x1FFFF] = data; break;
+    case 3: RAM_Memory[addr & 0x7FFF] = data; break;
+    case 4: SRAM_Memory[addr & 0x7FFF] = data; break;
+    case 5: RAM_Memory[0xE000 + (addr & 0x07FF)] = data; break;
+    default: break;
+    }
+}
+
+void DebuggerWindow::onMemTableDoubleClicked(int row, int /*column*/)
+{
+    if (!m_memTable || row < 0 || row >= m_memTable->rowCount()) {
+        return;
+    }
+
+    // De Memory Dump is altijd zichtbaar, we gebruiken de m_currentMemSourceIndex.
+
+    const int bytesPerLine = 16;
+    uint32_t baseAddr = m_memDumpStartAddr + (row * bytesPerLine);
+
+    uint8_t data16[bytesPerLine];
+    for (int i = 0; i < bytesPerLine; ++i) {
+        data16[i] = readMemoryByte(baseAddr + i);
+    }
+
+    bool dataChanged = MemoryEditDialog::editMemoryLine(this, baseAddr, data16);
+
+    if (dataChanged) {
+        for (int i = 0; i < bytesPerLine; ++i) {
+
+            writeMemoryByte(baseAddr + i, data16[i]);
+        }
+        QTimer::singleShot(10, this, &DebuggerWindow::updateAllViews);
+    }
+}
+
+QList<DebuggerSymbol> DebuggerWindow::getSymbolDefinitions() const
+{
+    return m_symbols;
+}
+
+void DebuggerWindow::setSymbolDefinitions(const QList<DebuggerSymbol>& list)
+{
+    m_symbols = list;
+    std::sort(m_symbols.begin(), m_symbols.end());
+    updateSymbolsList();
+    updateDisassembly(); // BELANGRIJK: Vernieuw de disassembler
+}
+
+void DebuggerWindow::updateSymbolsList()
+{
+    QFont fixedFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+
+    m_symList->blockSignals(true);
+    m_symList->clear();
+
+    for (const DebuggerSymbol& sym : m_symbols) {
+        QListWidgetItem* item = new QListWidgetItem(m_symList);
+
+        QWidget* itemWidget = new QWidget();
+        QHBoxLayout* layout = new QHBoxLayout(itemWidget);
+        layout->setContentsMargins(2, 0, 4, 0);
+        layout->setSpacing(8); // Meer ruimte
+
+        // Symbool Definitie: Type, Adres, Label
+        QString display = QString("%1: $%2 -> %3")
+                              .arg(sym.type, 4, QChar(' '))
+                              .arg(sym.address, 4, 16, QChar('0')).toUpper()
+                              .arg(sym.label);
+
+        QLabel* label = new QLabel(display);
+        label->setFont(fixedFont);
+
+        // Geef een kleur aan symbolen (b.v. Geel)
+        label->setStyleSheet("color: yellow");
+
+        layout->addWidget(label);
+        layout->addStretch(1); // Geen checkbox
+
+        item->setSizeHint(itemWidget->sizeHint());
+        m_symList->addItem(item);
+        m_symList->setItemWidget(item, itemWidget);
+    }
+
+    m_symList->blockSignals(false);
+}
+
+// Functie om de ruwe string te parsen naar een DebuggerSymbol
+static DebuggerSymbol parseSymbolDefinition(const QString& definition)
+{
+    DebuggerSymbol sym;
+    sym.definition_text = definition;
+    sym.address = 0; // Standaard
+    sym.type = "EXEC"; // Standaard
+
+    QStringList parts = definition.split(':');
+    if (parts.size() >= 3) {
+        // Formaat: TYPE:ADRES:LABEL
+        sym.type = parts[0].trimmed().toUpper();
+
+        bool ok = false;
+        // ADRES (moet een hexadecimaal string zijn)
+        sym.address = parts[1].trimmed().toUShort(&ok, 16);
+        if (!ok) sym.address = 0;
+
+        // LABEL
+        sym.label = parts[2].trimmed();
+
+    } else if (parts.size() >= 2) {
+        // Formaat: ADRES:LABEL (Type = EXEC)
+        bool ok = false;
+        sym.address = parts[0].trimmed().toUShort(&ok, 16);
+        if (!ok) sym.address = 0;
+        sym.label = parts[1].trimmed();
+        sym.type = "EXEC";
+    }
+
+    // Zorg ervoor dat het label altijd wordt opgeslagen als de volledige definitie.
+    // Dit zorgt ervoor dat bewerken en opslaan werkt.
+    if (sym.label.isEmpty() && !sym.definition_text.isEmpty()) {
+        sym.label = sym.definition_text;
+    }
+
+    return sym;
+}
+
+void DebuggerWindow::onSymAdd()
+{
+    // Gebruik de nieuwe Symbol Dialoog om de definitiestring op te halen
+    QString symString = SetSymbolDialog::getSymbolString(this, tr("CALL:C000:GameStart"));
+
+    if (symString.isEmpty()) {
+        qDebug() << "[DebuggerWindow] Symboolstring is leeg. Afgebroken.";
+        return;
+    }
+
+    // 1. Controleer op duplicaten op basis van de volledige definitie string
+    auto it = std::find_if(m_symbols.begin(), m_symbols.end(),
+                           [&symString](const DebuggerSymbol& sym) {
+                               return sym.definition_text == symString;
+                           });
+
+    if (it == m_symbols.end()) {
+        // 2. Parsen van de definitie om de structuur te vullen
+        QStringList parts = symString.split(':');
+
+        DebuggerSymbol newSym;
+        newSym.definition_text = symString;
+
+        // Parsing is nu eenvoudiger en gebaseerd op de gevalideerde string
+        if (parts.size() >= 3) {
+            newSym.type = parts[0];
+            bool ok = false;
+            // Adres is al 4-cijferig en gevalideerd door formatSymbolString
+            newSym.address = parts[1].toUShort(&ok, 16);
+            // Label is de rest van de string
+            newSym.label = parts.mid(2).join(':');
+        } else {
+            qWarning() << "[DebuggerWindow] Fout bij parsen van gevalideerd symbool:" << symString;
+            return; // Mocht dit toch gebeuren, stop
+        }
+
+        m_symbols.append(newSym);
+        std::sort(m_symbols.begin(), m_symbols.end());
+        updateSymbolsList();
+        qDebug() << "[DebuggerWindow] Nieuw symbool toegevoegd:" << symString;
+
+    } else {
+        qDebug() << "[DebuggerWindow] Symbool bestaat al, geen duplicaat toegevoegd.";
+    }
+}
+
+void DebuggerWindow::onSymDel()
+{
+    int row = m_symList->currentRow();
+    if (row < 0 || row >= m_symbols.size()) return;
+
+    m_symbols.removeAt(row);
+    updateSymbolsList();
+
+    if (row < m_symList->count()) {
+        m_symList->setCurrentRow(row);
+    } else if (m_symList->count() > 0) {
+        m_symList->setCurrentRow(row - 1);
+    }
+}
+
+void DebuggerWindow::onSymEdit()
+{
+    int row = m_symList->currentRow();
+    if (row < 0 || row >= m_symbols.size()) return;
+
+    QString currentDef = m_symbols.at(row).definition_text;
+
+    // Gebruik de nieuwe Symbol Dialoog met de huidige waarde als startpunt
+    QString newSymString = SetSymbolDialog::getSymbolString(this, currentDef);
+
+    if (newSymString.isEmpty() || newSymString == currentDef) return;
+
+    // 1. Controleer of de nieuwe definitie al bestaat
+    auto it = std::find_if(m_symbols.begin(), m_symbols.end(),
+                           [&newSymString](const DebuggerSymbol& sym) {
+                               return sym.definition_text == newSymString;
+                           });
+
+    // 2. Parsen van de nieuwe definitie
+    QStringList parts = newSymString.split(':');
+    DebuggerSymbol newSym;
+
+    // Parsing is nu eenvoudiger en gebaseerd op de gevalideerde string
+    if (parts.size() >= 3) {
+        newSym.definition_text = newSymString;
+        newSym.type = parts[0];
+        bool ok = false;
+        newSym.address = parts[1].toUShort(&ok, 16);
+        newSym.label = parts.mid(2).join(':');
+    } else {
+        qWarning() << "[DebuggerWindow] Fout bij parsen na bewerken:" << newSymString;
+        return;
+    }
+
+    if (it == m_symbols.end()) {
+        // De nieuwe definitie is uniek: vervang de oude en sorteer
+        m_symbols[row] = newSym;
+        std::sort(m_symbols.begin(), m_symbols.end());
+        updateSymbolsList();
+
+        // Selecteer de nieuwe locatie in de lijst
+        auto newIt = std::find_if(m_symbols.begin(), m_symbols.end(),
+                                  [&newSymString](const DebuggerSymbol& sym) {
+                                      return sym.definition_text == newSymString;
+                                  });
+        if (newIt != m_symbols.end()) {
+            m_symList->setCurrentRow(std::distance(m_symbols.begin(), newIt));
+        }
+    } else if (newSymString != currentDef) {
+        // Duplicaat gevonden, maar het is niet de oude (dus een andere index). Verwijder de oude.
+        m_symbols.removeAt(row);
+        updateSymbolsList();
+    }
+}
+
+void DebuggerWindow::onSymLoad()
+{
+    // Emitteren naar MainWindow om het padbeheer af te handelen
+    emit requestSymLoad();
+}
+
+void DebuggerWindow::onSymSave()
+{
+    // Emitteren naar MainWindow om het padbeheer af te handelen
+    emit requestSymSave();
+}
+
+void DebuggerWindow::onToggleSymbols()
+{
+    if (!m_symEnableButton) return;
+
+    bool checked = m_symEnableButton->isChecked();
+
+    // Button checked = OFF (groen), unchecked = ON (rood)
+    m_symbolsEnabled = !checked;
+
+    if (m_symbolsEnabled) {
+        // AAN → rood
+        m_symEnableButton->setText(tr("Sym ON"));
+        m_symEnableButton->setStyleSheet(
+            "background-color: #888800; color: white; font-weight: bold; padding: 2px 5px;"
+            );
+    } else {
+        // UIT → groen
+        m_symEnableButton->setText(tr("Sym OFF"));
+        m_symEnableButton->setStyleSheet(
+            "background-color: #009900; color: white; font-weight: bold; padding: 2px 5px;"
+            );
+    }
+
+    // Aangezien symbolen de disassembler en mogelijk de memory dump beïnvloeden,
+    // moeten we deze views updaten.
+    updateSymbolsList();
+    updateDisassembly();
+    // updateMemoryDump(); // Optioneel, afhankelijk van hoe symbolen in dump getoond worden
+}
+
+QString DebuggerWindow::getSymbolLabelForAddress(uint16_t address) const
+{
+    if (!m_symbolsEnabled) return QString();
+
+    for (const DebuggerSymbol& sym : m_symbols) {
+        if (sym.address == address) {
+            return sym.label;
+        }
+    }
+    return QString();
+}
+
+void DebuggerWindow::onStepOver()
+{
+    if (!m_controller) return;
+
+    if (btnStepOver) {
+        btnStepOver->setEnabled(false);
+    }
+
+    uint16_t pc = Z80.pc.w.l;
+    uint8_t opcode = coleco_ReadByte(pc);
+    //uint16_t original_pc = Z80.pc.w.l;
+
+    int nextInstructionLength = 1; // Standaard voor alle 1-byte instructies
+
+    // --- 1. INSTRUCTIE-LENGTE BEREKENING ---
+
+    // 4-byte Instructies (FD prefix: LD IY,nnnn)
+    if (opcode == 0xFD) {
+        uint8_t nextOpcode = coleco_ReadByte(pc + 1);
+        if (nextOpcode == 0x21 || nextOpcode == 0x01 || nextOpcode == 0x11 || nextOpcode == 0x31) {
+            nextInstructionLength = 4;
+        }
+    }
+
+    // Standaard 3-byte Instructies: LD rr, nn (rr = BC, DE, HL, SP)
+    else if (opcode == 0x01 || opcode == 0x11 || opcode == 0x21 || opcode == 0x31) {
+        nextInstructionLength = 3;
+    }
+    // 2-byte Instructies: JR's, DJNZ, etc.
+    else if ((opcode & 0x07) == 0x06 || (opcode & 0x07) == 0x0E ||
+             opcode == 0x10 || opcode == 0x20 || opcode == 0x28 || opcode == 0x30 || opcode == 0x38) {
+        nextInstructionLength = 2;
+    }
+
+    // 3-byte Instructies: ALLE JUMP/CALL instructies en 16-bit adres instructies.
+    else if (opcode == 0xC2 || opcode == 0xC4 || opcode == 0xCA || opcode == 0xCC ||
+             opcode == 0xD2 || opcode == 0xD4 || opcode == 0xDA || opcode == 0xDC ||
+             opcode == 0xE2 || opcode == 0xE4 || opcode == 0xEA || opcode == 0xEC ||
+             opcode == 0xF2 || opcode == 0xF4 || opcode == opcode == 0xFA || opcode == 0xFC ||
+             opcode == 0xC3 || opcode == 0xCD ||
+             opcode == 0x2A || opcode == 0x3A || opcode == 0x22 || opcode == 0x32)
+    {
+        nextInstructionLength = 3;
+    }
+
+    // --- 2. SPRONG UITVOEREN ---
+    uint16_t targetPC = pc + nextInstructionLength;
+
+    // ** DEFINITIEVE VISUELE STABILISATIE FIX **
+    // Voeg 3 extra bytes toe als de instructie 1 byte lang is (zoals CPL, LD D,B).
+    // Dit dwingt de GUI om de weergave te centreren.
+    //if (nextInstructionLength == 1) {
+    //    targetPC += 3;
+    //}
+
+    // NIEUW LOGGING: Wat is de verwachte sprong?
+    //qDebug() << "[STEPOVER] Start PC:" << QString("%1").arg(original_pc, 4, 16).toUpper()
+    //         << "Length:" << nextInstructionLength
+    //         << "-> Target PC:" << QString("%1").arg(targetPC, 4, 16).toUpper();
+
+    Z80.pc.w.l = targetPC;
+
+    updateAllViews();
+
+    if (btnStepOver) {
+        btnStepOver->setEnabled(true);
+    }
+
+    if (m_disasmView) {
+        m_disasmView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+    }
+}
+

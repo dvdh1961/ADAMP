@@ -39,6 +39,7 @@ public slots:
     void setFrame(const QImage &img);
     void setScalingMode(ScalingMode mode);
     void setScanlinesMode(ScanlinesMode mode);
+    void setColorFilterMode(ColorFilterMode mode);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -59,6 +60,16 @@ private:
     void applyTVScanlinesFilter(QImage& image);
     void applyLCDizeFilter(QImage& image);
     void applyRasterizeFilter(QImage& image);
+
+    ColorFilterMode m_colorFilterMode = ColorFilterOff;
+
+    void applyMonochromeFilter(QImage& image);
+    void applySepiaFilter(QImage& image);
+    void applyGreenCRTFilter(QImage& image);
+    void applyAmberCRTFilter(QImage& image);
+    void applyCMYRasterFilter(QImage& image);
+    void applyRGBRasterFilter(QImage& image);
+
 };
 
 #endif

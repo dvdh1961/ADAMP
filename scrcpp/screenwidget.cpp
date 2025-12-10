@@ -1,7 +1,7 @@
 #include "screenwidget.h"
 #include <QMutexLocker>
 #include <cstring>
-
+#include <QtGlobal>  // voor qBound, qRed, qGreen, qBlue, qAlpha, qRgba
 
 ScreenWidget::ScreenWidget(QWidget *parent)
     : QWidget(parent),
@@ -304,6 +304,43 @@ void ScreenWidget::paintEvent(QPaintEvent *event)
         imageToDraw = filteredImage;
     }
 
+    if (m_colorFilterMode != ColorFilterOff)
+    {
+        QImage filteredImage = imageToDraw.copy();
+
+        // Zorg dat we in 32-bit werken
+        if (filteredImage.format() != QImage::Format_RGB32 &&
+            filteredImage.format() != QImage::Format_ARGB32)
+        {
+            filteredImage = filteredImage.convertToFormat(QImage::Format_RGB32);
+        }
+
+        switch (m_colorFilterMode) {
+        case ColorFilterMonochrome:
+            applyMonochromeFilter(filteredImage);
+            break;
+        case ColorFilterSepia:
+            applySepiaFilter(filteredImage);
+            break;
+        case ColorFilterGreenCRT:
+            applyGreenCRTFilter(filteredImage);
+            break;
+        case ColorFilterAmberCRT:
+            applyAmberCRTFilter(filteredImage);
+            break;
+        case ColorFilterCMY:
+            applyCMYRasterFilter(filteredImage);
+            break;
+        case ColorFilterRGB:
+            applyRGBRasterFilter(filteredImage);
+            break;
+        default:
+            break;
+        }
+
+        imageToDraw = filteredImage;
+    }
+
     p.setRenderHint(QPainter::SmoothPixmapTransform, useSmoothFinalScale);
     p.setRenderHint(QPainter::Antialiasing, false);
 
@@ -349,4 +386,192 @@ void ScreenWidget::paintEvent(QPaintEvent *event)
     // Teken de rechthoek precies op de rand van het spelbeeld
     p.drawRect(targetRect);
     // ----------------------------------------
+}
+
+void ScreenWidget::setColorFilterMode(ColorFilterMode mode)
+{
+    if (m_colorFilterMode == mode) return;
+    m_colorFilterMode = mode;
+    update();
+}
+
+void ScreenWidget::applyMonochromeFilter(QImage& image)
+{
+    const int W = image.width();
+    const int H = image.height();
+
+    for (int y = 0; y < H; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < W; ++x) {
+            QRgb px = line[x];
+            int r = qRed(px);
+            int g = qGreen(px);
+            int b = qBlue(px);
+
+            // 77+151+28 = 256 => zelfde stijl als EMULib (Image.c)
+            int gray = (77 * r + 151 * g + 28 * b) >> 8;
+            gray = qBound(0, gray, 255);
+
+            line[x] = qRgba(gray, gray, gray, qAlpha(px));
+        }
+    }
+}
+
+void ScreenWidget::applySepiaFilter(QImage& image)
+{
+    const int W = image.width();
+    const int H = image.height();
+
+    for (int y = 0; y < H; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < W; ++x) {
+            QRgb px = line[x];
+            int r = qRed(px);
+            int g = qGreen(px);
+            int b = qBlue(px);
+
+            // Int-versie van klassieke sepia (ongeveer wat SepiaImage doet)
+            int sr = (393 * r + 769 * g + 189 * b) / 1000;
+            int sg = (349 * r + 686 * g + 168 * b) / 1000;
+            int sb = (272 * r + 534 * g + 131 * b) / 1000;
+
+            sr = qBound(0, sr, 255);
+            sg = qBound(0, sg, 255);
+            sb = qBound(0, sb, 255);
+
+            line[x] = qRgba(sr, sg, sb, qAlpha(px));
+        }
+    }
+}
+
+void ScreenWidget::applyGreenCRTFilter(QImage& image)
+{
+    const int W = image.width();
+    const int H = image.height();
+
+    for (int y = 0; y < H; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < W; ++x) {
+            QRgb px = line[x];
+            int r = qRed(px);
+            int g = qGreen(px);
+            int b = qBlue(px);
+
+            // Eerst naar grijs (zoals MonochromeImage)
+            int gray = (77 * r + 151 * g + 28 * b) >> 8;
+            gray = qBound(0, gray, 255);
+
+            int nr = qBound(0, (92 * gray) >> 8, 255);   // ~0.36 * gray
+            int ng = gray;                               // hoofdcomponent
+            int nb = qBound(0, (51 * gray) >> 8, 255);   // ~0.2 * gray
+
+            line[x] = qRgba(nr, ng, nb, qAlpha(px));
+        }
+    }
+}
+
+void ScreenWidget::applyAmberCRTFilter(QImage& image)
+{
+    const int W = image.width();
+    const int H = image.height();
+
+    for (int y = 0; y < H; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < W; ++x) {
+            QRgb px = line[x];
+            int r = qRed(px);
+            int g = qGreen(px);
+            int b = qBlue(px);
+
+            // 1. Calculate weighted grayscale (Luminance approximation)
+            int gray = (77 * r + 151 * g + 28 * b) >> 8;
+            gray = qBound(0, gray, 255);
+
+            // 2. Apply Orange/Amber color filter
+
+            // Red component: Maximale intensiteit voor een diepe oranje tint
+            int nr = gray;
+
+            // Green component: Iets verlaagd om het van groen naar oranje te verschuiven
+            // Gebruik een factor rond 180 (180/256 ≈ 0.7) voor een oranjere kleur.
+            int ng = qBound(0, (180 * gray) >> 8, 255);
+
+            // Blue component: Lage intensiteit om blauwe of paarse tinten te vermijden
+            int nb = qBound(0, (51 * gray) >> 8, 255);
+
+            line[x] = qRgba(nr, ng, nb, qAlpha(px));
+        }
+    }
+}
+
+void ScreenWidget::applyCMYRasterFilter(QImage& image)
+{
+    const int W = image.width();
+    const int H = image.height();
+
+    for (int y = 0; y < H; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < W; ++x) {
+            QRgb px = line[x];
+            int r = qRed(px);
+            int g = qGreen(px);
+            int b = qBlue(px);
+
+            switch (x % 3) {
+            case 0: // C (Cyan = G+B, R wat dimmen)
+                r = r * 5 / 10;
+                g = qMin(255, g * 12 / 10);
+                b = qMin(255, b * 12 / 10);
+                break;
+            case 1: // M (Magenta = R+B, G dimmen)
+                r = qMin(255, r * 12 / 10);
+                g = g * 5 / 10;
+                b = qMin(255, b * 12 / 10);
+                break;
+            case 2: // Y (Yellow = R+G, B dimmen)
+                r = qMin(255, r * 12 / 10);
+                g = qMin(255, g * 12 / 10);
+                b = b * 5 / 10;
+                break;
+            }
+
+            line[x] = qRgba(r, g, b, qAlpha(px));
+        }
+    }
+}
+
+void ScreenWidget::applyRGBRasterFilter(QImage& image)
+{
+    const int W = image.width();
+    const int H = image.height();
+
+    for (int y = 0; y < H; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < W; ++x) {
+            QRgb px = line[x];
+            int r = qRed(px);
+            int g = qGreen(px);
+            int b = qBlue(px);
+
+            switch (x % 3) {
+            case 0: // R
+                r = qMin(255, r * 13 / 10);
+                g = g * 6 / 10;
+                b = b * 6 / 10;
+                break;
+            case 1: // G
+                r = r * 6 / 10;
+                g = qMin(255, g * 13 / 10);
+                b = b * 6 / 10;
+                break;
+            case 2: // B
+                r = r * 6 / 10;
+                g = g * 6 / 10;
+                b = qMin(255, b * 13 / 10);
+                break;
+            }
+
+            line[x] = qRgba(r, g, b, qAlpha(px));
+        }
+    }
 }

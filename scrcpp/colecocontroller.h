@@ -71,6 +71,7 @@ public slots:
     void pauseEmulation();
     void resumeEmulation();
     void stepOnce();
+    void stepOver(uint16_t returnAddress);
     void sstepOnce();
     void gotoAddr(uint16_t newPC);
     bool isPaused() const { return m_paused; }

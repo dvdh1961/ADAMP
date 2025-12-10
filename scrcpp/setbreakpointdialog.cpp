@@ -40,7 +40,32 @@ static QString formatBreakpointString(const QString& input)
             return s;
         }
     }
+    else if (type == "EXE" && parts.size() == 4 && parts[2] == "FLAG") {
+        // Form: EXE <addr> FLAG Z=0/1
+        QString flagExpr = parts[3];      // bv. "Z=1"
+        int eqPos = flagExpr.indexOf('=');
+        if (eqPos <= 0 || eqPos == flagExpr.size() - 1) {
+            qWarning() << "[BP] Invalid EXE+FLAG expression:" << input;
+            return QString();
+        }
+
+        QString flagName = flagExpr.left(eqPos);       // "Z"
+        QString flagVal  = flagExpr.mid(eqPos + 1);    // "1"
+
+        if (!flags.contains(flagName)) {
+            qWarning() << "[BP] Unknown flag in EXE+FLAG:" << flagName;
+            return QString();
+        }
+        if (flagVal != "0" && flagVal != "1") {
+            qWarning() << "[BP] Invalid flag value in EXE+FLAG:" << flagVal;
+            return QString();
+        }
+
+        // Alles ok → vorm is geldig
+        return s;
+    }
     else if (type == "FLAG" && parts.size() == 4 && parts[2] == "=") {
+        // Zuivere flag-breakpoint: FLAG Z = 1
         if (flags.contains(parts[1])) {
             return s;
         }
@@ -115,6 +140,7 @@ static QString mapCoreTypeToUi(QString type) {
     return type;
 }
 
+
 SetBreakpointDialog::SetBreakpointDialog(QWidget *parent)
     : QDialog(parent)
 {
@@ -174,9 +200,9 @@ void SetBreakpointDialog::setupUi()
     gridLayout->addWidget(m_addrCondCombo,  1, 1);
     gridLayout->addWidget(m_addr1Label,     1, 2);
 
-    gridLayout->addWidget(m_addr1Edit,      1, 3, 1, 2);
+    gridLayout->addWidget(m_addr1Edit,      1, 3, 1, 1);
     gridLayout->addWidget(m_registerCombo,  1, 3, 1, 2);
-    gridLayout->addWidget(m_flagCombo,      1, 3, 1, 2);
+    gridLayout->addWidget(m_flagCombo,      1, 4, 1, 1);
 
     gridLayout->addWidget(m_valueCondLabel, 2, 0);
     gridLayout->addWidget(m_valueCondCombo, 2, 1);
@@ -295,11 +321,14 @@ void SetBreakpointDialog::onTypeChanged(const QString &type)
         m_valueCondCombo->setVisible(false);
     }
     else if (label.startsWith("Flag")) {
-        m_addr1Edit->setVisible(false);
+        // Toon PC-adres én vlag
+        m_addr1Edit->setVisible(true);   // <-- adresveld tonen
         m_flagCombo->setVisible(true);
-        m_addrCondLabel->setText(tr("Flag:"));
-        m_addr1Label->setText(tr("="));
-        m_valueLabel->setText(tr("Value:"));
+
+        m_addrCondLabel->setText(tr("Address:"));
+        m_addr1Label->setText(tr("PC Addr:"));
+        m_valueLabel->setText(tr("Flag (0/1):"));
+
         m_addrCondCombo->setVisible(false);
         m_valueCondLabel->setVisible(false);
         m_valueCondCombo->setVisible(false);
@@ -413,9 +442,11 @@ QString SetBreakpointDialog::buildOutputString() const
     }
     if (type == "FLAG") {
         QString flag = m_flagCombo->currentText();
-        return QString("FLAG %1 = %2").arg(flag, addr2);
-    }
+        QString addr = m_addr1Edit->text().toUpper();
+        if (addr.isEmpty()) return QString();   // dan is 'm_resultString' leeg
 
+        return QString("EXE %1 FLAG %2=%3").arg(addr, flag, addr2);
+    }
     QString addr1 = m_addr1Edit->text().toUpper();
 
     if (type == "MEM") {
@@ -452,6 +483,33 @@ void SetBreakpointDialog::parseInputString(const QString &input)
     if (ok && parts.size() == 1) {
         coreType = "EXE";
         isSimpleAddr = true;
+    }
+
+    // Speciaal geval: EXE <addr> FLAG Z=0/1 -> behandelen als "Flag"-breakpoint
+    if (coreType == "EXE" && parts.size() == 4 && parts[2] == "FLAG") {
+        // Schakel UI naar type 13.Flag
+        int idxFlag = m_typeCombo->findText("13.Flag");
+        if (idxFlag != -1) {
+            m_typeCombo->setCurrentIndex(idxFlag);
+        }
+        // Zorg dat de juiste widgets zichtbaar zijn (addr + flag + value)
+        onTypeChanged(m_typeCombo->currentText());
+
+        // parts[1] = adres
+        m_addr1Edit->setText(parts.at(1));
+
+        // parts[3] = bv. "Z=1"
+        QString flagExpr = parts.at(3);
+        int eqPos = flagExpr.indexOf('=');
+        if (eqPos > 0 && eqPos < flagExpr.size() - 1) {
+            QString flagName = flagExpr.left(eqPos);      // "Z"
+            QString flagVal  = flagExpr.mid(eqPos + 1);   // "1"
+
+            m_flagCombo->setCurrentText(flagName);
+            m_addr2Edit->setText(flagVal);
+        }
+
+        return; // Klaar, niet verder parsen als gewone EXE
     }
 
     QString uiType = mapCoreTypeToUi(coreType);
@@ -574,9 +632,13 @@ void SetBreakpointDialog::updateHelpText(const QString &type)
                  "Format: REG <reg> <cond> <value>\n"
                  "Example: REG PC = BBA3");
     } else if (t == "13") {
-        msg = tr("Break when a flag in F register is set/cleared.\n"
-                 "Format: FLAG <flag> = <0/1>\n"
-                 "Example: FLAG Z = 1");
+        msg = tr("Break when a flag in the F register meets condition.\n"
+                 "Must be combined with an address breakpoint.\n"
+                 "\nFormat:\n"
+                 "  EXE <addr> FLAG <flag>=<0/1>\n"
+                 "Example:\n"
+                 "  EXE 8000 FLAG Z=1\n"
+                 "\nNote: FLAG alone is no longer valid.");
     } else {
         msg = tr("Select a breakpoint type to see help.");
     }

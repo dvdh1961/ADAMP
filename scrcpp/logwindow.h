@@ -17,8 +17,12 @@ public:
     static void log(const QString &line);
     static void installQtHandler();
 
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override;
+
 public slots:
     void clear();
+    void onTableContextMenu(const QPoint &pos);
 
 signals:
     void appendRequested(const QString &line);

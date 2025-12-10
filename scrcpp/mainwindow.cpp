@@ -113,7 +113,7 @@ MainWindow::MainWindow(QWidget *parent)
     QCoreApplication::setApplicationName("ADAMP_EMU");
 
     // Version
-    appVersion = "0.5.12.25";
+    appVersion = "0.6.12.25";
 
     setWindowTitle(QString("ADAM+ Emulator - v%1").arg(appVersion));
 
@@ -263,7 +263,9 @@ MainWindow::MainWindow(QWidget *parent)
     m_screenWidget->setScalingMode(static_cast<ScreenWidget::ScalingMode>(m_scalingMode));
 
     if (m_screenWidget) {
+        m_screenWidget->setScalingMode(static_cast<ScreenWidget::ScalingMode>(m_scalingMode));
         m_screenWidget->setScanlinesMode(m_scanlinesMode);
+        m_screenWidget->setColorFilterMode(m_colorFilterMode);   // NIEUW
     }
 
     if (m_sysLabel) {
@@ -320,9 +322,15 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onOpenDebugger);
     connect(m_debugWin, &DebuggerWindow::requestBpLoad,
             this, &MainWindow::onLoadBreakpoint);
-
     connect(m_debugWin, &DebuggerWindow::requestBpSave,
             this, &MainWindow::onSaveBreakpoint);
+    connect(m_debugWin, &DebuggerWindow::requestSymLoad,
+            this, &MainWindow::onLoadSymbolDefinitions);
+    connect(m_debugWin, &DebuggerWindow::requestSymSave,
+            this, &MainWindow::onSaveSymbolDefinitions);
+
+    connect(m_debugWin, &DebuggerWindow::requestStepOver,
+            m_colecoController, &ColecoController::stepOver);
 
     // Timer initialisatie
     m_resetAdamBlinkTimer = new QTimer(this);
@@ -393,6 +401,9 @@ void MainWindow::onOpenSettings()
     m_settingsWindow->setStatePath(m_statePath);
     m_settingsWindow->setBreakpointPath(m_breakpointPath);
     m_settingsWindow->setScreenshotPath(m_screenshotsPath);
+    m_settingsWindow->setSymbolPath(m_symbolsPath);
+    m_settingsWindow->setAdamBezelPath(m_adamBezelPath);
+    m_settingsWindow->setCvBezelPath(m_cvBezelPath);
 
     if (m_settingsWindow->exec() == QDialog::Accepted) {
 
@@ -402,50 +413,37 @@ void MainWindow::onOpenSettings()
         QString newStatePath = m_settingsWindow->statePath();
         QString newBreakpointPath = m_settingsWindow->breakpointPath();
         QString newScreenshotPath = m_settingsWindow->screenshotPath();
+        QString newSymbolsPath = m_settingsWindow->symbolPath();
+        QString newAdamBezelPath  = m_settingsWindow->adamBezelPath();
+        QString newCvBezelPath    = m_settingsWindow->cvBezelPath();
 
         QDir appDir(QCoreApplication::applicationDirPath());
 
-        QFileInfo romInfo(newRomPath);
-        if (romInfo.exists() && romInfo.isDir()) {
-            m_romPath = appDir.relativeFilePath(newRomPath);
-        } else {
-            m_romPath = newRomPath;
-        }
+        auto resolvePath = [&](const QString &input, const QString &mediaSubdir) -> QString {
+            QString path = input.trimmed();
 
-        QFileInfo diskInfo(newDiskPath);
-        if (diskInfo.exists() && diskInfo.isDir()) {
-            m_diskPath = appDir.relativeFilePath(newDiskPath);
-        } else {
-            m_diskPath = newDiskPath;
-        }
+            // Leeg of "." = standaard media/<type> naast de EXE
+            if (path.isEmpty() || path == ".") {
+                return QDir::cleanPath(appDir.filePath("media/" + mediaSubdir));
+            }
 
-        QFileInfo tapeInfo(newTapePath);
-        if (tapeInfo.exists() && tapeInfo.isDir()) {
-            m_tapePath = appDir.relativeFilePath(newTapePath);
-        } else {
-            m_tapePath = newTapePath;
-        }
+            // Relatief ingevoerd → maak er een absoluut pad van t.o.v. appDir
+            if (QDir::isRelativePath(path)) {
+                path = QDir::cleanPath(appDir.filePath(path));
+            }
 
-        QFileInfo stateInfo(newStatePath);
-        if (stateInfo.exists() && stateInfo.isDir()) {
-            m_statePath = appDir.relativeFilePath(newStatePath);
-        } else {
-            m_statePath = newStatePath;
-        }
+            return path;
+        };
 
-        QFileInfo bpInfo(newBreakpointPath);
-        if (bpInfo.exists() && bpInfo.isDir()) {
-            m_breakpointPath = appDir.relativeFilePath(newBreakpointPath);
-        } else {
-            m_breakpointPath = newBreakpointPath;
-        }
-
-        QFileInfo screenshotInfo(newScreenshotPath);
-        if (screenshotInfo.exists() && screenshotInfo.isDir()) {
-            m_screenshotsPath = appDir.relativeFilePath(newScreenshotPath);
-        } else {
-            m_screenshotsPath = newScreenshotPath;
-        }
+        m_romPath         = resolvePath(newRomPath,        "roms");
+        m_diskPath        = resolvePath(newDiskPath,       "disks");
+        m_tapePath        = resolvePath(newTapePath,       "tapes");
+        m_statePath       = resolvePath(newStatePath,      "states");
+        m_breakpointPath  = resolvePath(newBreakpointPath, "breakpoints");
+        m_screenshotsPath = resolvePath(newScreenshotPath, "screenshots");
+        m_symbolsPath     = resolvePath(newSymbolsPath,    "symbols");
+        m_adamBezelPath   = resolvePath(newAdamBezelPath,  "bezels");
+        m_cvBezelPath     = resolvePath(newCvBezelPath,    "bezels");
 
         saveSettings();
     }
@@ -457,30 +455,52 @@ void MainWindow::loadSettings()
 
     QSettings settings(iniPath, QSettings::IniFormat);
 
-    m_romPath      = settings.value("romPath", ".").toString();
-    m_diskPath     = settings.value("diskPath", ".").toString();
-    m_tapePath     = settings.value("tapePath", ".").toString();
-    m_statePath    = settings.value("statePath", ".").toString();
-    m_breakpointPath = settings.value("breakpointPath", ".").toString();
+    QDir appDir(QCoreApplication::applicationDirPath());
+
+    auto resolvePath = [&](const char *key, const QString &mediaSubdir) -> QString {
+        QString value = settings.value(key, "").toString().trimmed();
+
+        // Backwards compat: "." of leeg = gebruik media/<type> naast de EXE
+        if (value.isEmpty() || value == ".") {
+            return QDir::cleanPath(appDir.filePath("media/" + mediaSubdir));
+        }
+
+        // Oude INI met relatieve paden → omzetten naar absoluut t.o.v. appDir
+        if (QDir::isRelativePath(value)) {
+            value = QDir::cleanPath(appDir.filePath(value));
+        }
+
+        return value;
+    };
+
+    m_romPath         = settings.value("romPath", ".").toString();
+    m_diskPath        = settings.value("diskPath", ".").toString();
+    m_tapePath        = settings.value("tapePath", ".").toString();
+    m_statePath       = settings.value("statePath", ".").toString();
+    m_breakpointPath  = settings.value("breakpointPath", ".").toString();
     m_screenshotsPath = settings.value("screenshotPath", ".").toString();
+    m_symbolsPath     = settings.value("symbolsPath", ".").toString();
+    m_adamBezelPath   = settings.value("adambezelpath", QString()).toString();
+    m_cvBezelPath     = settings.value("cvbezelpath",   QString()).toString();
 
-    m_paletteIndex = settings.value("video/palette", 0).toInt();
-    m_machineType  = settings.value("machine/type", 0).toInt();
+    m_paletteIndex    = settings.value("video/palette", 0).toInt();
+    m_machineType     = settings.value("machine/type", 0).toInt();
 
-    m_sgmEnabled  = settings.value("hardware/sgm",  false).toBool();
-    m_f18aEnabled = settings.value("hardware/f18a", false).toBool();
+    m_sgmEnabled      = settings.value("hardware/sgm",  false).toBool();
+    m_f18aEnabled     = settings.value("hardware/f18a", false).toBool();
 
     m_joystickType    = settings.value("controller/joystickType", 0).toInt();
     m_ctrlSteering    = settings.value("controller/steering",    false).toBool();
     m_ctrlRoller      = settings.value("controller/roller",      false).toBool();
     m_ctrlSuperAction = settings.value("controller/superaction", false).toBool();
-    m_usePaddleMode = settings.value("controller/usePaddleMode", false).toBool();
+    m_usePaddleMode   = settings.value("controller/usePaddleMode", false).toBool();
 
-    m_scalingMode = settings.value("video/scalingMode", 1).toInt();
+    m_scalingMode     = settings.value("video/scalingMode", 1).toInt();
 
     qDebug() << "LOADED JOYSTICK TYPE:" << m_joystickType;
 
-    m_scanlinesMode = static_cast<ScanlinesMode>(settings.value("video/scanlinesMode", ScanlinesOff).toInt()); // NIEUW laden
+    m_scanlinesMode = static_cast<ScanlinesMode>(settings.value("video/scanlinesMode", ScanlinesOff).toInt());
+    m_colorFilterMode = static_cast<ColorFilterMode>(settings.value("video/colorFilterMode", ColorFilterOff).toInt());
 
     if (m_scanlinesGroup) {
         QList<QAction*> actions = m_scanlinesGroup->actions();
@@ -520,8 +540,11 @@ void MainWindow::saveSettings()
     settings.setValue("statePath",      m_statePath);
     settings.setValue("breakpointPath", m_breakpointPath);
     settings.setValue("screenshotPath", m_screenshotsPath);
+    settings.setValue("symbolsPath",    m_symbolsPath);
     settings.setValue("video/palette",  m_paletteIndex);
     settings.setValue("machine/type",   m_machineType);
+    settings.setValue("adambezelpath",  m_adamBezelPath);
+    settings.setValue("cvbezelpath",    m_cvBezelPath);
 
     settings.setValue("hardware/sgm",   m_sgmEnabled);
     settings.setValue("hardware/f18a",  m_f18aEnabled);
@@ -534,6 +557,7 @@ void MainWindow::saveSettings()
 
     settings.setValue("video/scalingMode", m_scalingMode);
     settings.setValue("video/scanlinesMode", m_scanlinesMode);
+    settings.setValue("video/colorFilterMode", m_colorFilterMode);
     settings.setValue("video/fullscreen", m_startFullScreen);
     settings.setValue("video/useBezels", m_useBezels);
 
@@ -1007,21 +1031,21 @@ void MainWindow::setupUI()
     m_scanlinesMenu->addAction(actScanlinesOff);
     m_scanlinesMenu->addSeparator();
     // Optie 2: TV Scanlines (TelevizeImage)
-    m_actScanlinesTV = new QAction(tr("TV Scanlines"), this);
+    m_actScanlinesTV = new QAction(tr("Horizontal"), this);
     m_actScanlinesTV->setCheckable(true);
     m_actScanlinesTV->setChecked(m_scanlinesMode == ScanlinesTV);
     m_actScanlinesTV->setData(ScanlinesTV);
     m_scanlinesGroup->addAction(m_actScanlinesTV);
     m_scanlinesMenu->addAction(m_actScanlinesTV);
     // Optie 3: LCD Scanlines (LcdizeImage)
-    m_actScanlinesLCD = new QAction(tr("LCD Scanlines"), this);
+    m_actScanlinesLCD = new QAction(tr("Vertical"), this);
     m_actScanlinesLCD->setCheckable(true);
     m_actScanlinesLCD->setChecked(m_scanlinesMode == ScanlinesLCD);
     m_actScanlinesLCD->setData(ScanlinesLCD);
     m_scanlinesGroup->addAction(m_actScanlinesLCD);
     m_scanlinesMenu->addAction(m_actScanlinesLCD);
     // Optie 4: LCD Raster (RasterizeImage)
-    m_actScanlinesRaster = new QAction(tr("LCD Raster"), this);
+    m_actScanlinesRaster = new QAction(tr("Raster"), this);
     m_actScanlinesRaster->setCheckable(true);
     m_actScanlinesRaster->setChecked(m_scanlinesMode == ScanlinesRaster);
     m_actScanlinesRaster->setData(ScanlinesRaster);
@@ -1029,9 +1053,84 @@ void MainWindow::setupUI()
     m_scanlinesMenu->addAction(m_actScanlinesRaster);
 
     videoMenu->addSeparator();
+    m_colorFilterMenu = videoMenu->addMenu(tr("Color Filter"));
+    m_colorFilterGroup = new QActionGroup(this);
+    m_colorFilterGroup->setExclusive(true);
+
+    // Off
+    QAction *actFilterOff = new QAction(tr("Off"), this);
+    actFilterOff->setCheckable(true);
+    actFilterOff->setData(ColorFilterOff);
+    actFilterOff->setChecked(m_colorFilterMode == ColorFilterOff);
+    m_colorFilterGroup->addAction(actFilterOff);
+    m_colorFilterMenu->addAction(actFilterOff);
+    m_colorFilterMenu->addSeparator();
+
+    // Monochrome
+    QAction *actFilterMono = new QAction(tr("Monochrome"), this);
+    actFilterMono->setCheckable(true);
+    actFilterMono->setData(ColorFilterMonochrome);
+    actFilterMono->setChecked(m_colorFilterMode == ColorFilterMonochrome);
+    m_colorFilterGroup->addAction(actFilterMono);
+    m_colorFilterMenu->addAction(actFilterMono);
+
+    // Sepia Tones
+    QAction *actFilterSepia = new QAction(tr("Sepia Tones"), this);
+    actFilterSepia->setCheckable(true);
+    actFilterSepia->setData(ColorFilterSepia);
+    actFilterSepia->setChecked(m_colorFilterMode == ColorFilterSepia);
+    m_colorFilterGroup->addAction(actFilterSepia);
+    m_colorFilterMenu->addAction(actFilterSepia);
+
+    // Green CRT
+    QAction *actFilterGreen = new QAction(tr("Green CRT"), this);
+    actFilterGreen->setCheckable(true);
+    actFilterGreen->setData(ColorFilterGreenCRT);
+    actFilterGreen->setChecked(m_colorFilterMode == ColorFilterGreenCRT);
+    m_colorFilterGroup->addAction(actFilterGreen);
+    m_colorFilterMenu->addAction(actFilterGreen);
+
+    // Amber CRT
+    QAction *actFilterAmber = new QAction(tr("Amber CRT"), this);
+    actFilterAmber->setCheckable(true);
+    actFilterAmber->setData(ColorFilterAmberCRT);
+    actFilterAmber->setChecked(m_colorFilterMode == ColorFilterAmberCRT);
+    m_colorFilterGroup->addAction(actFilterAmber);
+    m_colorFilterMenu->addAction(actFilterAmber);
+
+    // CMY Raster
+    QAction *actFilterCMY = new QAction(tr("CMY Raster"), this);
+    actFilterCMY->setCheckable(true);
+    actFilterCMY->setData(ColorFilterCMY);
+    actFilterCMY->setChecked(m_colorFilterMode == ColorFilterCMY);
+    m_colorFilterGroup->addAction(actFilterCMY);
+    m_colorFilterMenu->addAction(actFilterCMY);
+
+    // RGB Raster
+    QAction *actFilterRGB = new QAction(tr("RGB Raster"), this);
+    actFilterRGB->setCheckable(true);
+    actFilterRGB->setData(ColorFilterRGB);
+    actFilterRGB->setChecked(m_colorFilterMode == ColorFilterRGB);
+    m_colorFilterGroup->addAction(actFilterRGB);
+    m_colorFilterMenu->addAction(actFilterRGB);
+
+    // React op wijziging
+    connect(m_colorFilterGroup, &QActionGroup::triggered,
+            this, &MainWindow::onColorFilterModeChanged);
+
+
+
+    videoMenu->addSeparator();
     m_scalingMenu = videoMenu->addMenu(tr("Video Mode"));
     m_scalingGroup = new QActionGroup(this);
     m_scalingGroup->setExclusive(true);
+    // Scaling Mode 2: Sharp
+    m_actScalingSharp = new QAction(tr("Sharp"), this);
+    m_actScalingSharp->setCheckable(true);
+    // De waarde '0' correspondeert met ModeSharp
+    m_actScalingSharp->setData(0);
+    m_scalingGroup->addAction(m_actScalingSharp);
+    m_scalingMenu->addAction(m_actScalingSharp);
     // Scaling Mode 1: Smooth
     m_actScalingSmooth = new QAction(tr("Smooth"), this);
     m_actScalingSmooth->setCheckable(true);
@@ -1039,13 +1138,6 @@ void MainWindow::setupUI()
     m_actScalingSmooth->setData(1);
     m_scalingGroup->addAction(m_actScalingSmooth);
     m_scalingMenu->addAction(m_actScalingSmooth);
-    // Scaling Mode 2: Sharp
-    m_actScalingSharp = new QAction(tr("Sharp (Nearest Neighbor)"), this);
-    m_actScalingSharp->setCheckable(true);
-    // De waarde '0' correspondeert met ModeSharp
-    m_actScalingSharp->setData(0);
-    m_scalingGroup->addAction(m_actScalingSharp);
-    m_scalingMenu->addAction(m_actScalingSharp);
     // Scaling Mode 3: EPX
     m_actScalingEPX = new QAction(tr("EPX Filter (2x)"), this);
     m_actScalingEPX->setCheckable(true);
@@ -1202,11 +1294,28 @@ void MainWindow::onScalingModeChanged(QAction* action)
 
 void MainWindow::onSaveScreenshot()
 {
-    QDir dir(m_screenshotsPath);
+    // Basisdir bepalen op basis van setting + appDir
+    QDir appDir(QCoreApplication::applicationDirPath());
+    QString basePath = m_screenshotsPath.trimmed();
+
+    // Leeg of "." → media/screenshots naast de exe
+    if (basePath.isEmpty() || basePath == ".") {
+        basePath = appDir.filePath("media/screenshots");
+    }
+    // Relatief → maak absoluut t.o.v. appDir
+    else if (QDir::isRelativePath(basePath)) {
+        basePath = appDir.filePath(basePath);
+    }
+
+    basePath = QDir::cleanPath(basePath);
+
+    // Directory aanmaken indien nodig
+    QDir dir(basePath);
     if (!dir.exists()) {
         dir.mkpath(".");
     }
 
+    // Basisnaam voor bestand (afgeleid van ROM)
     QString romBaseName = m_currentRomName;
     if (romBaseName.isEmpty() || romBaseName == "No cart") {
         romBaseName = "screenshot";
@@ -1215,18 +1324,19 @@ void MainWindow::onSaveScreenshot()
         romBaseName = fi.completeBaseName();
     }
 
-    QString absoluteScreenshotPath =
-        QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_screenshotsPath);
+    // Start-directory voor de save dialog
+    QString initialPath = dir.absolutePath();
 
-    QString fileName = CustomFileDialog::getSaveFileName(this,
-                                                         tr("Save Screenshot"),
-                                                         absoluteScreenshotPath,
-                                                         tr("PNG Images (*.png);;All Files (*)"),
-                                                         nullptr,
-                                                         CustomFileDialog::PathScreenshot,
-                                                         QFileDialog::Options(),
-                                                         romBaseName
-                                                         );
+    QString fileName = CustomFileDialog::getSaveFileName(
+        this,
+        tr("Save Screenshot"),
+        initialPath,
+        tr("PNG Images (*.png);;All Files (*)"),
+        nullptr,
+        CustomFileDialog::PathScreenshot,
+        QFileDialog::Options(),
+        romBaseName
+        );
 
     if (fileName.isEmpty()) {
         return;
@@ -1246,7 +1356,11 @@ void MainWindow::onSaveScreenshot()
         if (screenshot.save(finalPath)) {
             qDebug() << "Screenshot saved to:" << finalPath;
         } else {
-            QMessageBox::warning(this, tr("Error"), tr("Failed to save screenshot to %1.").arg(finalPath));
+            QMessageBox::warning(
+                this,
+                tr("Error"),
+                tr("Failed to save screenshot to %1.").arg(finalPath)
+                );
         }
     }
 }
@@ -1289,7 +1403,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     int gameScreenWidth = (currentHeight * 256) / 192;
     int difference = this->width() - gameScreenWidth;
 
-    bool shouldShow = m_useBezels && (isFullScreen() || isMaximized() || (difference > 330));
+    bool shouldShow = m_useBezels && (isFullScreen() || isMaximized() || (difference > 270));
 
     if (shouldShow) {
         // --- SHOW BEZELS ---
@@ -1770,7 +1884,7 @@ void MainWindow::onOpenColecoRom()
 {
     if (m_machineType != 0) return;
 
-    QString absoluteRomPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_romPath);
+    QString absoluteRomPath = QDir::cleanPath(m_romPath);
 
     const QString filePath = CustomFileDialog::getOpenFileName(
         this,
@@ -1823,7 +1937,7 @@ void MainWindow::onOpenAdamRom()
 {
     if (m_machineType != 1) return;
 
-    QString absoluteRomPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_romPath);
+    QString absoluteRomPath = QDir::cleanPath(m_romPath);
 
     const QString filePath = CustomFileDialog::getOpenFileName(
         this,
@@ -2303,7 +2417,7 @@ void MainWindow::onLoadDisk(int drive)
 {
     if (m_machineType != 1) return;
 
-    QString absoluteDiskPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_diskPath);
+    QString absoluteDiskPath = QDir::cleanPath(m_diskPath);
 
     const QString filePath = CustomFileDialog::getOpenFileName(
         this,
@@ -2338,7 +2452,7 @@ void MainWindow::onLoadTape(int drive)
 {
     if (m_machineType != 1) return;
 
-    QString absoluteTapePath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_tapePath);
+    QString absoluteTapePath = QDir::cleanPath(m_tapePath);
 
     const QString filePath = CustomFileDialog::getOpenFileName(
         this,
@@ -2675,37 +2789,98 @@ void MainWindow::positionPrinter()
     }
 }
 
+// void MainWindow::updateFullScreenWallpaper()
+// {
+//     if (!m_wallpaperLabel) return;
+
+//     QString wallpaperPath;
+
+//     // m_machineType == 1 is ADAM
+//     if (m_machineType == 1) {
+//         wallpaperPath = ":/images/images/wallpaper_adam.png";
+//     }
+//     // m_machineType == 0 is Coleco
+//     else {
+//         wallpaperPath = ":/images/images/wallpaper_coleco.png";
+//     }
+
+//     QPixmap newWallpaper(wallpaperPath);
+
+//     if (newWallpaper.isNull()) {
+//         qWarning() << "Kan wallpaper niet laden:" << wallpaperPath;
+//         m_wallpaperLabel->clear();
+//         m_wallpaperLabel->setStyleSheet("background-color: black;");
+//     } else {
+//         m_wallpaperLabel->setStyleSheet("");
+//         m_wallpaperLabel->setPixmap(newWallpaper);
+//     }
+// }
+
 void MainWindow::updateFullScreenWallpaper()
 {
-    if (!m_wallpaperLabel) return;
+    if (!m_wallpaperLabel)
+        return;
 
-    QString wallpaperPath;
+    QPixmap wallpaper;
+    bool loadedCustom = false;
 
-    // m_machineType == 1 is ADAM
+    // Kies het juiste bezel-pad per machine
+    QString bezelPath;
     if (m_machineType == 1) {
-        wallpaperPath = ":/images/images/wallpaper_adam.png";
-    }
-    // m_machineType == 0 is Coleco
-    else {
-        wallpaperPath = ":/images/images/wallpaper_coleco.png";
-    }
-
-    QPixmap newWallpaper(wallpaperPath);
-
-    if (newWallpaper.isNull()) {
-        qWarning() << "Kan wallpaper niet laden:" << wallpaperPath;
-        m_wallpaperLabel->clear();
-        m_wallpaperLabel->setStyleSheet("background-color: black;");
+        // ADAM
+        bezelPath = m_adamBezelPath;
     } else {
-        m_wallpaperLabel->setStyleSheet("");
-        m_wallpaperLabel->setPixmap(newWallpaper);
+        // COLECO (default)
+        bezelPath = m_cvBezelPath;
+    }
+
+    // "none" of leeg = geen custom, gebruik ingebouwde
+    const bool isNone =
+        bezelPath.isEmpty() ||
+        bezelPath.compare("none", Qt::CaseInsensitive) == 0;
+
+    if (!isNone) {
+        QString absPath = bezelPath;
+
+        // Relatieve paden maken we t.o.v. appDir
+        if (QDir::isRelativePath(bezelPath)) {
+            QDir appDir(QCoreApplication::applicationDirPath());
+            absPath = appDir.absoluteFilePath(bezelPath);
+        }
+
+        QFileInfo fi(absPath);
+        if (fi.exists() && fi.isFile()) {
+            if (wallpaper.load(absPath)) {
+                loadedCustom = true;
+            }
+        }
+    }
+
+    // Als custom mislukt of "none", gebruik ingebouwde
+    if (!loadedCustom) {
+        if (m_machineType == 1) {
+            wallpaper.load(":/images/images/wallpaper_adam.png");
+        } else {
+            wallpaper.load(":/images/images/wallpaper_coleco.png");
+        }
+    }
+
+    if (!wallpaper.isNull()) {
+        // Schaal naar venstergrootte, mooi bijsnijden
+        wallpaper = wallpaper.scaled(
+            m_wallpaperLabel->size(),
+            Qt::KeepAspectRatioByExpanding,
+            Qt::SmoothTransformation
+            );
+        m_wallpaperLabel->setPixmap(wallpaper);
+        m_wallpaperLabel->setAlignment(Qt::AlignCenter);
     }
 }
 
+
 void MainWindow::onSaveState()
 {
-    QString absoluteStatePath =
-        QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_statePath);
+ QString absoluteStatePath = QDir::cleanPath(m_statePath);
 
     QDir statesDir(absoluteStatePath);
     if (!statesDir.exists())
@@ -2750,8 +2925,7 @@ void MainWindow::onSaveState()
 
 void MainWindow::onLoadState()
 {
-    QString absoluteStatePath =
-        QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_statePath);
+    QString absoluteStatePath = QDir::cleanPath(m_statePath);
 
     QDir statesDir(absoluteStatePath);
     if (!statesDir.exists())
@@ -2860,10 +3034,19 @@ void MainWindow::onSaveBreakpoint()
         return;
     }
 
-    QString absoluteBreakpointPath =
-        QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_breakpointPath);
+    // Basisdir bepalen: absolute path maken + default naar media/breakpoints
+    QDir appDir(QCoreApplication::applicationDirPath());
+    QString basePath = m_breakpointPath.trimmed();
 
-    QDir breakpointsDir(absoluteBreakpointPath);
+    if (basePath.isEmpty() || basePath == ".") {
+        basePath = appDir.filePath("media/breakpoints");
+    } else if (QDir::isRelativePath(basePath)) {
+        basePath = appDir.filePath(basePath);
+    }
+
+    basePath = QDir::cleanPath(basePath);
+
+    QDir breakpointsDir(basePath);
     if (!breakpointsDir.exists())
         breakpointsDir.mkpath(".");
 
@@ -2877,6 +3060,7 @@ void MainWindow::onSaveBreakpoint()
         nullptr,
         CustomFileDialog::PathState,
         QFileDialog::Options()
+        // (geen extra suggest-name parameter in deze overload)
         );
 
     if (filePath.isEmpty()) return;
@@ -2890,7 +3074,8 @@ void MainWindow::onSaveBreakpoint()
 
     QFile file(finalPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, tr("Error"), tr("Could not open file for writing:\n%1").arg(file.errorString()));
+        QMessageBox::warning(this, tr("Error"),
+                             tr("Could not open file for writing:\n%1").arg(file.errorString()));
         return;
     }
 
@@ -2899,7 +3084,7 @@ void MainWindow::onSaveBreakpoint()
     out << "# Format: [E/D] <Definition>\n\n";
 
     for (const DebuggerBreakpoint& bp : breakpointsToSave) {
-        out << (bp.enabled ? "E " : "D ") << bp.definition << "\n";
+        out << (bp.enabled ? "E " : "D ") << bp.definition_text << "\n";
     }
 
     file.close();
@@ -2910,9 +3095,19 @@ void MainWindow::onLoadBreakpoint()
 {
     if (!m_debugWin) return;
 
-    QString absoluteBreakpointPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/" + m_breakpointPath);
+    // Basisdir bepalen: absolute path maken + default naar media/breakpoints
+    QDir appDir(QCoreApplication::applicationDirPath());
+    QString basePath = m_breakpointPath.trimmed();
 
-    QDir breakpointsDir(absoluteBreakpointPath);
+    if (basePath.isEmpty() || basePath == ".") {
+        basePath = appDir.filePath("media/breakpoints");
+    } else if (QDir::isRelativePath(basePath)) {
+        basePath = appDir.filePath(basePath);
+    }
+
+    basePath = QDir::cleanPath(basePath);
+
+    QDir breakpointsDir(basePath);
     if (!breakpointsDir.exists())
         breakpointsDir.mkpath(".");
 
@@ -2933,7 +3128,8 @@ void MainWindow::onLoadBreakpoint()
 
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, tr("Error"), tr("Could not open file for reading:\n%1").arg(file.errorString()));
+        QMessageBox::warning(this, tr("Error"),
+                             tr("Could not open file for reading:\n%1").arg(file.errorString()));
         return;
     }
 
@@ -2956,13 +3152,158 @@ void MainWindow::onLoadBreakpoint()
         }
 
         if (!definition.isEmpty()) {
-            loadedBreakpoints.append({definition, enabled});
+            DebuggerBreakpoint newBp;
+            newBp.type = BreakpointType::BP_EXECUTE;   // placeholder, zie jouw TODO
+            newBp.definition_text = definition;
+            newBp.enabled = enabled;
+            loadedBreakpoints.append(newBp);
         }
     }
 
     file.close();
 
     m_debugWin->setBreakpointDefinitions(loadedBreakpoints);
+}
+
+void MainWindow::onSaveSymbolDefinitions()
+{
+    if (!m_debugWin) return;
+
+    const QList<DebuggerSymbol> symbolsToSave = m_debugWin->getSymbolDefinitions();
+    if (symbolsToSave.isEmpty()) {
+        QMessageBox::information(this, tr("Info"), tr("No symbols to save."));
+        return;
+    }
+
+    // Basisdir bepalen (absolute path + default naar media/symbols)
+    QDir appDir(QCoreApplication::applicationDirPath());
+    QString basePath = m_symbolsPath.trimmed();
+
+    if (basePath.isEmpty() || basePath == ".") {
+        basePath = appDir.filePath("media/symbols");
+    } else if (QDir::isRelativePath(basePath)) {
+        basePath = appDir.filePath(basePath);
+    }
+
+    basePath = QDir::cleanPath(basePath);
+
+    QDir symbolsDir(basePath);
+    if (!symbolsDir.exists())
+        symbolsDir.mkpath(".");
+
+    QString baseName = "my_symbols.sym";
+
+    const QString filePath = CustomFileDialog::getSaveFileName(
+        this,
+        tr("Save Symbols"),
+        symbolsDir.absolutePath(),
+        tr("Symbol Files (*.sym *.txt);;All Files (*.*)"),
+        nullptr,
+        CustomFileDialog::PathSymbol,
+        QFileDialog::Options()
+        );
+
+    if (filePath.isEmpty()) return;
+
+    QString finalPath = filePath;
+    if (!finalPath.endsWith(".sym", Qt::CaseInsensitive))
+        finalPath += ".sym";
+
+    QFileInfo fileInfo(finalPath);
+    CustomFileDialog::s_lastSaveDir = fileInfo.absolutePath();
+
+    QFile file(finalPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Error"),
+                             tr("Could not open file for writing:\n%1").arg(file.errorString()));
+        return;
+    }
+
+    QTextStream out(&file);
+    out << "# ADAM+ Symbol File\n";
+    out << "# Format: TYPE:ADRES:LABEL\n\n";
+
+    for (const DebuggerSymbol& sym : symbolsToSave) {
+        out << sym.definition_text << "\n";
+    }
+
+    file.close();
+    QMessageBox::information(this, tr("Success"), tr("Symbols saved."));
+}
+
+void MainWindow::onLoadSymbolDefinitions()
+{
+    if (!m_debugWin) return;
+
+    // Basisdir bepalen (absolute path + default naar media/symbols)
+    QDir appDir(QCoreApplication::applicationDirPath());
+    QString basePath = m_symbolsPath.trimmed();
+
+    if (basePath.isEmpty() || basePath == ".") {
+        basePath = appDir.filePath("media/symbols");
+    } else if (QDir::isRelativePath(basePath)) {
+        basePath = appDir.filePath(basePath);
+    }
+
+    basePath = QDir::cleanPath(basePath);
+
+    QDir symbolsDir(basePath);
+    if (!symbolsDir.exists())
+        symbolsDir.mkpath(".");
+
+    const QString filePath = CustomFileDialog::getOpenFileName(
+        this,
+        tr("Load Symbols"),
+        symbolsDir.absolutePath(),
+        tr("Symbol Files (*.sym *.txt);;All Files (*.*)"),
+        nullptr,
+        CustomFileDialog::PathSymbol,
+        QFileDialog::Options()
+        );
+
+    if (filePath.isEmpty()) return;
+
+    QFileInfo fileInfo(filePath);
+    CustomFileDialog::s_lastOpenDir = fileInfo.absolutePath();
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Error"),
+                             tr("Could not open file for reading:\n%1").arg(file.errorString()));
+        return;
+    }
+
+    QTextStream in(&file);
+    QList<DebuggerSymbol> loadedSymbols;
+
+    while (!in.atEnd()) {
+        QString line = in.readLine().trimmed();
+        if (line.isEmpty() || line.startsWith('#')) continue;
+
+        QString definition = line;
+        QStringList parts = definition.split(':');
+
+        if (parts.size() >= 3) {
+            DebuggerSymbol newSym;
+            newSym.definition_text = definition;
+            newSym.type = parts[0].trimmed();
+
+            bool ok = false;
+            newSym.address = parts[1].trimmed().toUShort(&ok, 16);
+            if (!ok) {
+                qWarning() << "Skipping symbol line due to invalid address:" << line;
+                continue;
+            }
+
+            newSym.label = parts.mid(2).join(':').trimmed();
+
+            loadedSymbols.append(newSym);
+        }
+    }
+
+    file.close();
+
+    m_debugWin->setSymbolDefinitions(loadedSymbols);
 }
 
 void MainWindow::onResetAdamBtnClicked()
@@ -3273,4 +3614,22 @@ void MainWindow::onToggleResetCartBlink()
     m_resetCartBtn->setIcon(QIcon(isChecked
                                       ? ":/images/images/adamp_logo_reset_cartridge_off.png"
                                       : ":/images/images/adamp_logo_reset_cartridge_blink.png"));
+}
+
+void MainWindow::onColorFilterModeChanged(QAction* action)
+{
+    ColorFilterMode newMode = static_cast<ColorFilterMode>(action->data().toInt());
+
+    if (m_colorFilterMode == newMode) {
+        return;
+    }
+
+    m_colorFilterMode = newMode;
+    qDebug() << "UI: Color Filter Mode changed to" << newMode;
+
+    saveSettings();
+
+    if (m_screenWidget) {
+        m_screenWidget->setColorFilterMode(newMode);
+    }
 }

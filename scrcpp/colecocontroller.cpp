@@ -544,6 +544,25 @@ void ColecoController::sstepOnce()
     QCoreApplication::processEvents();
 }
 
+void ColecoController::stepOver(uint16_t returnAddress)
+{
+    // *** Dit slot draait op de emulator-thread ***
+
+    qDebug() << "[Controller] stepOver() requested to return to PC:" << Qt::hex << returnAddress;
+
+    // HIER: De gebruiker moet de code toevoegen die het externe C-mechanisme activeert.
+    // Bijvoorbeeld: temp_step_over_addr = returnAddress;
+
+    if (returnAddress != 0) {
+        // Zodra het tijdelijke breakpoint is gezet in de C-core, hervatten we de emulator.
+        // De core draait dan totdat het retouradres wordt geraakt.
+        resumeEmulation();
+    } else {
+        // Als er geen CALL was (returnAddress=0), doen we een simpele stap.
+        stepOnce();
+    }
+}
+
 void ColecoController::gotoAddr(uint16_t newPC)
 {
     if (!emulator) return;
@@ -581,69 +600,65 @@ void ColecoController::AdamCartridge(const QString &romPath)
     m_realFrames = 0;
 
     QByteArray path = QFile::encodeName(romPath);
-    // coleco_loadcart() zorgt ervoor dat de ROM in ROM_Memory geladen wordt.
-    BYTE ok = coleco_loadcart(path.data());
 
-    if (ok != 0) {
-        qWarning() << "[Controller] ADAM ROM laden faalde, code =" << int(ok);
-        m_currentAdamCartPath.clear();
-        m_currentColecoCartPath.clear();
-    } else {
-        // Alleen de ADAM cartridge is geladen, de Coleco cartridge wordt nu leeg
+    // Schakel Adam ROMs uit en zet Coleco-modus aan (dit maakt de bank vrij)
+    //setMachineType(Machine_Coleco);
+
+    // Laad de cartridge data
+    BYTE retload = coleco_loadcart(path.data());
+
+    if (retload == ROM_LOAD_PASS)
+    {
+        //coleco_reset();
         m_currentColecoCartPath.clear();
         m_currentAdamCartPath = QFileInfo(romPath).fileName();
     }
+    else if (retload == ROM_VERIFY_FAIL)
+    {
+        qDebug() << "[Controller] Can't verify the rom file";
+        m_currentAdamCartPath.clear();
+        m_currentColecoCartPath.clear();
+    }
+    else {
+        qWarning() << "[Controller] ADAM ROM laden faalde, code =" << int(retload);
+        m_currentAdamCartPath.clear();
+        m_currentColecoCartPath.clear();
+    }
 
-    // VERWIJDERD: coleco_reset_and_restart_bios();
-    // VERWIJDERD: resumeEmulation();
-
-    // Stuur statusupdate naar de GUI
     emit cartridgeStatusChanged(m_currentColecoCartPath, m_currentAdamCartPath);
 }
 
 void ColecoController::ejectAdamCartridge()
 {
-    // C-kern reset de ADAM cartridgestatus.
-    // Dit veronderstelt dat coleco_hardreset() of coleco_loadcart("") wordt gebruikt om de C-kern te clearen.
-    // Voor nu wissen we alleen de GUI status.
     if (!m_currentAdamCartPath.isEmpty()) {
         m_currentAdamCartPath.clear();
-        // Coleco ROM wordt ontladen door de volgende loadactie
-        // We sturen de status update.
         emit cartridgeStatusChanged(m_currentColecoCartPath, m_currentAdamCartPath);
         qDebug() << "[Controller] ADAM Cartridge ejected (GUI updated).";
     }
 }
-
 void ColecoController::ColecoCartridge(const QString &romPath)
 {
     qDebug() << "[Controller] load Coleco Rom:" << romPath;
     m_realFrames = 0;
 
     QByteArray path = QFile::encodeName(romPath);
-    // coleco_loadcart() zorgt ervoor dat de ROM in ROM_Memory geladen wordt.
-    BYTE ok = coleco_loadcart(path.data());
+    // Laad de cartridge data
+    BYTE retload = coleco_loadcart(path.data());
 
-    if (ok != 0) {
-        qWarning() << "[Controller] COLECO ROM laden faalde, code =" << int(ok);
+    //setMachineType(Machine_Adam);
+    if (retload != 0) {
+        qWarning() << "[Controller] COLECO ROM laden faalde, code =" << int(retload);
         m_currentColecoCartPath.clear();
         m_currentAdamCartPath.clear();
     } else {
-        // Alleen de Coleco cartridge is geladen, de ADAM cartridge wordt nu leeg
         m_currentAdamCartPath.clear();
         m_currentColecoCartPath = QFileInfo(romPath).fileName();
     }
-
-    // VERWIJDERD: coleco_reset_and_restart_bios();
-    // VERWIJDERD: resumeEmulation();
-
-    // Stuur statusupdate naar de GUI
     emit cartridgeStatusChanged(m_currentColecoCartPath, m_currentAdamCartPath);
 }
 
 void ColecoController::ejectColecoCartridge()
 {
-    // C-kern reset de Coleco cartridgestatus.
     if (!m_currentColecoCartPath.isEmpty()) {
         m_currentColecoCartPath.clear();
         emit cartridgeStatusChanged(m_currentColecoCartPath, m_currentAdamCartPath);
@@ -719,25 +734,31 @@ QImage ColecoController::frameFromBridge()
 void ColecoController::loadDisk(int drive, const QString& path)
 {
     if (drive >= MAX_DISKS) return;
-    // Eject eerst om eventuele vorige status op te slaan
-    // (coleco_eject_disk in de C-kern, GUI update komt later)
     ejectDisk(drive);
 
+    // cPath bevat het VOLLEDIGE PAD, nodig voor de C-core functie coleco_load_disk
     QByteArray cPath = QFile::encodeName(path);
     qDebug() << "[Controller] Loading Disk" << drive << ":" << path;
     BYTE ok = coleco_load_disk(drive, cPath.constData());
 
     if (ok == 0) {
-        m_currentDiskPath[drive] = QFileInfo(path).fileName();
+        // [FIX] Sla het VOLLEDIGE PAD op
+        m_currentDiskPath[drive] = path;
+
+        if (emulator->currentMachineType != MACHINEADAM) {
+            setMachineType(Machine_Adam);
+            emit machineTypeChanged(Machine_Adam);
+            qDebug() << "[Controller] Forced machine type to ADAM for disk boot.";
+            adamnet_block_ascii_fkeys(100);
+        }
+
     } else {
         qWarning() << "Failed to load disk image.";
         m_currentDiskPath[drive].clear();
     }
 
-    // VERWIJDERD: resetMachine();
-
-    // Stuur statusupdate naar de GUI
-    emit diskStatusChanged(drive, m_currentDiskPath[drive]);
+    // Stuur bestandsnaam naar de GUI
+    emit diskStatusChanged(drive, QFileInfo(m_currentDiskPath[drive]).fileName());
 }
 
 void ColecoController::ejectDisk(int drive)
@@ -748,7 +769,8 @@ void ColecoController::ejectDisk(int drive)
     if (!m_currentDiskPath[drive].isEmpty()) {
         QByteArray cOldPath = QFile::encodeName(m_currentDiskPath[drive]);
         qDebug() << "[Controller] Saving and Ejecting Disk" << drive << ":" << m_currentDiskPath[drive];
-        coleco_save_disk(drive, cOldPath.constData());
+        int result = coleco_save_disk(drive, cOldPath.constData());
+        qDebug() << "DISK SAVE RESULT:" << result;
         coleco_eject_disk(drive);
         m_currentDiskPath[drive].clear(); // Status in de controller wissen
     }
@@ -762,20 +784,21 @@ void ColecoController::loadTape(int drive, const QString& path)
     if (drive >= MAX_TAPES) return;
     ejectTape(drive);
 
+    // cPath bevat het VOLLEDIGE PAD, nodig voor de C-core functie coleco_load_tape
     QByteArray cPath = QFile::encodeName(path);
     qDebug() << "[Controller] Loading Tape" << drive << ":" << path;
     BYTE ok = coleco_load_tape(drive, cPath.constData());
 
     if (ok == 0) {
-        m_currentTapePath[drive] = QFileInfo(path).fileName();
+        // [FIX] Sla het VOLLEDIGE PAD op
+        m_currentTapePath[drive] = path;
     } else {
-        qWarning() << "Failed to load tape image.";
+        qWarning() << "Failed to load disk image.";
         m_currentTapePath[drive].clear();
     }
 
-    // VERWIJDERD: resetMachine();
-
-    emit tapeStatusChanged(drive, m_currentTapePath[drive]);
+    // Stuur bestandsnaam naar de GUI
+    emit tapeStatusChanged(drive, QFileInfo(m_currentTapePath[drive]).fileName());
 }
 
 void ColecoController::ejectTape(int drive)
@@ -785,7 +808,8 @@ void ColecoController::ejectTape(int drive)
     if (!m_currentTapePath[drive].isEmpty()) {
         QByteArray cOldPath = QFile::encodeName(m_currentTapePath[drive]);
         qDebug() << "[Controller] Saving and Ejecting Tape" << drive << ":" << m_currentTapePath[drive];
-        coleco_save_tape(drive, cOldPath.constData());
+        int result = coleco_save_tape(drive, cOldPath.constData());
+        qDebug() << "TAPE SAVE RESULT:" << result;
         coleco_eject_tape(drive);
         m_currentTapePath[drive].clear();
     }

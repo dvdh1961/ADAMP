@@ -20,6 +20,9 @@ public:
     void setStatePath(const QString &path);
     void setBreakpointPath(const QString &path);
     void setScreenshotPath(const QString &path);
+    void setSymbolPath(const QString& path);
+    void setAdamBezelPath(const QString &path);
+    void setCvBezelPath(const QString &path);
 
     QString romPath() const;
     QString diskPath() const;
@@ -27,6 +30,9 @@ public:
     QString statePath() const;
     QString breakpointPath() const;
     QString screenshotPath() const;
+    QString symbolPath() const;
+    QString adamBezelPath() const;
+    QString cvBezelPath() const;
 
 private slots:
     void onBrowseRomPath();
@@ -35,6 +41,11 @@ private slots:
     void onBrowseStatePath();
     void onBrowseBreakpointPath();
     void onBrowseScreenshotPath();
+    void onBrowseSymbolsPath();
+    void onBrowseAdamBezelPath();
+    void onBrowseCvBezelPath();
+    void onLoadAdamBezel();
+    void onLoadCvBezel();
 
 private:
     void setupUI();
@@ -51,7 +62,14 @@ private:
     QPushButton *m_breakpointPathBtn;
     QLineEdit *m_screenshotPathEdit;
     QPushButton *m_screenshotPathBtn;
-
+    QLineEdit *m_symbolPathEdit;
+    QPushButton *m_symbolPathBtn;
+    QLineEdit *m_adamBezelPathEdit;
+    QPushButton *m_adamBezelPathBtn;
+    QLineEdit *m_cvBezelPathEdit;
+    QPushButton *m_cvBezelPathBtn;
+    QPushButton *m_adamBezelLoadBtn;
+    QPushButton *m_cvBezelLoadBtn;
     QDialogButtonBox *m_buttonBox;
     QPushButton *m_okButton;
     QPushButton *m_cancelButton;

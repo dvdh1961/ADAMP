@@ -25,7 +25,8 @@ public:
         PathDisk,
         PathTape,
         PathState,
-        PathScreenshot
+        PathScreenshot,
+        PathSymbol
     };
 
     explicit CustomFileDialog(QWidget *parent = nullptr);
