@@ -4,14 +4,32 @@
 #include <QVector>
 
 #include "debuggerwindow.h" // Heeft de C++ klasse definitie
-#include "emu.h"            // Heeft de 'emulator' globale struct
 #include <QMetaObject>
 
 #define B(x) QString("%1").arg((x),2,16,QChar('0')).toUpper()
 #define W(x) QString("%1").arg((x),4,16,QChar('0')).toUpper()
 
+static bool s_symbolsEnabled = false;
+
+// Hulpfunctie om JR met label op te maken
+static QString disasm_format_jr_with_label_helper(uint16_t currentAddr, uint8_t offsetByte, const QString& opPrefix)
+{
+    int8_t signedOffset = (int8_t)offsetByte;
+    uint16_t targetAddr = currentAddr + 2 + signedOffset;
+
+    // Retourneert het doeladres + de speciale tag "$$".
+    return opPrefix + "$"+W(targetAddr) + "$$";
+}
+
+static QString disasm_format_absolute_label_helper(uint16_t targetAddr, const QString& opPrefix)
+{
+    // Retourneert de instructie, het doeladres en de speciale tag "$$".
+    return opPrefix + "$"+W(targetAddr) + "$$";
+}
+
 // Deze pointer "houdt" de C++ debugger vast voor de C-functies
 //static DebuggerWindow* g_debugger = nullptr;
+static QMap<uint16_t, QString> s_symbolMap;
 
 static QString disasm_cb(unsigned short addr,int &oplen);
 static QString disasm_ed(unsigned short addr,int &oplen);
@@ -43,7 +61,7 @@ QString disasmOneAt(unsigned short addr,int &oplen)
     case 0x0E: oplen=2; return "LD C,#"+B(b1);
     case 0x0F: return "RRCA";
 
-    case 0x10: oplen=2; return "DJNZ $" + W(addr+2+(int8_t)b1);
+    case 0x10: oplen=2; return disasm_format_jr_with_label_helper(addr, b1, "DJNZ ");
     case 0x11: oplen=3; return "LD DE,$"+W((b2<<8)|b1);
     case 0x12: return "LD (DE),A";
     case 0x13: return "INC DE";
@@ -51,7 +69,7 @@ QString disasmOneAt(unsigned short addr,int &oplen)
     case 0x15: return "DEC D";
     case 0x16: oplen=2; return "LD D,#"+B(b1);
     case 0x17: return "RLA";
-    case 0x18: oplen=2; return "JR $" + W(addr+2+(int8_t)b1);
+    case 0x18: oplen=2; return disasm_format_jr_with_label_helper(addr, b1, "JR ");
     case 0x19: return "ADD HL,DE";
     case 0x1A: return "LD A,(DE)";
     case 0x1B: return "DEC DE";
@@ -60,7 +78,7 @@ QString disasmOneAt(unsigned short addr,int &oplen)
     case 0x1E: oplen=2; return "LD E,#"+B(b1);
     case 0x1F: return "RRA";
 
-    case 0x20: oplen=2; return "JR NZ,$"+W(addr+2+(int8_t)b1);
+    case 0x20: oplen=2; return disasm_format_jr_with_label_helper(addr, b1, "JR NZ,");
     case 0x21: oplen=3; return "LD HL,$"+W((b2<<8)|b1);
     case 0x22: oplen=3; return "LD ($"+W((b2<<8)|b1)+"),HL";
     case 0x23: return "INC HL";
@@ -68,7 +86,7 @@ QString disasmOneAt(unsigned short addr,int &oplen)
     case 0x25: return "DEC H";
     case 0x26: oplen=2; return "LD H,#"+B(b1);
     case 0x27: return "DAA";
-    case 0x28: oplen=2; return "JR Z,$"+W(addr+2+(int8_t)b1);
+    case 0x28: oplen=2; return disasm_format_jr_with_label_helper(addr, b1, "JR Z,");
     case 0x29: return "ADD HL,HL";
     case 0x2A: oplen=3; return "LD HL,($"+W((b2<<8)|b1)+")";
     case 0x2B: return "DEC HL";
@@ -77,7 +95,7 @@ QString disasmOneAt(unsigned short addr,int &oplen)
     case 0x2E: oplen=2; return "LD L,#"+B(b1);
     case 0x2F: return "CPL";
 
-    case 0x30: oplen=2; return "JR NC,$"+W(addr+2+(int8_t)b1);
+    case 0x30: oplen=2; return disasm_format_jr_with_label_helper(addr, b1, "JR NC,");
     case 0x31: oplen=3; return "LD SP,$"+W((b2<<8)|b1);
     case 0x32: oplen=3; return "LD ($"+W((b2<<8)|b1)+"),A";
     case 0x33: return "INC SP";
@@ -85,7 +103,7 @@ QString disasmOneAt(unsigned short addr,int &oplen)
     case 0x35: return "DEC (HL)";
     case 0x36: oplen=2; return "LD (HL),#"+B(b1);
     case 0x37: return "SCF";
-    case 0x38: oplen=2; return "JR C,$"+W(addr+2+(int8_t)b1);
+    case 0x38: oplen=2; return disasm_format_jr_with_label_helper(addr, b1, "JR C,");
     case 0x39: return "ADD HL,SP";
     case 0x3A: oplen=3; return "LD A,($"+W((b2<<8)|b1)+")";
     case 0x3B: return "DEC SP";
@@ -228,34 +246,34 @@ QString disasmOneAt(unsigned short addr,int &oplen)
 
     case 0xC0: return "RET NZ";
     case 0xC1: return "POP BC";
-    case 0xC2: oplen=3; return "JP NZ,$"+W((b2<<8)|b1);
-    case 0xC3: oplen=3; return "JP $"+W((b2<<8)|b1);
-    case 0xC4: oplen=3; return "CALL NZ,$"+W((b2<<8)|b1);
+    case 0xC2: oplen=3; return disasm_format_absolute_label_helper((b2<<8)|b1, "JP NZ,");
+    case 0xC3: oplen=3; return disasm_format_absolute_label_helper((b2<<8)|b1,"JP ");
+    case 0xC4: oplen=3; return disasm_format_absolute_label_helper((b2<<8)|b1, "CALL NZ,");
     case 0xC5: return "PUSH BC";
     case 0xC6: oplen=2; return "ADD A,#"+B(b1);
     case 0xC7: return "RST 00H";
     case 0xC8: return "RET Z";
     case 0xC9: return "RET";
-    case 0xCA: oplen=3; return "JP Z,$"+W((b2<<8)|b1);
+    case 0xCA: oplen=3; return disasm_format_absolute_label_helper((b2<<8)|b1, "JP Z,");
     case 0xCB: return disasm_cb(addr,oplen);
-    case 0xCC: oplen=3; return "CALL Z,$"+W((b2<<8)|b1);
-    case 0xCD: oplen=3; return "CALL $"+W((b2<<8)|b1);
+    case 0xCC: oplen=3; return disasm_format_absolute_label_helper((b2<<8)|b1, "CALL Z,");
+    case 0xCD: oplen=3; return disasm_format_absolute_label_helper((b2<<8)|b1, "CALL ");
     case 0xCE: oplen=2; return "ADC A,#"+B(b1);
     case 0xCF: return "RST 08H";
 
     case 0xD0: return "RET NC";
     case 0xD1: return "POP DE";
-    case 0xD2: oplen=3; return "JP NC,$"+W((b2<<8)|b1);
+    case 0xD2: oplen=3; return disasm_format_absolute_label_helper((b2<<8)|b1, "JP NC,");
     case 0xD3: oplen=2; return "OUT ($"+B(b1)+"),A";
-    case 0xD4: oplen=3; return "CALL NC,$"+W((b2<<8)|b1);
+    case 0xD4: oplen=3; return disasm_format_absolute_label_helper((b2<<8)|b1, "CALL NC,");
     case 0xD5: return "PUSH DE";
     case 0xD6: oplen=2; return "SUB #"+B(b1);
     case 0xD7: return "RST 10H";
     case 0xD8: return "RET C";
     case 0xD9: return "EXX";
-    case 0xDA: oplen=3; return "JP C,$"+W((b2<<8)|b1);
+    case 0xDA: oplen=3;return disasm_format_absolute_label_helper((b2<<8)|b1, "JP C,");
     case 0xDB: oplen=2; return "IN A,($"+B(b1)+")";
-    case 0xDC: oplen=3; return "CALL C,$"+W((b2<<8)|b1);
+    case 0xDC: oplen=3; return disasm_format_absolute_label_helper((b2<<8)|b1, "CALL C,");
     case 0xDD: return disasm_ddfd(addr,oplen,false);
     case 0xDE: oplen=2; return "SBC A,#"+B(b1);
     case 0xDF: return "RST 18H";
@@ -556,3 +574,13 @@ void debug_sync_breakpoints(ColecoController* controller, const QStringList &lis
     }, Qt::QueuedConnection);
 }
 
+// =====================================================================
+// FUNCTIE 1: SYNCHRONISATIE (vult de map)
+// =====================================================================
+void disasm_set_symbols(const QList<DebuggerSymbol>& symbols, bool enabled)
+{
+    // Deze functie wordt nu alleen gebruikt om de globale status te togglen
+    s_symbolsEnabled = enabled;
+
+    //qDebug() << "[BRIDGE] Symbols status set to:" << enabled;
+}

@@ -3,6 +3,7 @@
 
 #include <QString>
 #include "z80.h"
+#include "debuggerwindow.h"
 
 class ColecoController;
 
@@ -10,6 +11,8 @@ class ColecoController;
 QString disasmOneAt(unsigned short addr, int &oplen);
 
 void debug_sync_breakpoints(ColecoController* controller, const QStringList &list);
+void disasm_set_symbols(const QList<DebuggerSymbol>& symbols, bool enabled);
+QString disasm_get_label_for_address(uint16_t address);
 
 // --- C-Linkable functies ---
 #ifdef __cplusplus
