@@ -77,6 +77,7 @@ improvements, and upgrades to both usability and development tools. Here’s wha
 As always, feel free to share feedback, report issues, and follow development.
 Thanks for supporting AdamPlus -- enjoy!
 
+---
 
 Version 0.5.12.25 x86_64 Windows & Linux
 
