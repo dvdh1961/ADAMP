@@ -55,7 +55,7 @@ Version 0.6.12.25 x86_64 Windows & Linux
 We’re excited to announce a new update of the AdamPlus Emulator, bringing several new features, 
 improvements, and upgrades to both usability and development tools. Here’s what’s new:
 
-![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_BEZEL.png)
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_BEZEL1.png)
 
 - New Software Features:
     - Video filters added => enhance visuals with optional filtering
