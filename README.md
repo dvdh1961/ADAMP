@@ -50,6 +50,34 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 
 ## 🚀 Versions
 
+Version 0.6.12.25 x86_64 Windows & Linux
+
+We’re excited to announce a new update of the AdamPlus Emulator, bringing several new features, 
+improvements, and upgrades to both usability and development tools. Here’s what’s new:
+
+- New Software Features:
+    - Video filters added => enhance visuals with optional filtering
+    - Settings paths made absolute => more reliable config behavior across systems
+
+    - Debugger Improvements
+        - The debugger received a major upgrade:
+        - Breakpoints
+        - Symbol support
+        - Step-over function
+        - Copy/Paste in Debugger, Registers, and Memory Dump
+        - Memory editor: double-click any byte in the memory dump to modify it directly
+
+    - Look & Feel Enhancements:
+        - You can now add your own bezel for both ADAM and ColecoVision modes
+        - Perfect for creating your own themed layout or recreating the look of classic hardware.
+
+    - Other Updates:
+        - Various bug fixes and general improvements
+
+As always, feel free to share feedback, report issues, and follow development.
+Thanks for supporting AdamPlus -- enjoy!
+
+
 Version 0.5.12.25 x86_64 Windows & Linux
 
 - To approximate the behavior of the original Coleco Adam as closely as possible, 
