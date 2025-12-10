@@ -226,11 +226,9 @@ unsigned char tms9918_readctrl(void) {
     retval = tms.SR;
     tms.SR &= TMS9918_STAT_5THNUM|TMS9918_STAT_5THSPR;
 
-    //z80_set_irq_line(machine.interrupt, CLEAR_LINE);
 
     return(retval);
 }
-
 // ----------------------------------------------------------------------------------------
 // Compute bitmask of sprites shown in a given scanline.
 // Returns the first sprite to show or -1 if none shown.

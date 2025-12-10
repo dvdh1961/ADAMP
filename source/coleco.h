@@ -48,7 +48,6 @@ enum
     CHRMAP=0,CHRGEN,SPRATTR,SPRGEN,CHRCOL,VRAM, SGMRAM, RAM, ROM, EEPROM, SRAM,CHRMAP2,CHRCOL2,
 };
 
-
 //---------------------------------------------------------------------------
 extern const unsigned char TMS9918A_palette[6*16*3];
 
@@ -109,6 +108,7 @@ extern BYTE coleco_readport(int Address, int *tstates);
 extern int coleco_contend(int Address, int states, int time);
 extern int coleco_do_scanline(void);
 extern void coleco_paddle(void);
+extern void adamnet_write_mapper(BYTE Data);
 
 extern void coleco_setval(BYTE whichaddr, unsigned short addr, BYTE y);
 

@@ -1000,3 +1000,37 @@ byte ChangeDisk(byte N,const char *FileName)
     P = FormatFDI(&Disks[N],FMT_ADMDSK);
     return(!!P);
 }
+
+// Let op: PCBTable[0] is de PCB Command/Status register
+extern byte PCBTable[];
+extern word PCBAddr; // Adres van de PCB in Z80 RAM
+
+// ✨ FIX 2: Implementatie van de ADAMNET I/O Read functie
+extern "C" unsigned char adamnet_read_io(int Address)
+{
+    unsigned char retval = 0xFF; // Standaard Z80 bus idle waarde
+
+    Address &= 0xFF;
+
+    // Poorten 0xE0 t/m 0xE3 worden gebruikt voor het lezen van de AdamNet Status/Data.
+    if (Address >= 0xE0 && Address <= 0xE3)
+    {
+        // ADAMNET HOST ADAPTER STATUS READ (Poort 0xE0)
+        // Dit is de meest kritieke read voor de CP/M BIOS.
+
+        // Lees de status uit PCBTable[0] (PCB_CMD_STAT)
+        retval = PCBTable[0];
+
+        // CRUCIALE FIX: WISSEN VAN DE DATA-IN FULL VLAG NA LEZING!
+        // De Z80 heeft zojuist de status gelezen, en als Bit 0 (Data-In Full) gezet is,
+        // MOET deze gewist worden om de CPU uit een interrupt-loop te halen.
+        PCBTable[0] &= ~0x01; // Wis Bit 0: Data-In Full
+
+        // Als u ook Bit 1 (Data-Out Empty) moet wissen, doe dit hier:
+        // PCBTable[0] |= 0x02; // Zet Bit 1: Data-Out Empty (altijd klaar om te ontvangen)
+    }
+    // Data reads (0xC0-0xC3) worden meestal door WritePCB/ReadPCB afgehandeld,
+    // maar we zorgen ervoor dat de status read de vlaggen wist.
+
+    return retval;
+}

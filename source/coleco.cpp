@@ -43,6 +43,7 @@
 #include "fdidisk.h"
 
 #include "input_bridge.h"
+#include "debug_bridge.h"
 
 // BIOS loader prototype
 static int loadBios(const char *filename, BYTE *memory, int sizerm);
@@ -55,25 +56,37 @@ int breakpoint_count = 0;
 
 void DebugUpdate(void)
 {
-    // --- AANGEPAST ---
-    // NIET MEER DE BRIDGE AANROEPEN.
-    // Lees alleen de simpele C-array. Dit is razendsnel en thread-safe.
     if (!emulator->stop && !emulator->singlestep)
     {
-        // Simpele EXE check
+        uint16_t pc = Z80.pc.w.l;
+
+        // 0) EXECUTE-breakpoints via DebugBridge (EXE / EXE + FLAG)
+        if (DEBUG_BRIDGE.checkExecute(pc)) {
+            qDebug() << "[BP] EXECUTE HIT via DebugBridge at PC="
+                     << QString::number(pc, 16).rightJustified(4, '0');
+            emulator->stop = 1;
+            return;
+        }
+
+        // 1) Complexe post-execution breakpoints (REG, MEM, FLAGS, CLK, ...)
+        if (DEBUG_BRIDGE.checkPostExecutionBreakpoints()) {
+            qDebug() << "[BP] HIT via DebugBridge at PC="
+                     << QString::number(pc, 16).rightJustified(4, '0');
+            emulator->stop = 1;
+            return;
+        }
+
+        // 2) Bestaande simpele execute-breakpoints (C-array) blijven werken
         for (int i = 0; i < breakpoint_count; i++) {
-            if (Z80.pc.w.l == breakpoints[i]) {
+            if (pc == breakpoints[i]) {
                 qDebug() << "[BP] HIT at PC="
-                         << QString::number(Z80.pc.w.l, 16).rightJustified(4, '0')
+                         << QString::number(pc, 16).rightJustified(4, '0')
                          << "idx" << i;
                 emulator->stop = 1;
-                return; // Gevonden, stop met zoeken
+                return;
             }
         }
-        // TODO: Implementeer hier de complexere (REG, MEM, WR) checks
-        // door een complexere C-struct te gebruiken ipv een simpele int-array.
     }
-    // --- EINDE AANPASSING ---
 }
 
 extern "C" void coleco_clear_debug_flags(void)
@@ -146,7 +159,6 @@ static int lastMemoryReadAddrLo = 0, lastMemoryReadAddrHi = 0;
 static int lastMemoryWriteAddrLo = 0, lastMemoryWriteAddrHi = 0;
 static BYTE lastMemoryReadValueLo = 0, lastMemoryReadValueHi = 0;
 static BYTE lastMemoryWriteValueLo = 0, lastMemoryWriteValueHi = 0;
-
 
 //const unsigned char TMS9918A_palette[6*16*3] = { /* ... (palette data blijft hetzelfde) ... */ };
 // 6 banken × 16 kleuren × RGB
@@ -404,8 +416,6 @@ BYTE coleco_loadcart(char *filename)
         // Check magic header for Magecarts if not yet found at beginning (for 64K eeprom roms)
         adrlastbank = (size&~0x3FFF)-0x4000;
 
-        //if (adrlastbank < 0) adrlastbank = 0;
-
         if (p==NULL)
         {
             p = (ROM_Memory[adrlastbank]==0x55)&&(ROM_Memory[adrlastbank+1]==0xAA)? ROM_Memory
@@ -449,6 +459,19 @@ BYTE coleco_loadcart(char *filename)
             memcpy(p+0x4000,ROM_Memory,0x4000);
         }
 
+        if (emulator->cardcrc == 0x62DACF07) {  // CRC van Boxxle
+            BYTE *fixedBank = RAM_Memory + 0x8000;  // vaste 16K bank in RAM
+
+            // Veiligheid: check of er echt een HALT staat
+            if (fixedBank[0x00AA] == 0x76) {       // 0x80AA - 0x8000 = 0x00AA
+                fixedBank[0x00AA] = 0x00;          // NOP
+                qDebug() << "[BOXXLE] Patched HALT at 0x80AA -> NOP";
+            } else {
+                qDebug() << "[BOXXLE] Unexpected opcode at 0x80AA:" << Qt::hex << int(fixedBank[0x00AA]);
+            }
+        }
+
+
     }
     else
     {
@@ -457,9 +480,9 @@ BYTE coleco_loadcart(char *filename)
 
     emulator->romCartridgeType = coleco_megacart ? ROMCARTRIDGEMEGA : ROMCARTRIDGESTD;
 
-    fclose(fRomfile);
     return ROM_LOAD_PASS;
 }
+
 //---------------------------------------------------------------------------
 // update the 16 colors Coleco
 void coleco_setpalette(int palette) {
@@ -514,6 +537,7 @@ void RenderCalcPalette(BYTE *cv_palette_out, unsigned long nbcolors)
     }
     // TODO: Voeg eventueel extra F18A palette berekeningen toe indien nodig
 }
+
 //---------------------------------------------------------------------------
 void coleco_setadammemory(bool resetAdamNet)
 {
@@ -592,8 +616,7 @@ void coleco_setadammemory(bool resetAdamNet)
 
     if (resetAdamNet)  ResetPCB(); // Nodig #include "adamnet.h"
 }
-// --------------------------------------------------------------------------
-
+//---------------------------------------------------------------------------
 void coleco_setupsgm(void)
 {
     // Super DK mag nooit SGM hebben
@@ -695,9 +718,10 @@ void coleco_reset(void)
     }
 
     // Backup-type autodetectie
+    emulator->typebackup = NOBACKUP;
     switch (emulator->cardcrc)
     {
-    case 0x62DACF07: emulator->typebackup = EEP24C256; break;
+    case 0x62DACF07: emulator->typebackup = EEP24C256; break; // Boxxle
     case 0xDDDD1396: emulator->typebackup = EEP24C08;  break;
     case 0xFEE15196:
     case 0x1053F610:
@@ -724,6 +748,13 @@ void coleco_reset(void)
     // CPU reset
     z80_reset();
 
+    // // HACK: Boxxle direct vanaf cart laten starten (skip BIOS "Turn game off")
+    if (emulator->cardcrc == 0x62DACF07 &&
+        emulator->currentMachineType != MACHINEADAM)
+    {
+        Z80.pc.w.l = 0x8021;
+    }
+
     // Vars
     tStatesCount = 0;
 
@@ -741,6 +772,12 @@ void coleco_reset(void)
     } else {
         coleco_setupsgm();           // laat port53/port60 regels bepalen of low 8K BIOS/RAM is
     }
+
+    qDebug() << "[RESET] typebackup=" << emulator->typebackup
+             << "SGM=" << emulator->SGM
+             << "megaMask=0x" << Qt::hex << int(coleco_megacart)
+             << "Map4=" << (void*)MemoryMap[4]
+             << "Map6=" << (void*)MemoryMap[6];
 }
 
 //---------------------------------------------------------------------------
@@ -872,6 +909,8 @@ void coleco_initialise(void)
     memset(ROM_Memory,  0xFF, MAX_CART_SIZE  * 1024);
     memset(RAM_Memory,  0xFF, MAX_RAM_SIZE   * 1024);
     memset(BIOS_Memory, 0xFF, MAX_BIOS_SIZE  * 1024); // ← BIOS vooraf leegmaken
+    // 🔧 NIEUW: EEPROM / SRAM buffer ook “leeg” maken zoals echte 24Cxx (0xFF)
+    memset(SRAM_Memory, 0xFF, MAX_EEPROM_SIZE * 1024);
 
     if (emulator->currentMachineType == MACHINEADAM)
     {
@@ -956,6 +995,9 @@ void megacart_bankswitch(BYTE bank)
     // Only if the bank was changed...
     if (coleco_megabank != bank)
     {
+        qDebug() << "[MEGA] switch to bank" << (int)bank
+                 << " (mask=0x" << Qt::hex << (int)coleco_megacart << ")";
+
         MemoryMap[6] = ROM_Memory + ((unsigned int) bank * 0x4000);
         MemoryMap[7] = MemoryMap[6] + 0x2000;
         coleco_megabank = bank;
@@ -1044,15 +1086,19 @@ void coleco_WriteByte(unsigned int Address, int Data)
     {
         if ((Address == 0xFF90) || (Address == 0xFFA0) || (Address == 0xFFB0))
         {
+            qDebug() << "[BOXXLE] bankswitch write @"
+                     << Qt::hex << Address
+                     << "data=" << Data
+                     << "mask=0x" << int(coleco_megacart);
             megacart_bankswitch((Address>>4) & coleco_megacart);
         }
 
         switch(Address)
         {
-        case 0xFFC0: c24xx_write(c24.Pins&~C24XX_SCL);return;
-        case 0xFFD0: c24xx_write(c24.Pins|C24XX_SCL);return;
-        case 0xFFE0: c24xx_write(c24.Pins&~C24XX_SDA);return;
-        case 0xFFF0: c24xx_write(c24.Pins|C24XX_SDA);return;
+        case 0xFFC0: qDebug() << "[BOXXLE] EEPROM SCL low";c24xx_write(c24.Pins&~C24XX_SCL);return;
+        case 0xFFD0: qDebug() << "[BOXXLE] EEPROM SCL high";c24xx_write(c24.Pins|C24XX_SCL);return;
+        case 0xFFE0: qDebug() << "[BOXXLE] EEPROM SDA low";c24xx_write(c24.Pins&~C24XX_SDA);return;
+        case 0xFFF0: qDebug() << "[BOXXLE] EEPROM SDA high";c24xx_write(c24.Pins|C24XX_SDA);return;
         }
         return; // Belangrijk: return ook als het geen van de cases was
     }
@@ -1075,15 +1121,16 @@ void coleco_writebyte(unsigned int Address, int Data) { // Vanuit Z80
 //---------------------------------------------------------------------------
 BYTE coleco_ReadByte(int Address)
 {
-    // ADAM mag NOOIT de cart-hotspots zien
+    // --- Megacart read-hotspots ---
+    // Bij lezen >= 0xFFC0 eerst bankswitchen,
+    // maar GEEN rare waarden teruggeven
     if (emulator->currentMachineType != MACHINEADAM && coleco_megacart) {
         if (Address >= 0xFFC0) {
             megacart_bankswitch(Address & coleco_megacart);
-            return coleco_megabank;
         }
     }
 
-    // ADAM mag ook geen EEPROM-bitje “kapen”
+    // --- EEPROM data-byte ---
     if (emulator->currentMachineType != MACHINEADAM &&
         ((emulator->typebackup==EEP24C08)||(emulator->typebackup==EEP24C256)) &&
         Address==0xFF80)
@@ -1095,10 +1142,21 @@ BYTE coleco_ReadByte(int Address)
     if (emulator->currentMachineType == MACHINEADAM && PCBTable[Address]) {
         (void)ReadPCB(Address); // side-effect only
     }
+
+    // Uiteindelijk ALTIJD de echte byte uit het geheugen teruggeven
     return *(MemoryMap[Address>>13] + (Address & 0x1FFF));
 }
 //---------------------------------------------------------------------------
-BYTE coleco_getbyte(int Address) { return coleco_ReadByte(Address); } // Debugger
+// Z80 geheugenlees-hook
+BYTE coleco_getbyte(int Address)
+{
+    // 1. Voer EERST de pure hardwarelees-actie uit om de Data te verkrijgen.
+    // De implementatie van coleco_ReadByte moet al de geheugenmapping bevatten.
+    BYTE Data = coleco_ReadByte(Address);
+    return Data;
+}
+//---------------------------------------------------------------------------
+
 BYTE coleco_readoperandbyte(int Address) { return coleco_ReadByte(Address); } // Z80 Operand
 BYTE coleco_readbyte(int Address) { // Vanuit Z80 met logging
     lastMemoryReadAddrLo = lastMemoryReadAddrHi; lastMemoryReadAddrHi = Address;
@@ -1244,11 +1302,20 @@ BYTE coleco_readport(int Address, int * /*tstates*/) // Interne leesfunctie poor
     case 0x99:
         return ReadStatus9918();
 
+    // case 0xA0: // 0xA0 - 0xBF: VDP Read (Video Display Processor)
+    //     if ((Address & 0x01) == 0) // Even addresses: 0xA0, 0xA2... 0xBE (DATA READ)
+    //         return /*(emulator->F18A ? f18a_readdata() :*/ tms9918_readdata(); //);
+    //     else // Odd addresses: 0xA1, 0xA3... 0xBF (STATUS READ)
+    //         return /*(emulator->F18A ? f18a_readctrl() :*/ tms9918_readctrl(); //);
+
     case 0xA0: // 0xA0 - 0xBF: VDP Read (Video Display Processor)
-        if ((Address & 0x01) == 0) // Even addresses: 0xA0, 0xA2... 0xBE (DATA READ)
-            return /*(emulator->F18A ? f18a_readdata() :*/ tms9918_readdata(); //);
-        else // Odd addresses: 0xA1, 0xA3... 0xBF (STATUS READ)
-            return /*(emulator->F18A ? f18a_readctrl() :*/ tms9918_readctrl(); //);
+        if (Address == 0x98 || (Address & 0x01) == 0) // Even addresses: 0x98, 0xA0, 0xA2... (DATA READ)
+            return tms9918_readdata();
+
+        // Odd addresses: 0x99, 0xA1, 0xA3... (STATUS READ)
+        else
+            // Zorg dat tms9918_readctrl() de VBLANK-vlag wist!
+            return tms9918_readctrl();
 
     // case 0xE0: // 0xE0..0xE3 brede controller-reads (A1 = pad)
     // case 0xFC: // smal: pad 1
@@ -1259,6 +1326,15 @@ BYTE coleco_readport(int Address, int * /*tstates*/) // Interne leesfunctie poor
     case 0xE0: // 0xE0..0xFF: Controller 1/2, Sound Write
     case 0xC0: // 0xC0..0xDF: Controller 2
         {
+            if (emulator->currentMachineType == MACHINEADAM)
+            {
+                // *** CRUCIALE FIX VOOR CP/M ***
+                // In ADAM-modus heeft dit bereik een HOGERE prioriteit dan de controllers
+                // en moet het de status/data van de ADAMNET-randapparatuur teruggeven.
+                // Deze functie MOET de AdamNet status-vlaggen wissen na lezing.
+                return adamnet_read_io(Address);
+            }
+
             // Vraag eerst de basis digitale/keypad status op van de keypad-module.
             uint8_t digital_result = coleco_io_read((uint8_t)Address);
 
@@ -1629,6 +1705,7 @@ BYTE coleco_loadstate(char *filename)
     fclose(fstatefile);
     return(1);
 }
+
 // --- Z80 CPU Callbacks ---
 //
 // Deze functies worden AANGEROEPEN DOOR z80.c om te praten
@@ -1647,18 +1724,6 @@ unsigned int cpu_readmem16(unsigned int address)
 void cpu_writemem16(unsigned int address, unsigned int value)
 {
     coleco_writebyte(address, (BYTE)value);
-}
-
-// 8-bit poort-callback
-unsigned char cpu_readport(unsigned int port)
-{
-    return coleco_readport(port, &tstates);
-}
-
-// 8-bit poort-callback
-void cpu_writeport(unsigned int port, unsigned char value)
-{
-    coleco_writeport(port, value, &tstates);
 }
 
 // 16-bit poort-callback (DEZE VEROORZAAKTE DE FOUT)
@@ -1697,6 +1762,76 @@ void coleco_eject_disk(int drive) {
 void coleco_eject_tape(int drive) {
     EjectFDI(&Tapes[drive]);
 }
+
+// 8-bit poort-callback
+unsigned char cpu_readport(unsigned int port)
+{
+    BYTE value = coleco_readport(port, &tstates);
+    // BREAKPOINT CHECK: BP_IO_IN
+    if (DEBUG_BRIDGE.checkIOAccess(BreakpointType::BP_IO_IN, port, value)) {
+        z80_exec = 0;
+    }
+    return value;
+}
+
+// 8-bit poort-callback
+void cpu_writeport(unsigned int port, unsigned char value)
+{
+    // BREAKPOINT CHECK: BP_IO_OUT
+    if (DEBUG_BRIDGE.checkIOAccess(BreakpointType::BP_IO_OUT, port, value)) {
+        z80_exec = 0;
+    }
+
+    coleco_writeport(port, value, &tstates);
+}
+
+// Functie die 1 CPU-stap uitvoert (verondersteld een Z80.c wrapper)
+int coleco_cpu_execute_one_step() {
+    // 1. EXECUTE Breakpoint Check (VOOR de instructie)
+    if (DEBUG_BRIDGE.checkExecute(Z80.pc.w.l)) {
+        z80_exec = 0; // Stop de CPU
+        return 0; // 0 cycles uitgevoerd
+    }
+
+    // Voer de Z80 instructie uit
+    int cycles = z80_do_opcode(); // Dit is de bestaande Z80 executie
+
+    // 2. POST-EXECUTION Breakpoint Check (NA de instructie)
+    // Controleert BP_CLOCK, BP_FLAG_VAL, BP_REG_VAL, BP_MEM_VAL
+    if (DEBUG_BRIDGE.checkPostExecutionBreakpoints()) {
+        z80_exec = 0; // Stop de CPU
+    }
+
+    return cycles;
+}
+
+
+// --- Geheugen- en Poortcallbacks ---
+
+// 8-bit geheugen-callback (READ)
+unsigned char cpu_readbyte(unsigned int address)
+{
+    BYTE value = coleco_getbyte(address);
+
+    // BREAKPOINT CHECK: BP_READ
+    if (DEBUG_BRIDGE.checkMemAccess(BreakpointType::BP_READ, address, value)) {
+        z80_exec = 0;
+    }
+
+    return value;
+}
+
+// 8-bit geheugen-callback (WRITE)
+void cpu_writebyte(unsigned int address, unsigned char value)
+{
+    // BREAKPOINT CHECK: BP_WRITE (voor de write)
+    if (DEBUG_BRIDGE.checkMemAccess(BreakpointType::BP_WRITE, address, value)) {
+        z80_exec = 0;
+    }
+
+    coleco_writebyte(address, (BYTE)value);
+}
+
 
 } // extern "C"
 // --- Einde Z80 Callbacks ---

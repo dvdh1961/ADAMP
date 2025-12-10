@@ -27,6 +27,8 @@
 extern "C" {
 byte ChangeDisk(byte N, const char *FileName);
 byte ChangeTape(byte N, const char *FileName);
+
+extern unsigned char adamnet_read_io(int Address);
 #endif
 
 /** Adam Key Codes *******************************************/
@@ -115,6 +117,7 @@ extern byte PCBTable[];
 extern byte HoldingBuf[];
 extern byte  io_busy, KBDStatus, LastKey, DiskID;
 extern word savedBUF, savedLEN, PCBAddr;
+
 extern "C" void adamnet_force_writer(uint8_t sc);
 
 void adamnet_queue_key(uint8_t key_code);
