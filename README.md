@@ -50,6 +50,36 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 
 ## 🚀 Versions
 
+Version 0.7.01.26 x86_64 Windows & Linux almost in your hands!
+
+We’re excited once again to announce a fresh update of AdamPlus Emulator.
+This release focuses on more control, deeper debugging, and—yes—more columns than ever. Brace yourself.
+
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/T-DOS80.png)
+
+✨ What’s new?
+
+Choose your BIOS
+You decide. No more BIOS dictatorship. Freedom at last.
+
+Extended logging
+More insight, less guesswork. Logs that actually tell you something (and sometimes even tell the truth).
+
+Expanded debugger
+Extra tools for those who like to dissect bits with their morning coffee.
+
+Tape & Disk games now playable
+Thanks to the new Adam Game Mode in the menubar. Click → play → instant nostalgia.
+
+Disk & Tape sounds in CP/M and T-DOS
+Authentic drive noise included. Neighbours not included.
+
+🔥 T-DOS 80 Columns!!!!!
+Yes. Eighty. Columns.
+Text so wide your monitor might need a moment to process it.
+
+---
+
 Version 0.6.12.25 x86_64 Windows & Linux
 
 We’re excited to announce a new update of the AdamPlus Emulator, bringing several new features, 
