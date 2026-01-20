@@ -33,9 +33,9 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 
 ## 💾 Downloads
 
-[![release](https://img.shields.io/badge/Latest%20release-windows64-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.6.12.25/WINDOWS_ADAMP_0.6.12.25.exe)
-[![release](https://img.shields.io/badge/Latest%20release-linux64-blue.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.6.12.25/LINUX_ADAMP_0.6.12.25.zip)
-![Current Release](https://img.shields.io/badge/Version-V0.6.12.25-yellow)
+[![release](https://img.shields.io/badge/Latest%20release-windows64-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.7.01.26/WINDOWS_ADAMP_0.7.01.26.exe)
+[![release](https://img.shields.io/badge/Latest%20release-linux64-blue.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.7.01.26/LINUX_ADAMP_0.7.01.26.zip)
+![Current Release](https://img.shields.io/badge/Version-V0.7.01.26-yellow)
 ![Downloads](https://img.shields.io/badge/dynamic/json?url=https://raw.githubusercontent.com/dvdh1961/ADAMP/main/stats/downloads.json&label=Downloads&query=display_total&color=orange)
 
 [![release](https://img.shields.io/badge/Quick%20review-ADAM+%20Emulator-magenta.svg)](https://youtu.be/vobLE2F9Cc0)
@@ -50,7 +50,7 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 
 ## 🚀 Versions
 
-UPCOMING!! Version 0.7.01.26 x86_64 Windows & Linux almost in your hands!
+Version 0.7.01.26 x86_64 Windows & Linux
 
 We’re excited once again to announce a fresh update of AdamPlus Emulator.
 This release focuses on more control, deeper debugging, and—yes—more columns than ever. Brace yourself.
