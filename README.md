@@ -50,7 +50,7 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 
 ## 🚀 Versions
 
-Version 0.7.01.26 x86_64 Windows & Linux almost in your hands!
+UPCOMING!! Version 0.7.01.26 x86_64 Windows & Linux almost in your hands!
 
 We’re excited once again to announce a fresh update of AdamPlus Emulator.
 This release focuses on more control, deeper debugging, and—yes—more columns than ever. Brace yourself.
