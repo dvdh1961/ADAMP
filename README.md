@@ -60,23 +60,23 @@ This release focuses on more control, deeper debugging, and—yes—more columns
 ✨ What’s new?
 
 Choose your BIOS
-You decide. No more BIOS dictatorship. Freedom at last.
+- You decide. No more BIOS dictatorship. Freedom at last.
 
 Extended logging
-More insight, less guesswork. Logs that actually tell you something (and sometimes even tell the truth).
+- More insight, less guesswork. Logs that actually tell you something (and sometimes even tell the truth).
 
 Expanded debugger
-Extra tools for those who like to dissect bits with their morning coffee.
+- Extra tools for those who like to dissect bits with their morning coffee.
 
 Tape & Disk games now playable
-Thanks to the new Adam Game Mode in the menubar. Click → play → instant nostalgia.
+- Thanks to the new Adam Game Mode in the menubar. Click → play → instant nostalgia.
 
 Disk & Tape sounds in CP/M and T-DOS
-Authentic drive noise included. Neighbours not included.
+- Authentic drive noise included. Neighbours not included.
 
-🔥 T-DOS 80 Columns!!!!!
-Yes. Eighty. Columns.
-Text so wide your monitor might need a moment to process it.
+🔥 T-DOS 80 Columns!!!!! Yes. Eighty. Columns.
+- Text so wide your monitor might need a moment to process it.
+
 
 ---
 
