@@ -60,7 +60,7 @@ This release focuses on more control, deeper debugging, and—yes—more columns
 ✨ What’s new?
 
 Choose your BIOS
-- You decide. No more BIOS dictatorship. Freedom at last.
+- You decide. No more BIOS lock down. Freedom at last.
 
 Extended logging
 - More insight, less guesswork. Logs that actually tell you something (and sometimes even tell the truth).
@@ -75,8 +75,6 @@ Disk & Tape sounds in CP/M and T-DOS
 - Authentic drive noise included. Neighbours not included.
 
 🔥 T-DOS 80 Columns!!!!! Yes. Eighty. Columns.
-- Text so wide your monitor might need a moment to process it.
-
 
 ---
 
