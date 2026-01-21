@@ -3,6 +3,9 @@
 #include <stdint.h>
 #include <QList>
 #include <QString>
+#include "colecocontroller.h"
+
+extern ColecoController* g_controller_instance;
 
 // Gelijk aan de BreakpointType uit EmulTwo (geschat op basis van functionaliteit)
 enum class BreakpointType : uint8_t {
@@ -26,7 +29,12 @@ struct CoreBreakpoint {
 
     // Adres en bereik
     uint32_t address_start = 0x0000;
-    uint32_t address_end = 0xFFFF; // Voor bereikcontrole
+    uint32_t address_end = 0x0000; // Voor bereikcontrole
+
+    // I/O port matching helpers (voor INL/OUTL/INH/OUTH)
+    // Als port_mask != 0, dan matchen we: (port & port_mask) == port_match
+    uint16_t port_mask = 0x0000;
+    uint16_t port_match = 0x0000;
 
     // Waarde/Conditie (Gebruikt voor MEM, RD, WR, IO)
     bool check_value = false;
@@ -63,16 +71,25 @@ class DebugBridge {
 public:
     static DebugBridge& instance();
 
+    // Exact-hit PC (om UI exact op de breakpoint-instructie te laten staan)
+    void setLastBreakPC(uint16_t pc);
+    uint16_t lastBreakPC() const;
+
     // Functies voor de GUI
     void syncBreakpoints(const QList<CoreBreakpoint>& breakpoints);
 
     // Functies voor de CORE (coleco.cpp/z80.c)
     bool checkExecute(uint16_t addr);
     bool checkMemAccess(BreakpointType type, uint16_t addr, uint8_t value);
-    bool checkIOAccess(BreakpointType type, uint16_t port, uint8_t value);
+    bool checkIOAccess(BreakpointType type, uint16_t port, uint8_t value, uint16_t pc_start);
     bool checkPostExecutionBreakpoints();
+    void clearLastBreakPC();
+    void setCurrentOpcodeStartPC(uint16_t pc);
+    uint16_t currentOpcodeStartPC() const;
 
 private:
+    std::atomic<uint16_t> m_lastBreakPC{0};
+    std::atomic<uint16_t> m_currentOpcodeStartPC{0};
     DebugBridge() = default;
     DebugBridge(const DebugBridge&) = delete;
     DebugBridge& operator=(const DebugBridge&) = delete;
@@ -85,7 +102,6 @@ private:
 
     QList<CoreBreakpoint> m_breakpoints;
 
-    // Geoptimaliseerde lijsten voor snelle controle
     QList<CoreBreakpoint> m_executeBreakpoints;
     QList<CoreBreakpoint> m_memAccessBreakpoints;
     QList<CoreBreakpoint> m_ioAccessBreakpoints;
@@ -93,4 +109,14 @@ private:
 };
 
 // CRUCIALE OPLOSSING VOOR COMPILATIEFOUT: Definieert de singleton-alias
+
 #define DEBUG_BRIDGE DebugBridge::instance()
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void debugBridge_checkIOAccess(int type, uint16_t port, uint8_t value, uint16_t pc_start);
+
+#ifdef __cplusplus
+}
+#endif

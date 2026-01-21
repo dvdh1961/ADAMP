@@ -1,6 +1,5 @@
 #pragma once
 #include <stdint.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -10,7 +9,9 @@ extern "C" {
 #define VB_HEIGHT 192
 
 extern uint32_t g_video_frame[VB_WIDTH * VB_HEIGHT];
-extern volatile int g_video_dirty; // 1 als er vers frame klaar staat
+
+void video_set_dirty(int value);
+int  video_get_dirty(void);
 
 // Door de VDP aan te roepen na het tekenen van 1 scanline (optioneel)
 void vb_present_scanline(int y, const uint32_t *argb32_line);

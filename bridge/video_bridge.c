@@ -1,11 +1,27 @@
 #include "video_bridge.h"
+#include <stdatomic.h>
 #include <string.h>
 #include <qglobal.h>
 #include <error.h>
+#if defined(Q_OS_LINUX)
 #include <errno.h>
+#endif
 
 uint32_t g_video_frame[VB_WIDTH * VB_HEIGHT];
-volatile int g_video_dirty = 0;
+
+//atomic_int g_video_dirty = 0;
+static atomic_int g_video_dirty = 0;
+
+void video_set_dirty(int value)
+{
+    atomic_store(&g_video_dirty, value);
+}
+
+int video_get_dirty(void)
+{
+    return atomic_load(&g_video_dirty);
+}
+
 extern int z80_irq_line;
 
 #if defined(Q_OS_LINUX)
