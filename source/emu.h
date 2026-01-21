@@ -39,7 +39,6 @@ class TAdamP {
 public:
     bool NTSC;
     bool PAL;
-    bool F18A;
     uint32_t cardcrc;  // Gebruik hier direct cstdint types
     uint32_t cardsize; // Gebruik hier direct cstdint types
     char romCartridge[1024];
@@ -56,6 +55,7 @@ public:
     char adameos[1024];
     char adamwriter[1024];
     char currentrom[1024]; // Pad naar de huidige ROM
+    bool bios_loaded;
 };
 
 extern TAdamP* emulator; // Externe declaratie voor C++
@@ -74,7 +74,6 @@ struct EmuMachine machine;
 struct TAdamP {
     bool NTSC;
     bool PAL;
-    bool F18A;
     uint32_t cardcrc;  // Gebruik hier direct stdint types
     uint32_t cardsize; // Gebruik hier direct stdint types
     char romCartridge[1024];

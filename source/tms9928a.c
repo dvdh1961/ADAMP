@@ -23,7 +23,6 @@
 #include <string.h>       // C-standaard header voor o.a. memset (vervangt mem.h)
 
 #include "tms9928a.h"
-#include "f18a.h"         // bevat TVW_TMS/TVH_TMS
 #include "video_bridge.h"
 #include "coleco.h"
 #include "z80.h"

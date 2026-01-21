@@ -14,9 +14,10 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  *
- * coleco.c
+ * coleco.cpp
  *
  * Based on emulation by Marat Fayzullin in 2017-2019
+ * Redesign DVdH 2025
 */
 
 
@@ -24,13 +25,14 @@
 #include <cstdlib> // Nodig voor rand(), malloc, free
 #include <cstring> // Nodig voor memset, memcpy, strcmp, memcmp
 #include <QDebug>
+#include <QFile>
+#include <QIODevice>
+#include <QFileInfo>
 
 #include "coleco.h"
 #include "utils.h" // Bevat CRC32Block en pad functies
 
 #include "z80.h"
-#include "f18a.h"
-#include "f18agpu.h"
 #include "psg_bridge.h"
 #include "tms9928a.h"
 #include "c24xx.h"    // Nodig voor EEPROM/SRAM
@@ -41,24 +43,75 @@
 #include "bios_coleco.h"
 #include "bios_adam.h"
 #include "fdidisk.h"
+#include <errno.h>
+#include <string.h>
 
 #include "input_bridge.h"
 #include "debug_bridge.h"
 
+static uint8_t g_tdos80_shadow[80*24];
+static std::atomic<bool> g_tdos80_shadow_dirty{false};
+
 // BIOS loader prototype
 static int loadBios(const char *filename, BYTE *memory, int sizerm);
 static void Out42(BYTE Val);
+// BIOS data komt nu uit colecobios.c en adambios.c (gedeclareerd in coleco.h)
+static int g_cpm_trace = 0;
+#ifdef ADAMP_CPM_TRAP
+static bool g_cpm_memory_active = false;
+#endif
+static bool g_cpm_protection_active = false;
+static int  g_cleanup_phase = 0; // 0=Wachten, 1=Injectie DB, 2=Injectie BF, 3=Klaar
 
 int breakpoints[MAX_BREAKPOINTS];
 int breakpoint_count = 0;
 
-// BIOS data komt nu uit colecobios.c en adambios.c (gedeclareerd in coleco.h)
+extern "C" BYTE adamnet_read_io(int address);
+
+extern "C" void coleco_start_cpm_trace(int count)
+{
+    g_cpm_trace = count;
+}
+
+// 80-column mode flag                                                      │
+BYTE coleco_80col_enabled = 0;  // 0=40-col, 1=80-col                       │
+
+void coleco_clear_debug_flags(void)
+{
+    // Reset cleanup state bij een volledige reset
+    g_cleanup_phase = 0;
+    g_cpm_protection_active = false;
+    qDebug() << "[CPM] Debug flags cleared, cleanup phase reset to 0";
+}
 
 void DebugUpdate(void)
 {
+    // // 1. Normale Breakpoints
+    // if (!emulator->stop && !emulator->singlestep) {
+    //     if (DEBUG_BRIDGE.checkExecute(Z80.pc.w.l)) {
+    //         qDebug() << "[BP] Execute breakpoint hit at PC:" << Qt::hex << Z80.pc.w.l;
+    //         emulator->stop = 1;
+    //         return;
+    //     }
+    //     if (DEBUG_BRIDGE.checkPostExecutionBreakpoints()) {
+    //         qDebug() << "[BP] Post-execution breakpoint hit at PC:" << Qt::hex << Z80.pc.w.l;
+    //         emulator->stop = 1;
+    //         return;
+    //     }
+    //     extern int breakpoint_count;
+    //     for (int i = 0; i < breakpoint_count; i++) {
+    //         if (Z80.pc.w.l == breakpoints[i]) {
+    //             qDebug() << "[BP] Standard breakpoint" << i << "hit at PC:" << Qt::hex << Z80.pc.w.l;
+    //             emulator->stop = 1;
+    //             return;
+    //         }
+    //     }
+    // }
+
     if (!emulator->stop && !emulator->singlestep)
     {
         uint16_t pc = Z80.pc.w.l;
+
 
         // 0) EXECUTE-breakpoints via DebugBridge (EXE / EXE + FLAG)
         if (DEBUG_BRIDGE.checkExecute(pc)) {
@@ -87,18 +140,13 @@ void DebugUpdate(void)
             }
         }
     }
+
 }
 
-extern "C" void coleco_clear_debug_flags(void)
-{
-    if (!emulator) return;
-    emulator->stop      = 0;
-    emulator->singlestep = 0;
-}
 
 //---------------------------------------------------------------------------
 // Globale variabelen (definities)
-BYTE cv_display[TVW_F18A*TVH_F18A];
+BYTE cv_display[TVW_*TVH_];
 BYTE cv_palette[16*4*3];
 int cv_pal32[16*4];
 
@@ -151,6 +199,19 @@ FDIDisk Tapes[MAX_TAPES] = {};
 BYTE RAMPages = 2;     // Standaard 2 pagina's = 128KB expansie (naast de 64KB basis)
 BYTE RAMPage = 0;      // Huidig geselecteerde Expansion RAM pagina (0 tot RAMPages-1)
 BYTE RAMMask = 0xFF;   // Masker voor RAMPages (0xFF om alle bits te maskeren voor de modulo-actie)
+
+static volatile bool s_colecoBiosExternal = false;
+static volatile bool s_eosBiosExternal = false;
+static volatile bool s_writerBiosExternal = false;
+
+static const char* s_external_coleco_bios_path = NULL;
+static const char* s_external_eos_bios_path = NULL;
+static const char* s_external_writer_bios_path = NULL;
+
+// De status van de geladen BIOS-bestanden.
+// Index 0: Coleco/OS7; 1: EOS; 2: Writer.
+// Gebruik int (0=Internal/Fail, 1=External/Success) voor stabiele communicatie.
+int g_bios_status_int[3] = {0, 0, 0};
 
 static BYTE idleDataBus = 0xFF;
 
@@ -206,10 +267,10 @@ unsigned short coleco_gettmsaddr(BYTE whichaddr, BYTE mode, BYTE y)
     switch (whichaddr)
     {
     case CHRMAP:
-        result = emulator->F18A ? f18a.ChrTab : (unsigned short)(tms.ChrTab-VDP_Memory); // Cast naar ushort
+        result = (unsigned short)(tms.ChrTab-VDP_Memory); // Cast naar ushort
         break;
     case CHRGEN:
-        result = emulator->F18A ? f18a.ChrGen : (unsigned short)(tms.ChrGen-VDP_Memory); // Cast naar ushort
+        result = (unsigned short)(tms.ChrGen-VDP_Memory); // Cast naar ushort
         if ((mode == 2) && (y>= 0x80) )
         {
             switch (tms.VR[4]&3) {
@@ -225,7 +286,7 @@ unsigned short coleco_gettmsaddr(BYTE whichaddr, BYTE mode, BYTE y)
         }
         break;
     case CHRCOL:
-        result = emulator->F18A ? f18a.ColTab : (unsigned short)(tms.ColTab-VDP_Memory); // Cast naar ushort
+        (unsigned short)(tms.ColTab-VDP_Memory); // Cast naar ushort
         if ((mode == 2) && (y>= 0x80) )
         {
             switch (tms.VR[3]&0x60) {
@@ -241,19 +302,19 @@ unsigned short coleco_gettmsaddr(BYTE whichaddr, BYTE mode, BYTE y)
         }
         break;
     case SPRATTR:
-        result = emulator->F18A ? f18a.SprTab : (unsigned short)(tms.SprTab-VDP_Memory); // Cast naar ushort
+        result = (unsigned short)(tms.SprTab-VDP_Memory); // Cast naar ushort
         break;
     case SPRGEN:
-        result = emulator->F18A ? f18a.SprGen : (unsigned short)(tms.SprGen-VDP_Memory); // Cast naar ushort
+        result = (unsigned short)(tms.SprGen-VDP_Memory); // Cast naar ushort
         break;
     case VRAM:
         result = 0;
         break;
     case CHRMAP2:
-        result = f18a.ChrTab2; // Alleen relevant voor F18A
+        result = 0;
         break;
     case CHRCOL2:
-        result = f18a.ColTab2; // Alleen relevant voor F18A
+        result = 0;
         break;
     }
 
@@ -270,11 +331,11 @@ BYTE coleco_gettmsval(BYTE whichaddr, unsigned short addr, BYTE mode, BYTE y)
     switch (whichaddr)
     {
     case CHRMAP:
-        base_addr = emulator->F18A ? f18a.ChrTab : (unsigned short)(tms.ChrTab-VDP_Memory);
+        base_addr = (unsigned short)(tms.ChrTab-VDP_Memory);
         result = VDP_Memory[base_addr + addr];
         break;
     case CHRGEN:
-        base_addr = emulator->F18A ? f18a.ChrGen : (unsigned short)(tms.ChrGen-VDP_Memory);
+        base_addr = (unsigned short)(tms.ChrGen-VDP_Memory);
         switch(mode) {
         case 0:
         case 1:
@@ -292,10 +353,9 @@ BYTE coleco_gettmsval(BYTE whichaddr, unsigned short addr, BYTE mode, BYTE y)
         result = VDP_Memory[base_addr + addr];
         break;
     case CHRCOL:
-        base_addr = emulator->F18A ? f18a.ColTab : (unsigned short)(tms.ColTab-VDP_Memory);
-        if (!emulator->F18A) {
+        base_addr = (unsigned short)(tms.ColTab-VDP_Memory);
             switch(mode) {
-            case 0: case 1: addr>>=3; break; // Correctie: delen door 8 voor mode 0/1? Origineel was 6
+            case 0: case 1: addr>>=3; break;
             case 2:
                 if (y>= 0x80){
                     switch (tms.VR[3]&0x60) {
@@ -306,15 +366,14 @@ BYTE coleco_gettmsval(BYTE whichaddr, unsigned short addr, BYTE mode, BYTE y)
                 }
                 break;
             }
-        }
         result = VDP_Memory[base_addr + addr];
         break;
     case SPRATTR:
-        base_addr = emulator->F18A ? f18a.SprTab : (unsigned short)(tms.SprTab-VDP_Memory);
+        base_addr = (unsigned short)(tms.SprTab-VDP_Memory);
         result = VDP_Memory[base_addr + addr];
         break;
     case SPRGEN:
-        base_addr = emulator->F18A ? f18a.SprGen : (unsigned short)(tms.SprGen-VDP_Memory);
+        base_addr = (unsigned short)(tms.SprGen-VDP_Memory);
         result = VDP_Memory[base_addr + addr];
         break;
     case VRAM:
@@ -488,7 +547,6 @@ BYTE coleco_loadcart(char *filename)
 void coleco_setpalette(int palette) {
     int index, idxpal;
 
-    if (emulator->F18A==0) { // Gebruik bool direct
         idxpal=palette*3*16;
         for (index=0;index<16*3;index+=3) {
             cv_palette[index] = TMS9918A_palette[idxpal+index];
@@ -496,22 +554,16 @@ void coleco_setpalette(int palette) {
             cv_palette[index+2] = TMS9918A_palette[idxpal+index+2];
         }
         RenderCalcPalette(cv_palette,16);
-    }
 }
 ///---------------------------------------------------------------------------
 // 0 = Coleco/Phoenix, 1 = ADAM
 void coleco_set_machine_type(int isAdam)
 {
-    // EmulTwo gebruikt emulator->currentMachineType en checkt overal tegen MACHINEADAM.
-    // Elke waarde ≠ MACHINEADAM wordt als "Coleco" behandeld.
-    // We zetten expliciet naar MACHINEADAM of naar 0 (Coleco).
     if (isAdam) {
         emulator->currentMachineType = MACHINEADAM;
     } else {
-        emulator->currentMachineType = 0; // Coleco (elke niet-MACHINEADAM is Coleco)
+        emulator->currentMachineType = MACHINECOLECO;
     }
-    // Let op: géén reset hier — bij opstart wil je dit vóór coleco_initialise() zetten.
-    // Bij runtime switch doen we hard reset via de controller (zie hieronder).
 }
 
 //---------------------------------------------------------------------------
@@ -535,7 +587,6 @@ void RenderCalcPalette(BYTE *cv_palette_out, unsigned long nbcolors)
         // Creëer een 32-bit integer in 0x00RRGGBB formaat
         cv_pal32[i] = (r << 16) | (g << 8) | b;
     }
-    // TODO: Voeg eventueel extra F18A palette berekeningen toe indien nodig
 }
 
 //---------------------------------------------------------------------------
@@ -543,8 +594,16 @@ void coleco_setadammemory(bool resetAdamNet)
 {
     if (emulator->currentMachineType != MACHINEADAM) return;
 
-    // ... (Logica voor MemoryMap blijft hetzelfde) ...
-    // Configure lower 32K of memory
+    // NIEUW: Bereken de basis-offset voor Exp. RAM als deze geselecteerd is
+    // RAMPage wordt gezet door Out42. 0xFF is de marker voor een ongeldige/niet-bestaande pagina.
+    unsigned int exp_ram_offset = 0;
+    if (RAMPage != 0xFF) {
+        // 0x10000 (64KB) is de start van de expansie RAM na de 64KB basis
+        // (RAMPage is 0, 1, 2, ... voor de 64KB blokken)
+        exp_ram_offset = 0x10000 + ((unsigned int)RAMPage * 0x10000);
+    }
+
+    // Configure lower 32K of memory (0x0000 - 0x7FFF)
     if ((coleco_port60 & 0x03) == 0x00) // WRITER/EOS ROM
     {
         adam_ram_lo = 0; adam_ram_lo_exp = 0;
@@ -559,21 +618,36 @@ void coleco_setadammemory(bool resetAdamNet)
         MemoryMap[0] = RAM_Memory + 0x0000; MemoryMap[1] = RAM_Memory + 0x2000;
         MemoryMap[2] = RAM_Memory + 0x4000; MemoryMap[3] = RAM_Memory + 0x6000;
     }
+    // Expanded RAM (Cruciale Fix: Gebruik exp_ram_offset)
+    else if ((coleco_port60 & 0x03) == 0x02)
+    {
+        adam_128k_mode = 1; adam_ram_lo = 0; adam_ram_lo_exp = 1;
+        if (RAMPage != 0xFF) {
+            MemoryMap[0] = RAM_Memory + exp_ram_offset + 0x0000;
+            MemoryMap[1] = RAM_Memory + exp_ram_offset + 0x2000;
+            MemoryMap[2] = RAM_Memory + exp_ram_offset + 0x4000;
+            MemoryMap[3] = RAM_Memory + exp_ram_offset + 0x6000;
+        } else {
+            // Expansie RAM niet aanwezig of ongeldige pagina gekozen
+            MemoryMap[0] = MemoryMap[1] = MemoryMap[2] = MemoryMap[3] = RAM_Memory;
+        }
+    }
     else if ((coleco_port60 & 0x03) == 0x03) // Coleco BIOS + RAM
     {
         adam_ram_lo = 1; adam_ram_lo_exp = 0;
         MemoryMap[0] = BIOS_Memory + 0xA000; MemoryMap[1] = RAM_Memory + 0x2000;
         MemoryMap[2] = RAM_Memory + 0x4000; MemoryMap[3] = RAM_Memory + 0x6000;
     }
-    else // Expanded RAM
+    // Niets anders bestaat (Val door naar standaard RAM)
+    else
     {
-        adam_128k_mode = 1; adam_ram_lo = 0; adam_ram_lo_exp = 1;
-        MemoryMap[0] = RAM_Memory + 0x10000; MemoryMap[1] = RAM_Memory + 0x12000;
-        MemoryMap[2] = RAM_Memory + 0x14000; MemoryMap[3] = RAM_Memory + 0x16000;
+        adam_ram_lo = 0; adam_ram_lo_exp = 0;
+        MemoryMap[0] = RAM_Memory + 0x0000; MemoryMap[1] = RAM_Memory + 0x2000;
+        MemoryMap[2] = RAM_Memory + 0x4000; MemoryMap[3] = RAM_Memory + 0x6000;
     }
 
-    // Configure upper 32K of memory
-    // -> Onboard RAM
+    // Configure upper 32K of memory (0x8000 - 0xFFFF)
+    // -> Onboard RAM (case 0x00)
     if ((coleco_port60 & 0x0C) == 0x00)
     {
         adam_ram_hi = 1;
@@ -583,38 +657,53 @@ void coleco_setadammemory(bool resetAdamNet)
         MemoryMap[6] = RAM_Memory + 0xC000;
         MemoryMap[7] = RAM_Memory + 0xE000;
     }
-    // -> Expanded RAM
+    // -> Expanded ROM (case 0x04) is niet geïmplementeerd in deze code, negeer.
+    // -> Expanded RAM (Cruciale Fix: Gebruik exp_ram_offset)
     else if ((coleco_port60 & 0x0C) == 0x08)
     {
         adam_128k_mode = 1;
         adam_ram_hi = 0;
         adam_ram_hi_exp = 1;
-        MemoryMap[4] = RAM_Memory + 0x18000;
-        MemoryMap[5] = RAM_Memory + 0x1A000;
-        MemoryMap[6] = RAM_Memory + 0x1C000;
-        MemoryMap[7] = RAM_Memory + 0x1E000;
+        if (RAMPage != 0xFF) {
+            MemoryMap[4] = RAM_Memory + exp_ram_offset + 0x8000;
+            MemoryMap[5] = RAM_Memory + exp_ram_offset + 0xA000;
+            MemoryMap[6] = RAM_Memory + exp_ram_offset + 0xC000;
+            MemoryMap[7] = RAM_Memory + exp_ram_offset + 0xE000;
+        } else {
+            // Expansie RAM niet aanwezig of ongeldige pagina gekozen
+            MemoryMap[4] = MemoryMap[5] = MemoryMap[6] = MemoryMap[7] = RAM_Memory + 0x8000;
+        }
+    }
+    // -> Cartridge ROM (case 0x0C)
+    else if ((coleco_port60 & 0x0C) == 0x0C)
+    {
+        adam_ram_hi = 0;
+        adam_ram_hi_exp = 0;
+        // Gebruik de bestaande MegaCart logica voor slot 4-7 mapping
+        MemoryMap[4] = RAM_Memory + 0x8000; // Cartridge is gemapt op 0x8000 in RAM_Memory
+        MemoryMap[5] = RAM_Memory + 0xA000;
+        MemoryMap[6] = RAM_Memory + 0xC000;
+        MemoryMap[7] = RAM_Memory + 0xE000;
     }
     // Nothing else exists so just return 0xFF
     else
     {
         adam_ram_hi = 0;
         adam_ram_hi_exp = 0;
+        MemoryMap[4] = RAM_Memory + 0x8000;
+        MemoryMap[5] = RAM_Memory + 0xA000;
+        MemoryMap[6] = RAM_Memory + 0xC000;
+        MemoryMap[7] = RAM_Memory + 0xE000;
     }
 
-    // qDebug() << "[MAP] ADAM port60=0x" << Qt::hex << int(coleco_port60)
-    //          << " Map0->" << (void*)MemoryMap[0]
-    //          << " (expect BIOS_Memory+0x0000)";
+    uint16_t pc = Z80.pc.w.l;
+    if (pc >= 0xC800 && pc < 0xCC00) {
+        // CP/M loader + stack lives in C000..FFFF -> force it to RAM to keep stack stable
+        MemoryMap[6] = RAM_Memory + 0xC000;
+        MemoryMap[7] = RAM_Memory + 0xE000;
+    }
 
-    // qDebug().noquote()
-    //     << "[BASE] BIOS=" << static_cast<void*>(BIOS_Memory)
-    //     << " RAM=" << static_cast<void*>(RAM_Memory);
-
-    // qDebug().noquote()
-    //     << "[MAP] port60=" << Qt::hex << int(coleco_port60)
-    //     << " Map0->" << static_cast<void*>(MemoryMap[0])
-    //     << " (expect BIOS+0x0000 when port60&3==0)";
-
-    if (resetAdamNet)  ResetPCB(); // Nodig #include "adamnet.h"
+    if (resetAdamNet)  ResetPCB();
 }
 //---------------------------------------------------------------------------
 void coleco_setupsgm(void)
@@ -673,19 +762,17 @@ void coleco_reset(void)
     MemoryMap[6] = RAM_Memory + 0xC000;
     MemoryMap[7] = RAM_Memory + 0xE000;
 
-    // Coleco: zorg dat BIOS in RAM staat voor hacks (CPU fetcht straks uit BIOS_Memory)
     if (emulator->currentMachineType != MACHINEADAM)
     {
-        // ⬇️ Gebruik de BIOS die je eerder al in BIOS_Memory hebt geladen
-        memcpy(RAM_Memory, BIOS_Memory, 0x2000);                  // CHANGED
+        memcpy(RAM_Memory, BIOS_Memory, 0x2000);
 
         // Hacks (50/60Hz + nodelay)
         RAM_Memory[0x0069] = emulator->hackbiospal ? 50 : 60;
         if (emulator->biosnodelay) {
-            RAM_Memory[159*32+17] = 0x00; // NOP
-            RAM_Memory[159*32+18] = 0x00; // NOP
-            RAM_Memory[159*32+19] = 0x00; // NOP
-        }
+            RAM_Memory[159*32+17] = 0x00;
+            RAM_Memory[159*32+18] = 0x00;
+            RAM_Memory[159*32+19] = 0x00;
+         }
     }
 
     // Randomize 0x6000-0x7FFF (NetPlay-consistentie); ok om te laten
@@ -696,7 +783,7 @@ void coleco_reset(void)
 
     sgm_enable     = 0;
     sgm_firstwrite = 1;
-    sgm_low_addr   = 0xFFFF;   // CHANGED: 0xFFFF = “BIOS actief” marker i.p.v. 0x2000
+    sgm_low_addr   = 0xFFFF;
     sgm_neverenable= 0;
 
     // Init SGM/ADAM-poorten
@@ -709,12 +796,10 @@ void coleco_reset(void)
     {
         adam_ram_lo = adam_ram_hi = adam_ram_lo_exp = adam_ram_hi_exp = 0;
         adam_128k_mode = 0; // 64K basis
-        // Nog NIET mappen hier; doen we onderaan één keer met resetAdamNet=true
     }
     else
     {
-        // Coleco start uit BIOS_Memory @ 0000-1FFF
-        MemoryMap[0] = BIOS_Memory + 0x0000;                      // CONFIRM
+        MemoryMap[0] = BIOS_Memory + 0x0000;
     }
 
     // Backup-type autodetectie
@@ -732,9 +817,8 @@ void coleco_reset(void)
     }
 
     // VDP reset
-    if (emulator->F18A) f18a_reset(); else tms9918_reset();
+    tms9918_reset();
     tms.ScanLines = emulator->NTSC ? TMS9918_LINES : TMS9929_LINES;
-    if (emulator->F18A && f18a.Row30) tms.ScanLines += 27;
 
     // PSG’s
     sn76489_init(Clock, SampleRate);
@@ -745,15 +829,7 @@ void coleco_reset(void)
         c24xx_reset(SRAM_Memory, emulator->typebackup==EEP24C08 ? C24XX_24C08 : C24XX_24C256);
     }
 
-    // CPU reset
     z80_reset();
-
-    // // HACK: Boxxle direct vanaf cart laten starten (skip BIOS "Turn game off")
-    if (emulator->cardcrc == 0x62DACF07 &&
-        emulator->currentMachineType != MACHINEADAM)
-    {
-        Z80.pc.w.l = 0x8021;
-    }
 
     // Vars
     tStatesCount = 0;
@@ -772,17 +848,12 @@ void coleco_reset(void)
     } else {
         coleco_setupsgm();           // laat port53/port60 regels bepalen of low 8K BIOS/RAM is
     }
-
-    qDebug() << "[RESET] typebackup=" << emulator->typebackup
-             << "SGM=" << emulator->SGM
-             << "megaMask=0x" << Qt::hex << int(coleco_megacart)
-             << "Map4=" << (void*)MemoryMap[4]
-             << "Map6=" << (void*)MemoryMap[6];
 }
 
 //---------------------------------------------------------------------------
 void coleco_reset_and_restart_bios()
 {
+
     // 1) Defaults per machine
     if (emulator->currentMachineType == MACHINEADAM) {
         // ADAM: geen SGM; memory wordt door 0x60 bits gestuurd
@@ -817,9 +888,6 @@ void coleco_reset_and_restart_bios()
         // Forceer bank her-evaluatie
         coleco_megabank = 199;
         megacart_bankswitch(0); // Zet bank 0 op 0x8000
-
-        //MemoryMap[6] = ROM_Memory + ((coleco_megasize-1)<<14);
-        //MemoryMap[7] = MemoryMap[6] + 0x2000;
     }
     else
     {
@@ -827,27 +895,20 @@ void coleco_reset_and_restart_bios()
         {
             coleco_setupsgm();
         }        // Standaard 32K cart mapping
-        // MemoryMap[4] = ROM_Memory + 0x0000;
-        // MemoryMap[5] = ROM_Memory + 0x2000;
-        // MemoryMap[6] = ROM_Memory + 0x4000;
-        // MemoryMap[7] = ROM_Memory + 0x6000;
     }
 
-    // --- VOEG DIT BLOK TOE ---
-    // De VDP (en F18A) MOET OOK gereset worden. Anders start
-    // de Adam BIOS terwijl de VDP nog in Coleco-modus staat.
-    if (emulator->F18A) f18a_reset(); else tms9918_reset();
+    tms9918_reset();
     tms.ScanLines = emulator->NTSC ? TMS9918_LINES : TMS9929_LINES;
-    if (emulator->F18A && f18a.Row30) tms.ScanLines += 27;
-    // --- EINDE TOEVOEGING ---
 
     z80_reset();
 }
 //---------------------------------------------------------------------------
-// coleco.h:  extern void coleco_hardreset(void);
-
 void coleco_hardreset(void)
 {
+    qDebug().noquote() << QString("[RESET] CORE HARDRESET, PC=%1 SP=%2 cpm=%3")
+        .arg(Z80.pc.w.l, 4, 16, QChar('0'))
+        .arg(Z80.sp.w.l, 4, 16, QChar('0'));
+
     // 1) Maak de cartbuffer “open bus”: 0xFF
     memset(ROM_Memory, 0xFF, MAX_CART_SIZE * 1024);   // 512 KiB max. cartsize
 
@@ -856,132 +917,210 @@ void coleco_hardreset(void)
     coleco_megasize = 2;   // standaard 32 KiB mapping (veilig default)
     coleco_megabank = 0;
 
-    // 3) (Optioneel) reset UI/state info als je ze hebt
-    //    (comment weg als je die velden niet in jouw build hebt)
-    // emulator->cardsize          = 0;
-    // emulator->cardcrc           = 0;
-    // emulator->romCartridgeType  = ROMCARTRIDGENONE;
-
-    // 4) Re-map ROM-gebied (0x8000-0xFFFF) naar onze (lege) ROM_Memory
+    // 3) Re-map ROM-gebied (0x8000-0xFFFF) naar onze (lege) ROM_Memory
     //    Slots 4..7 zijn respectievelijk 0x8000, 0xA000, 0xC000, 0xE000
     MemoryMap[4] = ROM_Memory + 0x0000;
     MemoryMap[5] = ROM_Memory + 0x2000;
     MemoryMap[6] = ROM_Memory + 0x4000;
     MemoryMap[7] = ROM_Memory + 0x6000;
 
-    // 5) (Aanrader) CPU en VDP netjes resetten zodat BIOS meteen beeld kan geven
+    // 4) (Aanrader) CPU en VDP netjes resetten zodat BIOS meteen beeld kan geven
     //    en de jump niet in “oude” cartcode terechtkomt.
     //    Als je “BIOS only” wil laten draaien:
     z80_reset();
     tms9918_reset();
-    //coleco_reset_and_restart_bios();  // zet BIOS op 0x0000 + reset VDP/CPU/PSG
+    coleco_reset_and_restart_bios();  // zet BIOS op 0x0000 + reset VDP/CPU/PSG
 }
 
 //---------------------------------------------------------------------------
+static int bios_external_ok(const char* path, int needBytes)
+{
+    if (!path || !path[0]) return 0;
 
-// Helper for loading BIOS files (minimal version without VCL)
+    FILE* f = fopen(path, "rb");
+    if (!f) return 0;
+
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fclose(f);
+
+    return (sz >= needBytes) ? 1 : 0;
+}
+
+// Altijd alle 3 controleren, onafhankelijk van machine type
+void coleco_probe_bios_status_all(void)
+{
+    // 0=coleco/os7 (8KB), 1=eos (8KB), 2=writer (32KB)
+    g_bios_status_int[0] = bios_external_ok(s_external_coleco_bios_path, 0x2000);
+    g_bios_status_int[1] = bios_external_ok(s_external_eos_bios_path,    0x2000);
+    g_bios_status_int[2] = bios_external_ok(s_external_writer_bios_path, 0x8000);
+
+    // optioneel: sync je flags
+    s_colecoBiosExternal = (g_bios_status_int[0] != 0);
+    s_eosBiosExternal    = (g_bios_status_int[1] != 0);
+    s_writerBiosExternal = (g_bios_status_int[2] != 0);
+}
+//---------------------------------------------------------------------------
+
 int loadBios(const char *filename, BYTE *memory, int sizerm)
 {
-    FILE *fbios = fopen(filename,"rb");
-    if (!fbios) return 0;
+    if (!filename || !filename[0]) {
+        qWarning() << "[BIOS] loadBios: empty filename";
+        return 0;
+    }
 
-    size_t bytes_read = fread((void*)memory, 1, sizerm, fbios);
+  //  qDebug() << "[BIOS] loadBios: trying:" << filename << "need bytes:" << sizerm;
+
+    FILE *fbios = fopen(filename, "rb");
+    if (!fbios) {
+        qWarning() << "[BIOS] loadBios: fopen FAILED for" << filename
+                   << "errno=" << errno << "(" << strerror(errno) << ")";
+        return 0;
+    }
+
+    // File size debug
+    fseek(fbios, 0, SEEK_END);
+    long fsize = ftell(fbios);
+    fseek(fbios, 0, SEEK_SET);
+  //  qDebug() << "[BIOS] loadBios: file size =" << fsize;
+
+    size_t bytes_read = fread((void*)memory, 1, (size_t)sizerm, fbios);
     fclose(fbios);
 
-    return (bytes_read == (size_t)sizerm); // Return 1 bij succes
+  //  qDebug() << "[BIOS] loadBios: bytes_read =" << (long long)bytes_read;
+
+    if (bytes_read != (size_t)sizerm) {
+        qWarning() << "[BIOS] loadBios: READ SIZE MISMATCH. Expected" << sizerm
+                   << "got" << (long long)bytes_read;
+        return 0;
+    }
+
+    return 1;
 }
-
 //---------------------------------------------------------------------------
-
-void coleco_initialise(void)
+static void loadSingleBios(const char* externalPath,
+                           const unsigned char* internalData,
+                           size_t size,
+                           BYTE* dest,
+                           const char* name,
+                           int index)
 {
-    int i;
+    // Default: internal
+    g_bios_status_int[index] = 0;
 
+    const bool hasPath = (externalPath && externalPath[0] != '\0');
+    const QString extPath = QString::fromLocal8Bit(externalPath);
+    QFileInfo fi(extPath);
+
+    bool externalValid = false;
+    //qint64 extSize = -1;
+
+    if (hasPath) {
+        //extSize = fi.exists() ? fi.size() : -1;
+        externalValid = fi.exists() && fi.isFile() && (fi.size() >= (qint64)size);
+        g_bios_status_int[index] = externalValid ? 1 : 0;
+    }
+
+    // --- extern Loaded ---
+    if (externalValid) {
+        if (loadBios(externalPath, dest, (int)size))
+          {
+            qDebug() << "[BIOS] USE External" << fi.fileName() << "ROM.";
+
+            // flags optioneel
+            if (index == 0) s_colecoBiosExternal = true;
+            if (index == 1) s_eosBiosExternal    = true;
+            if (index == 2) s_writerBiosExternal = true;
+            return;
+          }
+        qWarning() << "[BIOS] FOUT: Extern bestand leek geldig, maar loadBios faalde voor" << name
+                   << "(permissions/lock/read?).";
+    }
+    // --- intern loaded ---
+    if (!externalValid && internalData) {
+        memcpy(dest, internalData, size);
+        qDebug() << "[BIOS] USE Internal" << name << "ROM.";
+    }
+
+    // Flags resetten (optioneel)
+    if (index == 0) s_colecoBiosExternal = false;
+    if (index == 1) s_eosBiosExternal    = false;
+    if (index == 2) s_writerBiosExternal = false;
+
+    //qDebug() << "[BIOS] Controle:" << name << "startbyte=0x" << Qt::hex << (int)dest[0];
+}
+//---------------------------------------------------------------------------
+void coleco_load_bios(void)
+{
+    // 0) Reset ALLE status (source of truth)
+    g_bios_status_int[0] = 0; // Coleco / OS7
+    g_bios_status_int[1] = 0; // EOS
+    g_bios_status_int[2] = 0; // Writer
+
+    // (optioneel, maar handig als je elders nog die flags gebruikt)
+    s_colecoBiosExternal = false;
+    s_eosBiosExternal    = false;
+    s_writerBiosExternal = false;
+
+    emulator->bios_loaded = false;
+
+    // 1) MEMORY CLEAR
+    memset(BIOS_Memory, 0xFF, MAX_BIOS_SIZE   * 1024);
+    memset(SRAM_Memory, 0xFF, MAX_EEPROM_SIZE * 1024);
+
+    // 2) BIOS LAAD LOGICA
+    if (emulator->currentMachineType == MACHINEADAM)
+    {
+        // OS7 (8KB, 0xA000), Index 0
+        loadSingleBios(s_external_coleco_bios_path, colecobios_rom, 0x2000,
+                       BIOS_Memory + 0xA000, "COLECO / OS7", 0);
+
+        // EOS (8KB, 0x8000), Index 1
+        loadSingleBios(s_external_eos_bios_path, adambios_eos, 0x2000,
+                       BIOS_Memory + 0x8000, "EOS", 1);
+
+        // WRITER (32KB, 0x0000), Index 2
+        loadSingleBios(s_external_writer_bios_path, adambios_writer, 0x8000,
+                       BIOS_Memory + 0x0000, "WRITER", 2);
+
+        // Als interne ROM's bestaan, is er altijd een BIOS aanwezig (extern of fallback intern)
+        emulator->bios_loaded = true;
+    }
+    else
+    {
+        // COLECOVISION BIOS (8KB), Index 0
+        loadSingleBios(s_external_coleco_bios_path, colecobios_rom, 0x2000,
+                       BIOS_Memory, "Coleco", 0);
+
+        emulator->bios_loaded = true;
+    }
+
+    // 3) Sync (optioneel) flags met de échte status-array
+    s_colecoBiosExternal = (g_bios_status_int[0] != 0);
+    s_eosBiosExternal    = (g_bios_status_int[1] != 0);
+    s_writerBiosExternal = (g_bios_status_int[2] != 0);
+
+}
+//---------------------------------------------------------------------------
+void coleco_base_init(void)
+{
     z80_init();
     tStatesCount = 0;
-
     coleco_megasize = 2;
     coleco_megacart = 0;
     emulator->romCartridgeType = ROMCARTRIDGENONE;
 
-    if (emulator->F18A) f18agpu_init();
-
     memset(ROM_Memory,  0xFF, MAX_CART_SIZE  * 1024);
     memset(RAM_Memory,  0xFF, MAX_RAM_SIZE   * 1024);
-    memset(BIOS_Memory, 0xFF, MAX_BIOS_SIZE  * 1024); // ← BIOS vooraf leegmaken
-    // 🔧 NIEUW: EEPROM / SRAM buffer ook “leeg” maken zoals echte 24Cxx (0xFF)
-    memset(SRAM_Memory, 0xFF, MAX_EEPROM_SIZE * 1024);
+    //memset(BIOS_Memory, 0xFF, MAX_BIOS_SIZE  * 1024); // ← BIOS vooraf leegmaken
+    //memset(SRAM_Memory, 0xFF, MAX_EEPROM_SIZE * 1024);
 
-    if (emulator->currentMachineType == MACHINEADAM)
-    {
-        // --- COLECO.ROM (OS7) in BIOS @ 0xA000..0xBFFF (8KB) ---
-        if (strcmp(emulator->colecobios, "Internal") != 0)
-        {
-            if (!loadBios(emulator->colecobios, BIOS_Memory + 0xA000, 0x2000))
-                memcpy(BIOS_Memory + 0xA000, colecobios_rom, 0x2000);
-        }
-        else
-        {
-            memcpy(BIOS_Memory + 0xA000, colecobios_rom, 0x2000);
-        }
+    //coleco_load_bios();
 
-        // --- EOS.ROM (ADAM EOS) in BIOS @ 0x8000..0x9FFF (8KB) ---
-        if (strcmp(emulator->adameos, "Internal") != 0)
-        {
-            if (!loadBios(emulator->adameos, BIOS_Memory + 0x8000, 0x2000))
-                memcpy(BIOS_Memory + 0x8000, adambios_eos, 0x2000);
-        }
-        else
-        {
-            memcpy(BIOS_Memory + 0x8000, adambios_eos, 0x2000);
-        }
-
-        // --- WRITER.ROM (SmartWriter) in BIOS @ 0x0000..0x7FFF (32KB) ---
-        if (strcmp(emulator->adamwriter, "Internal") != 0)
-        {
-            if (!loadBios(emulator->adamwriter, BIOS_Memory + 0x0000, 0x8000))
-                memcpy(BIOS_Memory + 0x0000, adambios_writer, 0x8000);
-        }
-        else
-        {
-            memcpy(BIOS_Memory + 0x0000, adambios_writer, 0x8000);
-        }
-
-        memcpy(RAM_Memory + 0x0000, BIOS_Memory + 0x0000, 0x8000);
-
-    }
-    else
-    {
-        // --- ColecoVision BIOS @ 0x0000..0x1FFF (8KB) ---
-        if (strcmp(emulator->colecobios, "Internal") != 0)
-        {
-            if (!loadBios(emulator->colecobios, BIOS_Memory, 0x2000))
-                memcpy(BIOS_Memory, colecobios_rom, 0x2000);
-        }
-        else
-        {
-            memcpy(BIOS_Memory, colecobios_rom, 0x2000);
-        }
-
-        // Kopie naar RAM voor BIOS-hacks (wordt overschreven als SGM low-RAM actief is)
-        memcpy(RAM_Memory, BIOS_Memory, 0x2000);
-
-        // Hacks
-        RAM_Memory[0x0069] = emulator->hackbiospal ? 50 : 60; // 50/60 Hz
-        if (emulator->biosnodelay) {
-            RAM_Memory[159*32+17] = 0x00;
-            RAM_Memory[159*32+18] = 0x00;
-            RAM_Memory[159*32+19] = 0x00;
-        }
-    }
-
-    qDebug() << "[INIT] WRITER[0000]=" << Qt::hex << BIOS_Memory[0]
-             << " EOS[8000]=" << Qt::hex << BIOS_Memory[0x8000]
-             << " OS7[A000]=" << Qt::hex << BIOS_Memory[0xA000];
 
     // Verwijder alle Adam-media
-    for (i = 0; i < MAX_DISKS;  ++i) EjectFDI(&Disks[i]);
-    for (i = 0; i < MAX_TAPES;  ++i) EjectFDI(&Tapes[i]);
+    for (int i = 0; i < MAX_DISKS;  ++i) EjectFDI(&Disks[i]);
+    for (int i = 0; i < MAX_TAPES;  ++i) EjectFDI(&Tapes[i]);
 
     // Reset & palet
     coleco_reset();
@@ -989,6 +1128,24 @@ void coleco_initialise(void)
 }
 
 //---------------------------------------------------------------------------
+void coleco_initialise(void)
+{
+    // 1. Eerst de veilige basiscomponenten initialiseren
+    coleco_base_init();
+
+    // Initialize 80-column mode to off
+         coleco_80col_enabled = 0;
+
+    // 2. Laad BIOS (met fallback) en stel de statusvlaggen in
+    // Deze functie doet de memset() van BIOS_Memory en laadt de ROMs.
+    coleco_load_bios();
+
+    // 3. Na de BIOS-lading: herstart de CPU met de nieuwe mapping
+    // Dit zorgt ervoor dat de Z80 start op 0x0000 met de geladen BIOS data
+    coleco_reset_and_restart_bios();
+}
+//---------------------------------------------------------------------------
+
 // Switch banks. Up to 512K of the Colecovision Mega Cart ROM can be stored
 void megacart_bankswitch(BYTE bank)
 {
@@ -1004,12 +1161,12 @@ void megacart_bankswitch(BYTE bank)
     }
 }
 //---------------------------------------------------------------------------
-// coleco.cpp
 void coleco_WriteByte(unsigned int Address, int Data)
 {
     // --- ADAM MODUS ---
     if (emulator->currentMachineType == MACHINEADAM)
     {
+
         // Adam-geheugen heeft GEEN 1K-spiegel.
         // Het is een platte 64K/128K map.
         // We schrijven naar RAM EN laten de PCB meeluisteren.
@@ -1025,16 +1182,16 @@ void coleco_WriteByte(unsigned int Address, int Data)
             if (PCBTable[Address]) WritePCB(Address, Data);
         }
 
-        // Expanded RAM (heeft NOOIT PCB-toegang)
-        else if ((Address < 0x8000) && adam_ram_lo_exp)
+        // else if (adam_ram_lo_exp || adam_ram_hi_exp)
+        // {
+        //     // Schrijf altijd via MemoryMap zodat RAMPage/port60 mapping klopt
+        //     *(MemoryMap[Address >> 13] + (Address & 0x1FFF)) = (BYTE)Data;
+        // }
+        else if (adam_ram_lo_exp || adam_ram_hi_exp)
         {
-            RAM_Memory[0x10000 + Address] = (BYTE)Data;
+            // chrijf de data naar het Expansion RAM
+            *(MemoryMap[Address >> 13] + (Address & 0x1FFF)) = (BYTE)Data;
         }
-        else if ((Address >= 0x8000) && adam_ram_hi_exp)
-        {
-            RAM_Memory[0x10000 + Address] = (BYTE)Data;
-        }
-
         return; // ADAM-pad afgehandeld
     }
 
@@ -1110,6 +1267,7 @@ void coleco_WriteByte(unsigned int Address, int Data)
         return;
     }
 }
+
 //---------------------------------------------------------------------------
 void coleco_setbyte(int Address, int Data) { coleco_WriteByte(Address, Data); } // Debugger
 //---------------------------------------------------------------------------
@@ -1167,6 +1325,12 @@ BYTE coleco_readbyte(int Address) { // Vanuit Z80 met logging
 BYTE coleco_opcode_fetch(int Address) { return coleco_ReadByte(Address); } // Z80 Opcode
 
 //---------------------------------------------------------------------------
+void coleco_set_ram_page(int page)
+{
+    page &= 0x03;                 // ADAM expansion pages are 0..3
+    Out42((BYTE)page);            // reuse existing mapping logic
+}
+//---------------------------------------------------------------------------
 // --- NIEUWE FUNCTIE: Out42 (Expansion RAM Page Select) ---
 static void Out42(BYTE Val)
 {
@@ -1189,6 +1353,7 @@ static void Out42(BYTE Val)
     }
 }
 //---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
 void coleco_writeport(int Address, int Data, int * /**tstates*/)
 {
     bool resetadam = 0;
@@ -1208,10 +1373,15 @@ void coleco_writeport(int Address, int Data, int * /**tstates*/)
         break;
 
     case 0x60: // 0x60 - 0x7F: Memory Control
-        coleco_port60=Data;
+    {
+        int v = Data & 0xFF;
+
+        coleco_port60 = v;
+
         if (emulator->currentMachineType == MACHINEADAM) coleco_setadammemory(resetadam);
         else if (emulator->SGM) coleco_setupsgm();
         break;
+    }
 
     case 0x40: // 0x40-0x5F: Printer / SGM Sound / SGM Control
         if((emulator->currentMachineType == MACHINEADAM)&&(Address==0x40)) Printer(Data);
@@ -1233,7 +1403,16 @@ void coleco_writeport(int Address, int Data, int * /**tstates*/)
         if((Address & 0x01)==0) // Even addresses
         { tms9918_writedata(Data); }
         else // Odd addresses
-        { tms9918_writectrl(Data); }
+        { tms9918_writectrl(Data);
+            // CRUCIALE FIX: Als we in C80 modus zitten, moeten we
+            // soms specifieke register-instellingen forceren die
+            // T-DOS verwacht voor een 80-koloms lineaire buffer.
+            if (coleco_80col_enabled) {
+                // Forceer Text Mode (Mode 0) maar met aangepaste timing/breedte
+                // Dit zorgt dat de interne 'tms' structuur de juiste tabellen kiest.
+                tms.Mode = 0;
+            }
+        }
         break;
     case 0xC0: // 0xC0 - 0xDF: Controller 2 Write (Mode Select)
         coleco_io_write((uint8_t)Address, (uint8_t)Data);
@@ -1252,7 +1431,7 @@ BYTE coleco_readport(int Address, int * /*tstates*/) // Interne leesfunctie poor
 
     switch(Address & 0xE0)
     {
-    case 0x00:
+    case 0x00: // 0x00 - 0x1F: Unused
         break;
 
     case 0x20: // 0x20 - 0x3F: AdamNet Control Read
@@ -1261,36 +1440,41 @@ BYTE coleco_readport(int Address, int * /*tstates*/) // Interne leesfunctie poor
             return(coleco_port20);
         }
         break;
-    // NU-
+
     case 0x40: // 0x40 - 0x5F: Printer Status / SGM Sound Read
-        // --- NIEUWE, ROBUUSTE LOGICA ---
         if (emulator->currentMachineType == MACHINEADAM)
         {
             // --- Adam Modus ---
             if (Address == 0x40) {
-                return 0xFF; // Printer = OK (Fix 7)
+                // Printer Status Read (Ready/OK)
+                return 0xFF;
             }
+
             if (Address == 0x42 || Address == 0x43) {
-                // RAM Page Select status/read (momenteel doen we niks teruggeven)
-                return coleco_port20; // teruggeven wat er op poort 0x20 staat, of een vaste waarde
+                // RAM Page Select status/read (teruggeven wat er op poort 0x20 staat, of een vaste waarde)
+                return coleco_port20;
             }
-            // Adam mag NOOIT de SGM-poorten lezen.
+
+            // C80/Eve-kaart detectie: Veel 80-koloms software leest poort 0x52 of 0x53
+            // om de aanwezigheid van de hardware te verifiëren.
+            if (coleco_80col_enabled && (Address == 0x52 || Address == 0x53)) {
+                return 0x80; // Signaleer aan T-DOS dat de 80-koloms hardware 'aan' staat
+            }
+
             // Blokkeer 0x52 (SGM Read) en alle andere
             // poorten in deze 0x40-0x5F range.
-            return idleDataBus; // (0xFF)
+            return idleDataBus;
         }
         else
         {
             // --- Coleco Modus ---
             // SGM AY-3-8910 Sound Chip (Port 0x52 = read data)
-            // Deze mag ALLEEN in Coleco-modus worden gelezen.
             if (Address == 0x52)
             {
                 return(ay8910_read());
             }
-            // (Geen printer op Coleco, dus we vallen door)
         }
-        break; // Val door naar 'return idleDataBus'
+        break;
 
     case 0x60: // 0x60 - 0x7F: Memory Control Read
         if (emulator->currentMachineType == MACHINEADAM)
@@ -1299,85 +1483,91 @@ BYTE coleco_readport(int Address, int * /*tstates*/) // Interne leesfunctie poor
         }
         break;
 
-    case 0x99:
-        return ReadStatus9918();
-
-    // case 0xA0: // 0xA0 - 0xBF: VDP Read (Video Display Processor)
-    //     if ((Address & 0x01) == 0) // Even addresses: 0xA0, 0xA2... 0xBE (DATA READ)
-    //         return /*(emulator->F18A ? f18a_readdata() :*/ tms9918_readdata(); //);
-    //     else // Odd addresses: 0xA1, 0xA3... 0xBF (STATUS READ)
-    //         return /*(emulator->F18A ? f18a_readctrl() :*/ tms9918_readctrl(); //);
-
-    case 0xA0: // 0xA0 - 0xBF: VDP Read (Video Display Processor)
+    case 0x80: // 0x80 - 0x9F: VDP Status/Data (Poort 0x99, 0x98 in Coleco)
         if (Address == 0x98 || (Address & 0x01) == 0) // Even addresses: 0x98, 0xA0, 0xA2... (DATA READ)
             return tms9918_readdata();
 
         // Odd addresses: 0x99, 0xA1, 0xA3... (STATUS READ)
         else
-            // Zorg dat tms9918_readctrl() de VBLANK-vlag wist!
             return tms9918_readctrl();
 
-    // case 0xE0: // 0xE0..0xE3 brede controller-reads (A1 = pad)
-    // case 0xFC: // smal: pad 1
-    // case 0xFF: // smal: pad 2
-    // case 0xC0: // 0xC0 - 0xDF: Controller 2 Write (Mode Select)
-    //     return coleco_io_read((uint8_t)Address); // alleen doorsturen
+    case 0xA0: // 0xA0 - 0xBF: VDP Status/Data
+        if ((Address & 0x01) == 0) // Even addresses: 0xA0, 0xA2... (DATA READ)
+            return tms9918_readdata();
+        else // Odd addresses: 0xA1, 0xA3... (STATUS READ)
+            return tms9918_readctrl();
 
-    case 0xE0: // 0xE0..0xFF: Controller 1/2, Sound Write
-    case 0xC0: // 0xC0..0xDF: Controller 2
+    case 0xC0: // 0xC0 - 0xDF: Controller 2 Read
+        // In Adam modus, dit bereik is primair voor AdamNet (Host Adapter)
+        if (emulator->currentMachineType == MACHINEADAM)
         {
-            if (emulator->currentMachineType == MACHINEADAM)
+            // Dit is GEEN AdamNet Host Adapter Status poort, val door naar idle.
+            // AdamNet I/O status zit in 0xE0-0xE3
+            return idleDataBus;
+        }
+        // In Coleco modus, lees controller 2 (indien nodig)
+        break; // Val door naar Controller Read in 0xE0-0xFF gebied (vaak 0xE2/0xE3)
+
+    case 0xE0: // 0xE0 - 0xFF: Controller 1/2, Sound Write
+    {
+
+        // In coleco_readport:
+        if (Address == 0xFC || Address == 0xFF) {
+            return coleco_io_read(Address); // Forceer joystick uitlezing
+        }
+
+        if (emulator->currentMachineType == MACHINEADAM)
+        {
+            // *** CRUCIALE FIX VOOR CP/M ***
+            // In ADAM-modus heeft 0xE0-0xE3 HOGERE prioriteit dan de controllers
+            // en moet het de status/data van de ADAMNET-randapparatuur teruggeven.
+            if (Address >= 0xE0 && Address <= 0xE3)
             {
-                // *** CRUCIALE FIX VOOR CP/M ***
-                // In ADAM-modus heeft dit bereik een HOGERE prioriteit dan de controllers
-                // en moet het de status/data van de ADAMNET-randapparatuur teruggeven.
-                // Deze functie MOET de AdamNet status-vlaggen wissen na lezing.
+                // Roept adamnet_read_io aan, die de status leest
+                // en de kritieke Data-In Full vlag wist (0x01).
                 return adamnet_read_io(Address);
             }
+            // Overige E0-FF adressen in Adam-modus vallen door naar idle.
+            return idleDataBus;
+        }
 
-            // Vraag eerst de basis digitale/keypad status op van de keypad-module.
-            uint8_t digital_result = coleco_io_read((uint8_t)Address);
+        // --- Coleco/SGM Controller/Paddle Logica ---
+        // Vraag eerst de basis digitale/keypad status op van de keypad-module.
+        uint8_t digital_result = coleco_io_read((uint8_t)Address);
 
-            // --- Analoge/Spinner Override (ALLEEN VOOR POORT 0xE0/0xE1 VAN CONTROLLER 1) ---
-            // Adressen 0xE0 en 0xE1 (Controller 1) worden door games gebruikt voor de spinner.
+        // --- Analoge/Spinner Override (ALLEEN VOOR POORT 0xE0/0xE1 VAN CONTROLLER 1) ---
 
-            if ((Address & 0x02) == 0) // Dit is Controller 1 (Pad 0, want A1=0)
+        if ((Address & 0x02) == 0) // Dit is Controller 1 (Pad 0)
+        {
+            if (Address == 0xE0)
             {
-                //qDebug() << "ADRES:"<<Address;
-
-                if (Address == 0xE0)
-                {
-                    // 1. MSB van de 16-bit spinner positie teruggeven (Hoge Byte).
-                    // De Spinner is 10-bit, maar we gebruiken de HOGE 8 bits van de 16-bit variabele.
-                    return (BYTE)(coleco_spinpos[0] >> 8);
-                }
-
-                if (Address == 0xE1)
-                {
-                    // 1. LSB van de 16-bit spinner positie (Lage Byte).
-                    uint8_t spinner_lsb = (uint8_t)(coleco_spinpos[0] & 0xFF);
-
-                    // 2. Haal de lage 4 bits (de digitale status) uit het resultaat van coleco_io_read.
-                    // Dit is cruciaal om de keypad/joystick-status te behouden!
-                    uint8_t digital_status = digital_result & 0x0F;
-
-                    // 3. Combineer: gebruik de hoge 4 bits van de LSB (voor de 10-bit paddle)
-                    // en de lage 4 bits van de digitale status.
-                    uint8_t paddle_high_bits = (spinner_lsb & 0xF0);
-
-                    return paddle_high_bits | digital_status;
-                }
-
+                // 1. MSB van de 16-bit spinner positie teruggeven (Hoge Byte).
+                return (BYTE)(coleco_spinpos[0] >> 8);
             }
 
-            // Als het 0xE2, 0xE3 of een andere controller leesactie is,
-            // retourneren we het digitale resultaat van coleco_io_read.
-            return digital_result;
+            if (Address == 0xE1)
+            {
+                // 1. LSB van de 16-bit spinner positie (Lage Byte).
+                uint8_t spinner_lsb = (uint8_t)(coleco_spinpos[0] & 0xFF);
+
+                // 2. Haal de lage 4 bits (de digitale status) uit het resultaat van coleco_io_read.
+                uint8_t digital_status = digital_result & 0x0F;
+
+                // 3. Combineer: gebruik de hoge 4 bits van de LSB (voor de 10-bit paddle)
+                // en de lage 4 bits van de digitale status.
+                uint8_t paddle_high_bits = (spinner_lsb & 0xF0);
+
+                return paddle_high_bits | digital_status;
+            }
         }
+
+        // Als het 0xE2, 0xE3 (Controller 2) of een andere leesactie is,
+        // retourneren we het digitale resultaat.
+        return digital_result;
+    }
     }
     return idleDataBus; // Geen geldige poort
 }
-
 //---------------------------------------------------------------------------
 int coleco_contend(int /*Address*/, int /*states*/, int time) { return(time); }
 
@@ -1474,12 +1664,9 @@ int coleco_do_scanline(void)
             // --- PADDLE/ANALOGE UPDATE ---
             coleco_paddle();
 
+            DEBUG_BRIDGE.setCurrentOpcodeStartPC(Z80.pc.w.l);
             ts = z80_do_opcode();
             CurScanLine_len -= ts;
-
-            if (emulator->F18A) {
-                // TODO: F18A GPU timing
-            }
 
             frametstates += ts;
             tStatesCount += ts;
@@ -1495,8 +1682,7 @@ int coleco_do_scanline(void)
 
     static int nmi_active = 0;
 
-    if (emulator->F18A) f18a_loop();
-    else                tms9918_loop();
+    tms9918_loop();
 
     const bool vdp_irq_level =
         ((tms.VR[1] & TMS9918_REG1_IRQ) != 0) &&
@@ -1559,7 +1745,7 @@ BYTE coleco_savestate(char *filename)
     // Schrijf CPU state
     fwrite(&Z80, sizeof(Z80), 1, fstatefile);
     // Schrijf VDP state
-    fwrite(&tms, sizeof(tms), 1, fstatefile); // TODO: F18A state?
+    fwrite(&tms, sizeof(tms), 1, fstatefile);
 
     // Schrijf Sound states
     //fwrite(&sn, sizeof(sn), 1, fstatefile);
@@ -1706,11 +1892,8 @@ BYTE coleco_loadstate(char *filename)
     return(1);
 }
 
+
 // --- Z80 CPU Callbacks ---
-//
-// Deze functies worden AANGEROEPEN DOOR z80.c om te praten
-// met het Coleco-geheugen en de poorten.
-// We moeten ze in 'extern "C"' plaatsen zodat de C-linker ze kan vinden.
 //
 extern "C" {
 
@@ -1718,12 +1901,31 @@ extern "C" {
 unsigned int cpu_readmem16(unsigned int address)
 {
     return (unsigned int)coleco_readbyte(address);
+    // unsigned char value = coleco_readbyte(address);
+
+    // DEBUG_BRIDGE.checkMemAccess(
+    //     BreakpointType::BP_READ,
+    //     (uint16_t)address,
+    //     value
+    //     );
+
+    // return (unsigned int)value;
 }
 
 // 8-bit geheugen-callback
 void cpu_writemem16(unsigned int address, unsigned int value)
 {
-    coleco_writebyte(address, (BYTE)value);
+    // if (((uint16_t)address) == 0x6040) {
+    //     qDebug() << "[WM16-HIT-6040] val=" << QString::number(value & 0xFF, 16);
+    // }
+
+    // //coleco_writebyte(address, (BYTE)value);
+    // DEBUG_BRIDGE.checkMemAccess(
+    //     BreakpointType::BP_WRITE,
+    //     (uint16_t)address,
+    //     (uint8_t)(value & 0xFF));
+
+    coleco_writebyte(address, (BYTE)(value & 0xFF));
 }
 
 // 16-bit poort-callback (DEZE VEROORZAAKTE DE FOUT)
@@ -1746,6 +1948,7 @@ byte coleco_load_disk(int drive, const char *filename) {
     return ChangeDisk((byte)drive, filename) ? 0 : 1;
 }
 byte coleco_load_tape(int drive, const char *filename) {
+
     return ChangeTape((byte)drive, filename) ? 0 : 1;
 }
 
@@ -1755,6 +1958,8 @@ int coleco_save_disk(int drive, const char *filename) {
 int coleco_save_tape(int drive, const char *filename) {
     return SaveFDI(&Tapes[drive], filename, FMT_DDP);
 }
+
+bool coleco_check_for_bios_failure();
 
 void coleco_eject_disk(int drive) {
     EjectFDI(&Disks[drive]);
@@ -1768,9 +1973,9 @@ unsigned char cpu_readport(unsigned int port)
 {
     BYTE value = coleco_readport(port, &tstates);
     // BREAKPOINT CHECK: BP_IO_IN
-    if (DEBUG_BRIDGE.checkIOAccess(BreakpointType::BP_IO_IN, port, value)) {
-        z80_exec = 0;
-    }
+    //if (DEBUG_BRIDGE.checkIOAccess(BreakpointType::BP_IO_IN, port, value,Z80.pc.w.l)) {
+    //    z80_exec = 0;
+    //}
     return value;
 }
 
@@ -1778,15 +1983,16 @@ unsigned char cpu_readport(unsigned int port)
 void cpu_writeport(unsigned int port, unsigned char value)
 {
     // BREAKPOINT CHECK: BP_IO_OUT
-    if (DEBUG_BRIDGE.checkIOAccess(BreakpointType::BP_IO_OUT, port, value)) {
-        z80_exec = 0;
-    }
+    //if (DEBUG_BRIDGE.checkIOAccess(BreakpointType::BP_IO_OUT, port, value,Z80.pc.w.l)) {
+    //    z80_exec = 0;
+    //}
 
     coleco_writeport(port, value, &tstates);
 }
 
 // Functie die 1 CPU-stap uitvoert (verondersteld een Z80.c wrapper)
 int coleco_cpu_execute_one_step() {
+    DEBUG_BRIDGE.setCurrentOpcodeStartPC(Z80.pc.w.l);
     // 1. EXECUTE Breakpoint Check (VOOR de instructie)
     if (DEBUG_BRIDGE.checkExecute(Z80.pc.w.l)) {
         z80_exec = 0; // Stop de CPU
@@ -1805,33 +2011,123 @@ int coleco_cpu_execute_one_step() {
     return cycles;
 }
 
-
-// --- Geheugen- en Poortcallbacks ---
-
 // 8-bit geheugen-callback (READ)
 unsigned char cpu_readbyte(unsigned int address)
 {
     BYTE value = coleco_getbyte(address);
-
-    // BREAKPOINT CHECK: BP_READ
-    if (DEBUG_BRIDGE.checkMemAccess(BreakpointType::BP_READ, address, value)) {
-        z80_exec = 0;
-    }
-
     return value;
 }
 
 // 8-bit geheugen-callback (WRITE)
+// BREAKPOINT MEM
 void cpu_writebyte(unsigned int address, unsigned char value)
 {
-    // BREAKPOINT CHECK: BP_WRITE (voor de write)
-    if (DEBUG_BRIDGE.checkMemAccess(BreakpointType::BP_WRITE, address, value)) {
-        z80_exec = 0;
-    }
-
     coleco_writebyte(address, (BYTE)value);
 }
 
+extern "C" void coleco_set_bios_paths(const char* coleco_path, const char* eos_path, const char* writer_path)
+{
+    // ... (de implementatie met s_external_* pointers)
+    s_external_coleco_bios_path = coleco_path;
+    s_external_eos_bios_path = eos_path;
+    s_external_writer_bios_path = writer_path;
+}
+
+int coleco_get_bios_status(int index)
+{
+    if (index < 0 || index > 2)
+        return 0;
+    return g_bios_status_int[index];
+}
 
 } // extern "C"
-// --- Einde Z80 Callbacks ---
+
+// Zorg dat deze signatures exact matchen met z80.h
+extern "C" {
+extern unsigned int cpu_readmem16(unsigned int address);
+extern void cpu_writemem16(unsigned int address, unsigned int value);
+}
+
+// Hulpfunctie voor adres normalisatie
+static uint16_t normalize_coleco_address(uint16_t address) {
+    if (emulator && emulator->currentMachineType != MACHINEADAM &&
+        address >= 0x6000 && address < 0x8000) {
+        return 0x6000 + (address & 0x03FF);
+    }
+    return address;
+}
+
+// Deze functies doen NU niets anders dan de debugger checken
+// en daarna de originele emulator-functie aanroepen.
+
+extern "C" void z80_wrapper_write(unsigned int address, unsigned char value)
+{
+    // 1. Debug Check
+    uint16_t checkAddr = normalize_coleco_address(address);
+    if (DEBUG_BRIDGE.checkMemAccess(BreakpointType::BP_WRITE, checkAddr, value)) {
+        if (emulator) emulator->stop = 1;
+        extern int z80_exec;
+        z80_exec = 0;
+    }
+
+    // 2. Originele Schrijfactie (Veilig: checkt intern op ROM/RAM)
+    cpu_writemem16(address, value);
+}
+
+extern "C" unsigned char z80_wrapper_read(unsigned int address)
+{
+    // 1. VOER DE NORMALE LEESACTIE UIT (Herstelt het zwarte beeld)
+    // We roepen de emulator functie aan. Dit zorgt dat BIOS ROMs correct worden gelezen.
+    // Dit crasht niet, zolang we het maar 1x doen en niet recursief.
+    unsigned char value = (unsigned char)cpu_readmem16(address);
+
+    // --- Debug Bridge (standaard) ---
+    uint16_t checkAddr = normalize_coleco_address(address);
+    if (DEBUG_BRIDGE.checkMemAccess(BreakpointType::BP_READ, checkAddr, value)) {
+        if (emulator) emulator->stop = 1;
+        extern int z80_exec;
+        z80_exec = 0;
+    }
+    return value;
+}
+
+extern "C" int coleco_virtual_cpm_diskboot(const char* cpmTapeDdpPath,
+                                           const char* diskDskPath,
+                                           int tapeDrive,
+                                           int diskDrive)
+{
+    if (tapeDrive < 0) tapeDrive = 0;
+    if (diskDrive < 0) diskDrive = 0;
+
+    // 1) Tape CP/M image laden (optioneel, maar voor jouw use-case is dit net de magie)
+    if (cpmTapeDdpPath && *cpmTapeDdpPath)
+    {
+        // ChangeTape retourneert 1 bij succes, 0 bij fout
+        if (!ChangeTape((byte)tapeDrive, cpmTapeDdpPath))
+        {
+            qDebug().noquote() << QString("[CPM][VBOOT] Failed to load CP/M tape image: %1")
+            .arg(cpmTapeDdpPath);
+            return 1;
+        }
+    }
+
+    // 2) Disk image laden/mounten (dit wordt straks A:)
+    if (diskDskPath && *diskDskPath)
+    {
+        // ChangeDisk retourneert 1 bij succes, 0 bij fout
+        if (!ChangeDisk((byte)diskDrive, diskDskPath))
+        {
+            qDebug().noquote() << QString("[CPM][VBOOT] Failed to load disk image: %1")
+            .arg(diskDskPath);
+            return 2;
+        }
+    }
+
+    // 4) Hard reset zodat de bestaande CP/M boot flow (die bij jou al werkt) afgaat
+    coleco_reset();
+
+    qDebug() << "[CPM][VBOOT] Virtual disk boot armed:";
+    qDebug() << "  tapeDrive=" << tapeDrive << " tape=" << (cpmTapeDdpPath ? cpmTapeDdpPath : "(null)");
+    qDebug() << "  diskDrive=" << diskDrive << " disk=" << (diskDskPath ? diskDskPath : "(null)");
+    return 0;
+}

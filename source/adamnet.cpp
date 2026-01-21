@@ -23,138 +23,52 @@
 
 #include "adamnet.h"
 #include "coleco.h"
+#include "screenwidget.h"
+#include <cstdio>
 
-byte HoldingBuf[4096];
-BYTE io_busy= 0;
-word savedBUF = 0;
-word savedLEN = 0;
-byte last_command_read=false;
-byte io_show_status=0;
-
-static bool gLogAdamNet = true;
-
-#define DELAY_IO 10
-
-/** RAM Access Macro *****************************************/
 #define RAM(A)         (RAM_Memory[A])
 
-/** PCB Field Offsets ****************************************/
-#define PCB_CMD_STAT   0
-#define PCB_BA_LO      1
-#define PCB_BA_HI      2
-#define PCB_MAX_DCB    3
-#define PCB_SIZE       4
-
-/** DCB Field Offsets ****************************************/
-#define DCB_CMD_STAT   0
-#define DCB_BA_LO      1
-#define DCB_BA_HI      2
-#define DCB_BUF_LEN_LO 3
-#define DCB_BUF_LEN_HI 4
-#define DCB_SEC_NUM_0  5
-#define DCB_SEC_NUM_1  6
-#define DCB_SEC_NUM_2  7
-#define DCB_SEC_NUM_3  8
-#define DCB_DEV_NUM    9
-#define DCB_RETRY_LO   14
-#define DCB_RETRY_HI   15
-#define DCB_ADD_CODE   16
-#define DCB_MAXL_LO    17
-#define DCB_MAXL_HI    18
-#define DCB_DEV_TYPE   19
-#define DCB_NODE_TYPE  20
-#define DCB_SIZE       21
-
-/** PCB Commands *********************************************/
-#define CMD_PCB_IDLE   0x00
-#define CMD_PCB_SYNC1  0x01
-#define CMD_PCB_SYNC2  0x02
-#define CMD_PCB_SNA    0x03
-#define CMD_PCB_RESET  0x04
-#define CMD_PCB_WAIT   0x05
-
-/** DCB Commands *********************************************/
-#define CMD_RESET      0x00
-#define CMD_STATUS     0x01
-#define CMD_ACK        0x02
-#define CMD_CLEAR      0x03
-#define CMD_RECEIVE    0x04
-#define CMD_CANCEL     0x05
-#define CMD_SEND       0x06 /* + SIZE_HI + SIZE_LO + DATA + CRC */
-#define CMD_NACK       0x07
-
-#define CMD_SOFT_RESET 0x02
-#define CMD_WRITE      0x03
-#define CMD_READ       0x04
-
-/** Response Codes *******************************************/
-#define RSP_STATUS     0x80 /* + SIZE_HI + SIZE_LO + TXCODE + STATUS + CRC */
-#define RSP_ACK        0x90
-#define RSP_CANCEL     0xA0
-#define RSP_SEND       0xB0 /* + SIZE_HI + SIZE_LO + DATA + CRC */
-#define RSP_NACK       0xC0
-
-/** Key Codes with SHIFT and CTRL ****************************/
-/** Shifted Key Codes ****************************************/
-static const byte ShiftKey[256] =
-    {
-        /* 0x00 */
-        0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0xB8,0xB9,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
-        0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x1F,
-        0x20,0x21,0x22,0x23,0x24,0x25,0x26,0x22,0x28,0x29,0x2A,0x2B,0x3C,0x5F,0x3E,0x3F,
-        0x29,0x21,0x40,0x23,0x24,0x25,0x5E,0x26,0x2A,0x28,0x3A,0x3A,0x3C,0x2B,0x3E,0x3F,
-        /* 0x40 */
-        0x40,0x61,0x62,0x63,0x64,0x65,0x66,0x67,0x68,0x69,0x6A,0x6B,0x6C,0x6D,0x6E,0x6F,
-        0x70,0x71,0x72,0x73,0x74,0x75,0x76,0x77,0x78,0x79,0x7A,0x7B,0x7C,0x7D,0x5E,0x5F,
-        0x7E,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0x4A,0x4B,0x4C,0x4D,0x4E,0x4F,
-        0x50,0x51,0x52,0x53,0x54,0x55,0x56,0x57,0x58,0x59,0x5A,0x7B,0x7C,0x7D,0x7E,0x7F,
-        /* 0x80 */
-        0x80,0x89,0x8A,0x8B,0x8C,0x8D,0x8E,0x87,0x88,0x89,0x8A,0x8B,0x8C,0x8D,0x8E,0x8F,
-        0x98,0x99,0x9A,0x9B,0x9C,0x9D,0x9E,0x9F,0x98,0x99,0x9A,0x9B,0x9C,0x9D,0x9E,0x9F,
-        0xA0,0xA1,0xA2,0xA3,0xA4,0xA5,0xA6,0xA7,0xA8,0xA9,0xAA,0xAB,0xAC,0xAD,0xAE,0xAF,
-        0xB0,0xB1,0xB2,0xB3,0xB4,0xB5,0xB6,0xB7,0xB8,0xB9,0xBA,0xBB,0xBC,0xBD,0xBE,0xBF,
-        /* 0xC0 */
-        0xC0,0xC1,0xC2,0xC3,0xC4,0xC5,0xC6,0xC7,0xC8,0xC9,0xCA,0xCB,0xCC,0xCD,0xCE,0xCF,
-        0xD0,0xD1,0xD2,0xD3,0xD4,0xD5,0xD6,0xD7,0xD8,0xD9,0xDA,0xDB,0xDC,0xDD,0xDE,0xDF,
-        0xE0,0xE1,0xE2,0xE3,0xE4,0xE5,0xE6,0xE7,0xE8,0xE9,0xEA,0xEB,0xEC,0xED,0xEE,0xEF,
-        0xF0,0xF1,0xF2,0xF3,0xF4,0xF5,0xF6,0xF7,0xF8,0xF9,0xFA,0xFB,0xFC,0xFD,0xFE,0xFF
-};
-
-static const byte CtrlKey[256] =
-    {
-        /* 0x00 */
-        0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
-        0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x1F,
-        0x20,0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x29,0x2A,0x2B,0x2C,0x2D,0x2E,0x2F,
-        0x30,0x31,0x00,0x33,0x34,0x35,0x1F,0x37,0x38,0x39,0x3A,0x3B,0x3C,0x3D,0x3E,0x3F,
-        /* 0x40 */
-        0x40,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
-        0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x5F,
-        0x60,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F,
-        0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x1D,0x1E,0x7F,
-        /* 0x80 */
-        0x80,0x81,0x82,0x83,0x84,0x85,0x86,0x87,0x88,0x89,0x8A,0x8B,0x8C,0x8D,0x8E,0x8F,
-        0x90,0x91,0x92,0x93,0x94,0x95,0x96,0x7F,0x98,0x99,0x9A,0x9B,0x9C,0x9D,0x9E,0x9F,
-        0xA4,0xA5,0xA6,0xA7,0xA4,0xA5,0xA6,0xA7,0xA8,0xA9,0xAA,0xAB,0xAC,0xAD,0xAE,0xAF,
-        0xB0,0xB1,0xB2,0xB3,0xB4,0xB5,0xB6,0xB7,0xB8,0xB9,0xBA,0xBB,0xBC,0xBD,0xBE,0xBF,
-        /* 0xC0 */
-        0xC0,0xC1,0xC2,0xC3,0xC4,0xC5,0xC6,0xC7,0xC8,0xC9,0xCA,0xCB,0xCC,0xCD,0xCE,0xCF,
-        0xD0,0xD1,0xD2,0xD3,0xD4,0xD5,0xD6,0xD7,0xD8,0xD9,0xDA,0xDB,0xDC,0xDD,0xDE,0xDF,
-        0xE0,0xE1,0xE2,0xE3,0xE4,0xE5,0xE6,0xE7,0xE8,0xE9,0xEA,0xEB,0xEC,0xED,0xEE,0xEF,
-        0xF0,0xF1,0xF2,0xF3,0xF4,0xF5,0xF6,0xF7,0xF8,0xF9,0xFA,0xFB,0xFC,0xFD,0xFE,0xFF
-};
-
 extern byte coleco_port60;
-static byte g_KbdDev = 0x00;   // wordt automatisch ingevuld
 
 byte PCBTable[0x10000];
+byte HoldingBuf[4096];
+word io_busy = 0;
+word PCBAddr = 0x0000;
+const byte InterleaveTable[8] = { 0, 5, 2, 7, 4, 1, 6, 3 };
 
-word PCBAddr;
-byte DiskID;
-byte KBDStatus;
-byte LastKey;
+bool m_cpm_enabled;
+bool m_tdos_enabled;
+bool m_cpm_status;
+byte last_command_read;
+byte io_show_status;
+byte KBDStatus, LastKey, DiskID;
+word savedBUF, savedLEN;
 
-extern byte RAM_Memory[];
+// Game mode flag: true = Adam games (scancodes), false = Writer/BASIC (ASCII)
+static bool g_force_game_mode = false;
+
+/**
+ * @brief Stel game mode in voor correcte keypad routing
+ * @param enabled true = game mode (scancodes), false = writer mode (ASCII)
+ */
+extern "C" void adamnet_set_game_mode(bool enabled) {
+    g_force_game_mode = enabled;
+    qDebug() << "[ADAMNET] Game mode" << (enabled ? "ENABLED" : "DISABLED")
+             << "- Keypad will use " << (enabled ? "scancodes" : "ASCII");
+}
+
+/**
+ * @brief Check of we in game mode zijn
+ * @return true als game mode actief is
+ */
+extern "C" bool adamnet_is_game_mode(void) {
+    return g_force_game_mode;
+}
+
+// Flag to track if F000 area has been cleared after boot
+static bool g_vdp_cleared = false;
+std::atomic<bool> g_diskSoundActive(false);
+std::atomic<bool> g_tapeSoundActive(false);
 
 // Een ring-buffer voor 8 toetsaanslagen (press/release events)
 #define KEY_BUFFER_SIZE 8
@@ -168,7 +82,6 @@ enum AdamKeyboardStatus {
     KBD_SCANNING = 0x01,   // BIOS heeft scan gevraagd, wacht op toets
     KBD_DATA_READY = 0x80  // Data is beschikbaar in de buffer
 };
-static volatile uint8_t g_kbd_status = KBD_IDLE;
 
 #include <stdint.h>
 
@@ -204,10 +117,6 @@ extern "C" void adamnet_host_prn_write_ascii(const char* s)
         adam_printer_chunk(start, n);
         p += n;
     }
-
-    // paginaeinde simuleren kan (optioneel):
-    // static const uint8_t ff = 0x0C;
-    // adam_printer_chunk(&ff, 1);
 }
 
 // --- AdamNet printer sink: UI kan zich hierop abonneren ---
@@ -222,6 +131,7 @@ extern "C" void adamnet_inject_scancode(uint8_t sc)
     // Stuur de scancode (bv. 0xB4 of 0x34) naar de queue
     adamnet_queue_key(sc);
 }
+
 
 void adamnet_queue_key(uint8_t key_code)
  {
@@ -245,7 +155,7 @@ void adamnet_queue_key(uint8_t key_code)
              mapped = mapped ^ 0x80;
         }
         key_code = mapped;
-        qDebug() << "[AdamNet] ENQUEUE (na remap):" << Qt::hex << key_code;
+        //qDebug() << "[AdamNet] ENQUEUE (na remap):" << Qt::hex << key_code;
     }
         // Bereken de volgende 'head' positie
         uint8_t next_head = (g_key_buffer_head + 1) % KEY_BUFFER_SIZE;
@@ -255,9 +165,17 @@ void adamnet_queue_key(uint8_t key_code)
         {
             g_key_buffer[g_key_buffer_head] = key_code;
             g_key_buffer_head = next_head;
+            // 1. Update interne status
             KBDStatus = (byte)(RSP_STATUS | 0x0C);
+            // 2. STUUR NAAR DE Z80 RAM (Cruciaal voor games!)
+            // Device 0 is het keyboard. Schrijf de status direct in de DCB.
+            SetDCB(0, DCB_CMD_STAT, KBDStatus);
+            // 3. ZET DE I/O VLAG (Voor poort 0xE0 polling)
+            // AN_STAT_DIF (0x01) betekent: "Er zit data in de Host Adapter voor de CPU"
+            PCBTable[0] |= 0x01;
+
+            //qDebug() << "[AdamNet] Toets geactiveerd in PCB & DCB:" << Qt::hex << key_code;
         }
-        // (Optioneel: anders, negeer de toetsaanslag - buffer is vol)
 }
 
 
@@ -267,7 +185,7 @@ void adamnet_queue_key(uint8_t key_code)
  * @brief Haalt een key-event op uit de buffer.
  * @return De key-code, of 0 als de buffer leeg is.
  */
-static uint8_t adamnet_dequeue_key(void)
+uint8_t adamnet_dequeue_key(void)
 {
     // Als de buffer leeg is...
     if (g_key_buffer_head == g_key_buffer_tail)
@@ -286,7 +204,7 @@ qDebug() << "[AdamNet] DEQUEUE (naar BIOS):" << Qt::hex << key_code;
  * @brief Controleert of de key buffer data bevat.
  * @return 1 als niet leeg, 0 als leeg.
  */
-static int adamnet_is_key_available(void)
+int adamnet_is_key_available(void)
 {
     return (g_key_buffer_head != g_key_buffer_tail);
 }
@@ -298,23 +216,23 @@ static int adamnet_is_key_available(void)
 /** GetDCB() *************************************************/
 /** Get DCB byte at given offset.                           **/
 /*************************************************************/
-static byte GetDCB(byte Dev,byte Offset)
+byte GetDCB(byte Dev,byte Offset)
 {
     word A = (PCBAddr+PCB_SIZE+Dev*DCB_SIZE+Offset)&0xFFFF;
     return(RAM_Memory[A]);
 }
 
-static word GetDCBBase(byte Dev)
+word GetDCBBase(byte Dev)
 {
     return(GetDCB(Dev,DCB_BA_LO)+((word)GetDCB(Dev,DCB_BA_HI)<<8));
 }
 
-static word GetDCBLen(byte Dev)
+word GetDCBLen(byte Dev)
 {
     return(GetDCB(Dev,DCB_BUF_LEN_LO)+((word)GetDCB(Dev,DCB_BUF_LEN_HI)<<8));
 }
 
-static unsigned int GetDCBSector(byte Dev)
+unsigned int GetDCBSector(byte Dev)
 {
     return(
         GetDCB(Dev,DCB_SEC_NUM_0)
@@ -327,18 +245,18 @@ static unsigned int GetDCBSector(byte Dev)
 /** GetPCB() *************************************************/
 /** Get PCB byte at given offset.                           **/
 /*************************************************************/
-static byte GetPCB(word Offset)
+byte GetPCB(word Offset)
 {
     word A = (PCBAddr+Offset)&0xFFFF;
     return(RAM_Memory[A]);
 }
 
-static word GetPCBBase(void)
+word GetPCBBase(void)
 {
     return(GetPCB(PCB_BA_LO)+((word)GetPCB(PCB_BA_HI)<<8));
 }
 
-static word GetMaxDCB(void)
+word GetMaxDCB(void)
 {
     return(GetPCB(PCB_MAX_DCB));
 }
@@ -346,7 +264,7 @@ static word GetMaxDCB(void)
 /** SetDCB() *************************************************/
 /** Set DCB byte at given offset.                           **/
 /*************************************************************/
-static void SetDCB(byte Dev,byte Offset,byte Value)
+void SetDCB(byte Dev,byte Offset,byte Value)
 {
     word A = (PCBAddr+PCB_SIZE+Dev*DCB_SIZE+Offset)&0xFFFF;
 
@@ -356,7 +274,7 @@ static void SetDCB(byte Dev,byte Offset,byte Value)
 /** SetPCB() *************************************************/
 /** Set PCB byte at given offset.                           **/
 /*************************************************************/
-static void SetPCB(word Offset,byte Value)
+void SetPCB(word Offset,byte Value)
 {
     word A = (PCBAddr+Offset)&0xFFFF;
     RAM_Memory[A] = Value;
@@ -365,7 +283,7 @@ static void SetPCB(word Offset,byte Value)
 /** IsPCB() **************************************************/
 /** Return 1 if given address belongs to PCB, 0 otherwise.  **/
 /*************************************************************/
-static int IsPCB(word A)
+int IsPCB(word A)
 {
     /* Quick check for PCB presence */
     if(!PCBTable[A]) return(0);
@@ -384,7 +302,7 @@ static int IsPCB(word A)
 /** MovePCB() ************************************************/
 /** Move PCB and related DCBs to a new address.             **/
 /*************************************************************/
-static void MovePCB(word NewAddr,byte MaxDCB)
+void MovePCB(word NewAddr,byte MaxDCB)
 {
     int J;
 
@@ -411,7 +329,7 @@ static void MovePCB(word NewAddr,byte MaxDCB)
 /** ReportDevice() *******************************************/
 /** Reply to STATUS command with device parameters.         **/
 /*************************************************************/
-static void ReportDevice(byte Dev,word MsgSize,byte IsBlock)
+void ReportDevice(byte Dev,word MsgSize,byte IsBlock)
 {
     SetDCB(Dev,DCB_CMD_STAT, RSP_STATUS);
     SetDCB(Dev,DCB_MAXL_LO,  MsgSize&0xFF);
@@ -457,16 +375,29 @@ KBDStatus = (byte)(RSP_STATUS | 0x0C);
 /** GetKBD() *************************************************/
 /** Haal éérst LastKey, anders uit AdamNet ringbuffer.      **/
 /*************************************************************/
-static byte GetKBD()
+byte GetKBD()
 {
-    // // return LastKey;
-    // byte Result = LastKey;
-    // LastKey = 0x00;
-    // return(Result);
-    // 1. Check de Scancode-Queue (voor F-toetsen)
+    extern BYTE RAM_Memory[];
+    extern BYTE VDP_Memory[];
+
+    // PATCH wissen rommel in scherm bij opstart T-Dos bios
+    if (m_tdos_enabled && !m_80colEnabled)
+    {
+        if (g_vdp_cleared == false) {
+            memset(RAM_Memory + 0xF900, 0, 0x284);
+        }
+        if (VDP_Memory[0x3747]==0x00 || VDP_Memory[0x3747]==0x20  || VDP_Memory[0x3747]==0xff) g_vdp_cleared = true;
+        else g_vdp_cleared = false;
+    }
+
     if (adamnet_is_key_available())
     {
-        return adamnet_dequeue_key();
+        byte sc = adamnet_dequeue_key();
+        qDebug() << "SCANCODE:" << Qt::hex << sc;
+        return sc;
+    }
+    if (LastKey != 0) {
+        qDebug() << "ASCII:" << Qt::hex << LastKey;
     }
 
     //return 0x00;
@@ -479,7 +410,7 @@ static byte GetKBD()
 }
 
 /** UpdateKBD() **********************************************/
-static void UpdateKBD(byte Dev,int V)
+void UpdateKBD(byte Dev,int V)
 {
     int J,N;
     word A;
@@ -489,7 +420,7 @@ static void UpdateKBD(byte Dev,int V)
     case -1:
         SetDCB(Dev,DCB_CMD_STAT,KBDStatus);
         break;
-    case CMD_STATUS:        
+    case CMD_STATUS:
     case CMD_SOFT_RESET:
     {
         // Is er een key?
@@ -520,11 +451,12 @@ static void UpdateKBD(byte Dev,int V)
             RAM_Memory[A] = V;
         }
         KBDStatus = RSP_STATUS+(J<N? 0x0C:0x00);
+        //SetDCB(Dev,DCB_CMD_STAT,KBDStatus);
         break;
     }
 }
 
-static void UpdatePRN(byte Dev,int V)
+void UpdatePRN(byte Dev,int V)
 {
 
     int N;
@@ -581,7 +513,7 @@ static void UpdatePRN(byte Dev,int V)
     }
 }
 
-static void AdamFlushCache(void)
+void AdamFlushCache(void)
 {
     for (word i=0; i<savedLEN; i++)
     {
@@ -591,259 +523,9 @@ static void AdamFlushCache(void)
     }
 }
 
-static void UpdateDSK(byte N,byte Dev,int V)
-{
-    static const byte InterleaveTable[8]= { 0,5,2,7,4,1,6,3 };
-    int I,J,K,LEN,SEC;
-    word BUF;
-    byte *Data;
 
-    /* We have limited number of disks */
-    if(N>=MAX_DISKS) return;
 
-    /* If reading DCB status, stop here */
-    if(V<0)
-    {
-        if (io_busy)
-        {
-            io_busy--;
-            SetDCB(Dev,DCB_CMD_STAT,0x00);
-
-            if (io_busy == 0 && last_command_read)
-            {
-                last_command_read=0;
-                AdamFlushCache();
-            }
-        }
-        else
-        {
-            SetDCB(Dev,DCB_CMD_STAT,RSP_STATUS);
-        }
-        return;
-    }
-
-    /* Reset errors, report missing disks */
-    SetDCB(Dev,DCB_NODE_TYPE,(GetDCB(Dev,DCB_NODE_TYPE)&0xF0) | (Disks[N].Data? 0x00:0x03));
-
-    /* Depending on the command... */
-    switch(V)
-    {
-    case CMD_STATUS:
-        /* Block-based device, 1kB buffer */
-        ReportDevice(Dev,0x0400,1);
-        break;
-
-    case CMD_SOFT_RESET:
-        SetDCB(Dev,DCB_CMD_STAT,RSP_STATUS);
-        break;
-
-    case CMD_WRITE:
-    case CMD_READ:
-        io_show_status = (V==CMD_READ) ? 1:2;
-        //TODO if (io_show_status == 2) adam_unsaved_data = 1;
-        /* Busy status by default */
-        SetDCB(Dev,DCB_CMD_STAT,0x00);
-        io_busy = DELAY_IO;
-        /* If no disk, stop here */
-        if(!Disks[N].Data) break;
-        /* Determine buffer address, length, block number */
-        BUF = GetDCBBase(Dev);
-        LEN = GetDCBLen(Dev);
-        LEN = LEN<0x0400? LEN:0x0400;
-        SEC = GetDCBSector(Dev);
-        savedBUF = BUF;
-        savedLEN = LEN;
-        /* For each 512-byte sector... */
-        for(I=0, SEC<<=1 ; I<LEN ; ++SEC, I+=0x200)
-        {
-            /* Remap sector number via interleave table */
-            K = (SEC&~7) | InterleaveTable[SEC&7];
-            /* Get pointer to sector data on disk */
-            Data = LinearFDI(&Disks[N],K);
-            /* If wrong sector number, stop here */
-            if(!Data)
-            {
-                SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x02);
-                LEN = 0;
-                break;
-            }
-            /* Read or write sectors */
-            K = I+0x200>LEN? LEN-I:0x200;
-            if(V==CMD_READ)
-            {
-                last_command_read = true;
-                for(J=0;J<K;++J,++BUF)
-                {
-                    HoldingBuf[I+J] = Data[J];
-                }
-            }
-            else
-            {
-                last_command_read = false;
-                for(J=0;J<K;++J,++BUF)
-                {
-                    Data[J] = RAM_Memory[BUF];
-                }
-            }
-            /* If disk access failed, stop here */
-            if(J<K)
-            {
-                SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x06);
-                LEN = 0;
-                break;
-            }
-        }
-        /* Done */
-        break;
-    }
-}
-
-static void UpdateTAP(byte N,byte Dev,int V)
-{
-    int I,J,K,LEN,SEC;
-    word BUF;
-    byte *Data;
-
-    /* If reading DCB status, stop here */
-    if (V < 0)
-    {
-        if (io_busy > 0)
-        {
-            io_busy--;
-            if (io_busy == 0)
-            {
-                // Net klaar: flush (indien READ) en direct READY zetten
-                if (last_command_read) {
-                    last_command_read = 0;
-                    AdamFlushCache();
-                }
-                SetDCB(Dev, DCB_CMD_STAT, RSP_STATUS);
-            }
-            else
-            {
-                // Nog bezig
-                SetDCB(Dev, DCB_CMD_STAT, 0x00);
-            }
-        }
-        else
-        {
-            // Veiligheid: al klaar
-            SetDCB(Dev, DCB_CMD_STAT, RSP_STATUS);
-        }
-        return;
-    }
-
-    /* Reset errors, report missing tapes */
-    SetDCB(Dev,DCB_NODE_TYPE,(Tapes[N&2].Data? 0x00:0x03)|(Tapes[(N&2)+1].Data? 0x00:0x30));
-
-    /* Depending on the command... */
-    switch(V)
-    {
-    case CMD_STATUS:
-        /* Block-based device, 1kB buffer */
-        ReportDevice(Dev,0x0400,1);
-        break;
-
-    case CMD_SOFT_RESET:
-        SetDCB(Dev,DCB_CMD_STAT,RSP_STATUS);
-        break;
-
-    case CMD_WRITE:
-    case CMD_READ:
-        qDebug() << "TAPE CMD_READ buffer filled";
-        io_show_status = (V==CMD_READ) ? 1:2;
-        // TODO if (io_show_status == 2) adam_unsaved_data = 1;
-        /* Busy status by default */
-        SetDCB(Dev,DCB_CMD_STAT,0x00);
-        io_busy = DELAY_IO;
-        /* If no tape, stop here */
-        if(!Tapes[N].Data) break;
-        /* Determine buffer address, length, block number */
-        BUF = GetDCBBase(Dev);
-        LEN = GetDCBLen(Dev);
-        LEN = LEN<0x0400? LEN:0x0400;
-        SEC = GetDCBSector(Dev);
-        savedBUF = BUF;
-        savedLEN = LEN;
-
-        /* For each 512-byte sector... */
-        for(I=0, SEC<<=1 ; I<LEN ; ++SEC, I+=0x200)
-        {
-            /* Get pointer to sector data on tape */
-            Data = LinearFDI(&Tapes[N],SEC);
-            /* If wrong sector number, stop here */
-            if(!Data)
-            {
-                SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x02);
-                LEN = 0;
-                break;
-            }
-            /* Read or write sectors */
-            K = I+0x200>LEN? LEN-I:0x200;
-            if(V==CMD_READ)
-            {
-                last_command_read = true;
-                for(J=0;J<K;++J,++BUF)
-                {
-                    HoldingBuf[I+J] = Data[J];
-                }
-            }
-            else
-            {
-                last_command_read = false;
-                for(J=0;J<K;++J,++BUF) Data[J] = RAM(BUF);
-            }
-            /* If disk access failed, stop here */
-            if(J<K)
-            {
-                SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x06);
-                LEN = 0;
-                break;
-            }
-        }
-        /* Done */
-        break;
-    }
-}
-
-static void UpdateDCB(byte Dev,int V)
-{
-    byte DevID;
-
-    /* When writing, ignore invalid commands */
-    if(!V || (V>=0x80)) return;
-
-    // if(V<0)
-    // {
-    //     // Lees de status, roept UpdateKBD aan met V=-1 (of een andere negatieve code)
-    //     // en UpdateKBD (-1) zet de status in DCB-RAM.
-    //     SetDCB(Dev,DCB_CMD_STAT,KBDStatus);
-    //     return;
-    // }
-
-    /* Compute device ID */
-    DevID = (GetDCB(Dev,DCB_DEV_NUM)<<4) + (GetDCB(Dev,DCB_ADD_CODE)&0x0F);
-
-    /* Depending on the device ID... */
-    switch(DevID)
-    {
-    case 0x01: UpdateKBD(Dev,V);break;
-    case 0x02: UpdatePRN(Dev,V);break;
-    case 0x04:
-    case 0x05:
-    case 0x06:
-    case 0x07: UpdateDSK(DiskID=DevID-4,Dev,V);break;
-    case 0x08:
-    case 0x09:
-    case 0x18:
-    case 0x19: UpdateTAP((DevID>>4)+((DevID&1)<<1),Dev,V);break;
-    case 0x52: UpdateDSK(DiskID,Dev,-2);break;
-
-    default:
-        SetDCB(Dev,DCB_CMD_STAT,RSP_ACK+0x0B);
-        break;
-    }
-}
+//--------------------------------------------------------------------------------------
 
 /** ReadPCB() ************************************************/
 /** Read value from a given PCB or DCB address.             **/
@@ -868,7 +550,10 @@ void ReadPCB(word A)
         byte Dev = (A - PCB_SIZE) / DCB_SIZE;
         if (Dev <= GetMaxDCB())
         {
-            UpdateDCB(Dev, -1); // Deze functie update de status in RAM
+            if(m_cpm_enabled)
+                UpdateDCB_CPM(Dev, -1); // Deze functie update de status in RAM
+            else
+                UpdateDCB_EOS(Dev, -1); // Deze functie update de status in RAM
 
             // Retourneer de zojuist geüpdatete DCB-status
             //return GetDCB(Dev, DCB_CMD_STAT);
@@ -880,7 +565,6 @@ void ReadPCB(word A)
     //return RAM_Memory[PCBAddr + A];
     //qDebug() << "ReadPCB at" << Qt::hex << A;
 }
-
 
 /** WritePCB() ***********************************************/
 /** Write value to a given PCB or DCB address.              **/
@@ -922,7 +606,12 @@ void WritePCB(word A,byte V)
     else if(!((A-PCB_SIZE)%DCB_SIZE))
     {
         byte Dev = (A-PCB_SIZE)/DCB_SIZE;
-        if(Dev<=GetMaxDCB()) UpdateDCB(Dev,V);
+        if(Dev<=GetMaxDCB()) {
+            if (m_cpm_enabled)
+                UpdateDCB_CPM(Dev,V);
+            else
+                UpdateDCB_EOS(Dev,V); }
+
     }
 }
 
@@ -1000,37 +689,26 @@ byte ChangeDisk(byte N,const char *FileName)
     P = FormatFDI(&Disks[N],FMT_ADMDSK);
     return(!!P);
 }
-
-// Let op: PCBTable[0] is de PCB Command/Status register
-extern byte PCBTable[];
-extern word PCBAddr; // Adres van de PCB in Z80 RAM
-
-// ✨ FIX 2: Implementatie van de ADAMNET I/O Read functie
+//--------------------------------------------------------------------------------------
 extern "C" unsigned char adamnet_read_io(int Address)
 {
-    unsigned char retval = 0xFF; // Standaard Z80 bus idle waarde
+        Address &= 0xFF;
+        unsigned char retval = 0x02; // DOE (bit 1) is altijd 1
 
-    Address &= 0xFF;
+        // Poorten 0xE0 t/m 0xE3 worden gebruikt voor het lezen van de AdamNet Status/Data.
+        if (Address >= 0xE0 && Address <= 0xE3)
+        {
+            // Lees de status uit PCBTable[0] (PCB_CMD_STAT)
+            retval = PCBTable[0];
 
-    // Poorten 0xE0 t/m 0xE3 worden gebruikt voor het lezen van de AdamNet Status/Data.
-    if (Address >= 0xE0 && Address <= 0xE3)
-    {
-        // ADAMNET HOST ADAPTER STATUS READ (Poort 0xE0)
-        // Dit is de meest kritieke read voor de CP/M BIOS.
-
-        // Lees de status uit PCBTable[0] (PCB_CMD_STAT)
-        retval = PCBTable[0];
-
-        // CRUCIALE FIX: WISSEN VAN DE DATA-IN FULL VLAG NA LEZING!
-        // De Z80 heeft zojuist de status gelezen, en als Bit 0 (Data-In Full) gezet is,
-        // MOET deze gewist worden om de CPU uit een interrupt-loop te halen.
-        PCBTable[0] &= ~0x01; // Wis Bit 0: Data-In Full
-
-        // Als u ook Bit 1 (Data-Out Empty) moet wissen, doe dit hier:
-        // PCBTable[0] |= 0x02; // Zet Bit 1: Data-Out Empty (altijd klaar om te ontvangen)
-    }
-    // Data reads (0xC0-0xC3) worden meestal door WritePCB/ReadPCB afgehandeld,
-    // maar we zorgen ervoor dat de status read de vlaggen wist.
-
-    return retval;
+            // DEBUG: Zie of de game de status opvraagt
+            if (retval & 0x01) {
+                //qDebug() << "[DEBUG-IO] Z80 leest STATUS E0: DATA KLAAR (0x01). Retval:" << Qt::hex << retval;
+            }
+            if (!m_cpm_enabled)
+            {
+            PCBTable[0] &= ~0x01; // Wis Bit 0: Data-In Full
+            }
+        }
+        return retval;
 }

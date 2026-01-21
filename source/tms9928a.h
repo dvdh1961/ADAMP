@@ -24,6 +24,15 @@
 
 #include "coleco.h"
 
+// 80C specific resolutions
+#define TVW_TMS 256
+#define TVH_TMS 192
+#define TVH_DEF 192     // default height
+#define TVH_ROW30 216   // 30 rows
+#define TVH_ 262
+#define TVW_ 336
+
+
 #define TMS9918_WIDTH 256
 #define TMS9918_HEIGHT 192
 

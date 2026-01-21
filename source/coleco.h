@@ -38,9 +38,9 @@
 extern int breakpoints[MAX_BREAKPOINTS];
 extern int breakpoint_count;
 
-// F18A specific resolutions
-#define TVW_F18A 336
-#define TVH_F18A 262
+// 80C specific resolutions
+#define TVW_ 336
+#define TVH_ 262
 // Sound
 
 enum
@@ -52,14 +52,14 @@ enum
 extern const unsigned char TMS9918A_palette[6*16*3];
 
 extern BYTE cv_palette[16*4*3];                        // Coleco display palette
-extern BYTE cv_display[TVW_F18A*TVH_F18A];             // Coleco display buffer (max screen size)
+extern BYTE cv_display[TVW_*TVH_];             // Coleco display buffer (max screen size)
 extern int cv_pal32[16*4];                             // Coleco display palette in 32 bits RGB
 
 extern BYTE ROM_Memory[MAX_CART_SIZE * 1024];          // ROM Carts up to 512K
 extern BYTE RAM_Memory[MAX_RAM_SIZE * 1024];           // RAM up to 128K (for the ADAM... )
 extern BYTE BIOS_Memory[MAX_BIOS_SIZE * 1024];         // 64K To hold our BIOS and related OS memory
 extern BYTE SRAM_Memory[MAX_EEPROM_SIZE*1024];         // SRAM up to 32K for the few carts which use it
-extern BYTE VDP_Memory[0x10000];                       // VDP video memory (64K for F18A support)
+extern BYTE VDP_Memory[0x10000];                       // VDP video memory (64K for 80C support)
 
 extern int tstates,frametstates;
 
@@ -88,6 +88,10 @@ extern BYTE coleco_port60; // Deze kan ook nuttig zijn
 extern BYTE RAMPages;     // Totaal aantal 64K expansiepagina's
 extern BYTE RAMPage;      // Huidig geselecteerde Expansion RAM pagina
 extern BYTE RAMMask;      // Masker voor RAMPages
+
+// === 80-COLUMN MODE SUPPORT ===                                           │
+extern BYTE coleco_80col_enabled;  // 0=disabled, 1=enabled                 │
+
 //---------------------------------------------------------------------------
 extern unsigned short coleco_gettmsaddr(BYTE whichaddr, BYTE mode, BYTE y);
 extern BYTE coleco_gettmsval(BYTE whichaddr, unsigned short addr, BYTE mode, BYTE y);
@@ -124,6 +128,8 @@ extern void Printer(BYTE V);
 extern void coleco_set_machine_type(int isAdam);
 extern void coleco_setSpinner(int player, int analogValue);
 
+extern BYTE *MemoryMap[8];
+
 #ifdef __cplusplus
 extern "C" {
 void RenderCalcPalette(BYTE *cv_palette_out, unsigned long nbcolors);
@@ -135,8 +141,15 @@ void coleco_eject_disk(int drive);
 void coleco_eject_tape(int drive);
 BYTE coleco_savestate(char *filename);
 BYTE coleco_loadstate(char *filename);
-
+int coleco_get_bios_status(int index);
 void coleco_clear_debug_flags(void);
+void coleco_probe_bios_status_all(void);
+void coleco_set_ram_page(int page);
+void coleco_setadammemory(bool resetAdamNet);
+int coleco_virtual_cpm_diskboot(const char* cpmTapeDdpPath,
+                                const char* diskDskPath,
+                                int tapeDrive,
+                                int diskDrive);
 }
 #else
 extern void RenderCalcPalette(BYTE *cv_palette_out, int nbcolors);

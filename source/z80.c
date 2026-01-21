@@ -121,8 +121,44 @@
  *      http://www.msxnet.org/tech/z80-documented.pdf
  *****************************************************************************/
 #include <string.h>
-
 #include "z80.h"
+#include <stdio.h>
+#include <stdarg.h>
+#include <stdint.h>
+
+
+//WM(Addr,Value)
+//RM(Addr)
+/* 1. Declaratie van onze nieuwe wrappers in coleco.cpp */
+extern void z80_wrapper_write(unsigned int address, unsigned char value);
+extern unsigned char z80_wrapper_read(unsigned int address);
+
+
+
+static void (*z80_logger_cb)(const char*) = NULL;
+
+void z80_set_logger(void (*cb)(const char*))
+{
+    z80_logger_cb = cb;
+}
+
+void z80_printf(const char* fmt, ...)
+{
+    char buf[512];
+
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+
+    if (z80_logger_cb) {
+        z80_logger_cb(buf);
+    } else {
+        // fallback: ouderwets
+        fputs(buf, stdout);
+        fputc('\n', stdout);
+    }
+}
 
 extern unsigned int cpu_readmem16(unsigned int address);
 extern void cpu_writemem16(unsigned int address, unsigned int value);
@@ -131,6 +167,18 @@ extern void cpu_writeport(unsigned int port, unsigned char value);
 extern unsigned int cpu_readport16(unsigned int port);
 extern void cpu_writeport16(unsigned int port, unsigned int value);
 extern void DebugUpdate(void);
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void debugBridge_checkIOAccess(int type, uint16_t port, uint8_t value, uint16_t pc_start);
+
+#ifdef __cplusplus
+}
+#endif
+
 
 #define INLINE
 //static __inline__
@@ -618,8 +666,9 @@ INLINE void BURNODD(int cycles, int opcodes, int cyclesum)
 /***************************************************************
  * Read a byte from given memory location
  ***************************************************************/
-#define RM(addr) (UINT8)cpu_readmem16(addr)
-
+//#define RM(addr) (UINT8)cpu_readmem16(addr)
+/* READ MACRO (RM) */
+#define RM(Addr) z80_wrapper_read(Addr)
 /***************************************************************
  * Read a word from given memory location
  ***************************************************************/
@@ -628,12 +677,12 @@ INLINE void RM16( UINT32 addr, PAIR *r )
   r->b.l = RM(addr);
   r->b.h = RM((addr+1)&0xffff);
 }
-
 /***************************************************************
  * Write a byte to given memory location
  ***************************************************************/
-#define WM(addr,value) cpu_writemem16(addr,value)
-
+//#define WM(addr,value) cpu_writemem16(addr,value)
+/* WRITE MACRO (WM) */
+#define WM(Addr,Value) z80_wrapper_write(Addr,Value)
 /***************************************************************
  * Write a word to given memory location
  ***************************************************************/
@@ -1324,6 +1373,7 @@ INLINE UINT8 SET(UINT8 bit, UINT8 value)
 #define IND {                          \
   unsigned t;                          \
   UINT8 io = IN(BC);                      \
+  debugBridge_checkIOAccess(4 , BC, io,(UINT16)((PC - 2) & 0xFFFF)); \
   WZ = BC - 1;  \
   CC(ex,0xaa);                      \
   B--;                            \
@@ -1345,6 +1395,7 @@ INLINE UINT8 SET(UINT8 bit, UINT8 value)
   B--;                            \
   WZ = BC - 1;  \
   OUT( BC, io );                        \
+  debugBridge_checkIOAccess(5 , BC, io,(UINT16)((PC - 2) & 0xFFFF)); \
   HL--;                            \
   F = SZ[B];                          \
   t = (unsigned)L + (unsigned)io;                \
@@ -3158,7 +3209,12 @@ OP(op,cf) { RST(0x08);                                                          
 OP(op,d0) { RET_COND( !(F & CF), 0xd0 );                                                                   } /* RET  NC          */
 OP(op,d1) { POP( de );                                                                                     } /* POP  DE          */
 OP(op,d2) { JP_COND( !(F & CF) );                                                                          } /* JP   NC,a        */
-OP(op,d3) { unsigned n = ARG() | (A << 8); OUT( n, A ); WZ_L = ((n & 0xff) + 1) & 0xff;  WZ_H = A; } /* OUT  (n),A       */
+OP(op,d3) { uint16_t pc_start = (uint16_t)((PC - 1) & 0xFFFF);
+            unsigned n = ARG() | (A << 8);
+            OUT( n, A );
+            debugBridge_checkIOAccess(5 , (uint16_t)n, (uint8_t)A, pc_start);
+            WZ_L = ((n & 0xff) + 1) & 0xff;
+            WZ_H = A;                                                                                      } /* OUT  (n),A       */
 OP(op,d4) { CALL_COND( !(F & CF), 0xd4 );                                                                  } /* CALL NC,a        */
 OP(op,d5) { PUSH( de );                                                                                    } /* PUSH DE          */
 OP(op,d6) { SUB(ARG());                                                                                    } /* SUB  n           */
@@ -3167,7 +3223,11 @@ OP(op,d7) { RST(0x10);                                                          
 OP(op,d8) { RET_COND( F & CF, 0xd8 );                                                                      } /* RET  C           */
 OP(op,d9) { EXX;                                                                                           } /* EXX              */
 OP(op,da) { JP_COND( F & CF );                                                                             } /* JP   C,a         */
-OP(op,db) { unsigned n = ARG() | (A << 8); A = IN( n ); WZ = n + 1;                                    } /* IN   A,(n)       */
+OP(op,db) { uint16_t pc_start = (uint16_t)((PC - 1) & 0xFFFF);
+            unsigned n = ARG() | (A << 8);
+            A = IN( n );
+            debugBridge_checkIOAccess(4 , (uint16_t)n, (uint8_t)A, pc_start);
+            WZ = n + 1;                                                                                    } /* IN   A,(n)       */
 OP(op,dc) { CALL_COND( F & CF, 0xdc );                                                                     } /* CALL C,a         */
 OP(op,dd) { R++; EXEC(dd,ROP());                                                                           } /* **** DD xx       */
 OP(op,de) { SBC(ARG());                                                                                    } /* SBC  A,n         */
@@ -3229,6 +3289,7 @@ void take_interrupt(void)
     irq_vector = (irq_vector & 0xff) | (I << 8);
     PUSH( pc );
     RM16( irq_vector, &Z80.pc );
+
       /* CALL $xxxx + 'interrupt latency' cycles */
     z80_ICount -= cc[Z80_TABLE_op][0xcd] + cc[Z80_TABLE_ex][0xff];
   }
@@ -3398,18 +3459,8 @@ void z80_reset(void)
 
     z80_reset_cycle_count();
     z80_set_irq_line (0, CLEAR_LINE);
-}
 
-/*
-void z80_exit(void)
-{
-  if (SZHVC_add) free(SZHVC_add);
-  SZHVC_add = NULL;
-  if (SZHVC_sub) free(SZHVC_sub);
-  SZHVC_sub = NULL;
 }
-*/
-
 
 /****************************************************************************
  * Execute 'cycles' T-states. Return number of T-states really executed
@@ -3435,6 +3486,7 @@ int z80_checknmi(void) {
 
 int z80_do_opcode(void) {
     z80_ICount=0;
+
     // check for IRQs before each instruction
     if (Z80.irq_state != CLEAR_LINE && IFF1 && !Z80.after_ei)
       take_interrupt();
