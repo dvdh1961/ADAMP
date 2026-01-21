@@ -9,6 +9,7 @@
 #include <QListWidget>
 
 #include "debug_bridge.h"
+#include <QTimer>
 
 class ColecoController;
 class QComboBox;
@@ -17,6 +18,7 @@ class QPushButton;
 class QTabWidget;
 
 using DebuggerBreakpoint = CoreBreakpoint;
+
 
 struct DebuggerSymbol {
     QString type;           // b.v. "call", "data", "text"
@@ -27,6 +29,7 @@ struct DebuggerSymbol {
     bool operator<(const DebuggerSymbol& other) const {
         return address < other.address;
     }
+
 };
 
 class DebuggerWindow : public QMainWindow
@@ -40,6 +43,13 @@ public:
     void setBreakpointDefinitions(const QList<DebuggerBreakpoint>& list);
     QList<DebuggerSymbol> getSymbolDefinitions() const;
     void setSymbolDefinitions(const QList<DebuggerSymbol>& list);
+    QTabWidget   *m_disasmTabWidget = nullptr;
+
+    enum class ProgramState {
+        Stop,
+        Run,
+        Pause
+    };
 
 signals:
     void requestStepCPU();
@@ -102,7 +112,6 @@ private:
     QTabWidget   *m_rightTabWidget = nullptr;
     QTabWidget   *m_mainBottomTabWidget = nullptr;
     QTabWidget   *m_memSourceTabWidget = nullptr;
-    QTabWidget   *m_disasmTabWidget = nullptr;
     QTabWidget   *m_regsTabWidget = nullptr;
     QTabWidget   *m_flagsStackTabWidget = nullptr;
     QListWidget  *m_bpList      = nullptr;
@@ -146,6 +155,7 @@ private:
     void syncBreakpointsToCore();
     void gotoAddress();
     void fillDisassemblyAround(uint16_t addr);
+    void setProgramState(ProgramState state);
 
     uint8_t readMemoryByte(uint32_t address);
     void writeMemoryByte(uint32_t address, uint8_t value);
@@ -159,4 +169,16 @@ private:
     QString m_breakpointPath = "media/breakpoints";
     bool m_symbolsEnabled = true;
     int m_scrollAttempts = 0;
+
+    // Polling fallback: if a breakpoint pauses the emulator but the controller
+    // doesn't emit emuPausedChanged, we still refresh the debugger UI.
+    QTimer *m_breakPollTimer = nullptr;
+    bool m_forcedPausedUi = false;
+
+    QTabWidget* m_tabWidget = nullptr;
+    QWidget*    m_programWidget = nullptr;
+
+    QTimer* m_pauseBlinkTimer = nullptr;
+    bool m_pauseBlinkState = false;
+    ProgramState m_programState = ProgramState::Stop;
 };

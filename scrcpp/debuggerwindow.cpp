@@ -71,6 +71,61 @@ static BreakpointType breakpointTypeFromString(const QString& text)
     return BreakpointType::BP_EXECUTE;
 }
 
+
+// --- Program tab LED helpers (no header changes needed) ---
+static inline int programTabIndex(const DebuggerWindow* self)
+{
+    if (!self || !self->m_disasmTabWidget) return -1;
+    // "Program" is the tab we add to m_disasmTabWidget
+    // (we use the current index of the first/only tab; fallback to 0).
+    if (self->m_disasmTabWidget->count() == 0) return -1;
+    return 0;
+}
+
+static void setProgramLedIcon(DebuggerWindow* self, const QIcon& icon)
+{
+    if (!self || !self->m_disasmTabWidget) return;
+    const int idx = programTabIndex(self);
+    if (idx < 0) return;
+    self->m_disasmTabWidget->setTabIcon(idx, icon);
+}
+
+static QTimer* ensurePauseBlinkTimer(DebuggerWindow* self)
+{
+    if (!self) return nullptr;
+    auto timer = self->findChild<QTimer*>("dbg_pauseBlinkTimer");
+    if (!timer) {
+        timer = new QTimer(self);
+        timer->setObjectName("dbg_pauseBlinkTimer");
+        timer->setInterval(400);
+
+        // store blink phase on the window (no member needed)
+        self->setProperty("dbg_pauseBlinkPhase", false);
+
+        QObject::connect(timer, &QTimer::timeout, self, [self]() {
+            if (!self->m_disasmTabWidget) return;
+
+            const bool phase = self->property("dbg_pauseBlinkPhase").toBool();
+            self->setProperty("dbg_pauseBlinkPhase", !phase);
+
+            setProgramLedIcon(self, phase
+                ? QIcon(":/images/images/LED_GRAY.png")  // grijs
+                : QIcon(":/images/images/LED_YELLOW.png")  // geel
+            );
+        });
+    }
+    return timer;
+}
+
+static void stopPauseBlink(DebuggerWindow* self)
+{
+    if (!self) return;
+    if (auto t = self->findChild<QTimer*>("dbg_pauseBlinkTimer")) {
+        t->stop();
+    }
+    self->setProperty("dbg_pauseBlinkPhase", false);
+}
+
 DebuggerWindow::DebuggerWindow(QWidget *parent)
     : QMainWindow(parent),
     m_controller(nullptr)
@@ -149,6 +204,10 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
         disLayout->addWidget(m_disasmView, 1);
         m_disasmTabWidget->addTab(disasmTab, tr("Program"));
 
+
+// --- LED naast "Program" tab (stop by default) ---
+m_disasmTabWidget->setIconSize(QSize(14, 14));
+m_disasmTabWidget->setTabIcon(m_disasmTabWidget->indexOf(disasmTab), QIcon(":/images/images/LED_GRAY.png"));
         topRow->addWidget(m_disasmTabWidget, 1); // Neemt de meeste horizontale stretch
     }
 
@@ -537,7 +596,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
     btnStep        = createImageButton(":/images/images/STEP.png");
     btnRun         = createImageButton(":/images/images/RUN.png");
     btnBreak       = createImageButton(":/images/images/BREAK.png");
-    btnRefresh     = createImageButton(":/images/images/REFRESH.png");
+    //btnRefresh     = createImageButton(":/images/images/REFRESH.png");
     btnGotoAddr    = createImageButton(":/images/images/GOTO.png");
     btnSinglestep  = createImageButton(":/images/images/SSTEP.png");
     btnStepOver    = createImageButton(":/images/images/STEPOVER.png");
@@ -562,9 +621,9 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
     });
     connect(btnGotoAddr, &QPushButton::clicked, this, &DebuggerWindow::gotoAddress);
     connect(btnSinglestep, &QPushButton::clicked, this, &DebuggerWindow::nxtSStep);
-    connect(btnRefresh, &QPushButton::clicked, this, &DebuggerWindow::updateAllViews);
+    //connect(btnRefresh, &QPushButton::clicked, this, &DebuggerWindow::updateAllViews);
     connect(btnRun, &QPushButton::clicked, this, [this](){
-        if (m_controller) m_controller->resumeEmulation();
+        if (m_controller) {DebugBridge::instance().clearLastBreakPC(); m_controller->resumeEmulation();}
         if (m_disasmView) {
             m_disasmView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         }
@@ -576,9 +635,10 @@ DebuggerWindow::DebuggerWindow(QWidget *parent)
     buttons->addWidget(btnStepOver);
     buttons->addWidget(btnGotoAddr);
     buttons->addWidget(btnRun);
-    buttons->addWidget(btnBreak);
     buttons->addStretch();
-    buttons->addWidget(btnRefresh);
+    buttons->addWidget(btnBreak);
+    //buttons->addStretch();
+    //buttons->addWidget(btnRefresh);
     rootLayout->addLayout(buttons, 0);
 
     updateAllViews();
@@ -602,9 +662,29 @@ void DebuggerWindow::setController(ColecoController *controller)
         connect(m_controller, &ColecoController::emulationStopped,
                 this, &DebuggerWindow::updateAllViews);
 
+        connect(m_controller, &ColecoController::emulationStopped,
+                this, [this]() {
+                    stopPauseBlink(this);
+                    setProgramLedIcon(this, QIcon(":/images/images/LED_GRAY.png"));
+                });
         // Optioneel: Voor de knoppen (Run/Step/Break) status:
         connect(m_controller, &ColecoController::emuPausedChanged,
                 this, &DebuggerWindow::onEmuPausedChanged); // *U moet deze slot toevoegen*
+
+        // Fallback: if breakpoints pause the emulator without emitting emuPausedChanged,
+        // detect it via DebugBridge::lastBreakPC() and refresh UI.
+        m_breakPollTimer = new QTimer(this);
+        m_breakPollTimer->setInterval(50);
+        connect(m_breakPollTimer, &QTimer::timeout, this, [this]() {
+            const uint16_t hitPc = DebugBridge::instance().lastBreakPC();
+            if (hitPc != 0 && !m_forcedPausedUi) {
+                m_forcedPausedUi = true;
+                onEmuPausedChanged(true);
+                updateAllViews();
+            }
+        });
+        m_breakPollTimer->start();
+
     }
 }
 
@@ -660,7 +740,17 @@ void DebuggerWindow::updateDisassembly()
 
     m_disasmView->setRowCount(0);
 
-    const uint16_t pc = Z80.pc.w.l;
+    //const uint16_t pc = Z80.pc.w.l;
+
+    uint16_t pc = DebugBridge::instance().lastBreakPC();
+    if (pc == 0)
+        pc = Z80.pc.w.l;
+
+
+    // qDebug() << "updateDisassembly lastBreakPC="
+    //          << QString::number(DebugBridge::instance().lastBreakPC(),16)
+    //          << "cpuPC=" << QString::number(Z80.pc.w.l,16);
+
     const int MAX_LINES        = 64;
     const int LINES_BEFORE_PC  = MAX_LINES / 2;
     const uint16_t SEARCH_BACK_BYTES = 0x0200; // zoek maximaal 0x200 bytes terug
@@ -1256,6 +1346,15 @@ void DebuggerWindow::syncBreakpointsToCore()
     // Master bepaalt of ze effectief "enabled" zijn
     for (CoreBreakpoint &bp : guiBreakpoints) {
         bp.enabled = m_breakpointsEnabled && bp.enabled;
+
+        const QString t = bp.definition_text.trimmed().toUpper();
+
+        // Let op: eerst de meer specifieke tokens
+        if      (t.startsWith("WR "))  bp.type = BreakpointType::BP_WRITE;
+        else if (t.startsWith("RD "))  bp.type = BreakpointType::BP_READ;
+        else if (t.startsWith("OUT"))  bp.type = BreakpointType::BP_IO_OUT;
+        else if (t.startsWith("IN"))   bp.type = BreakpointType::BP_IO_IN;
+        // (optioneel: EXEC/MEM/CLK/etc als jij die ook via text bepaalt)
     }
 
     qDebug() << "[DebuggerWindow] syncBreakpointsToCore: masterEnabled="
@@ -1473,6 +1572,7 @@ void DebuggerWindow::onBpSave()
 void DebuggerWindow::closeEvent(QCloseEvent *event)
 {
     if (m_controller) {
+        DebugBridge::instance().clearLastBreakPC();
         m_controller->resumeEmulation();
     }
     emit requestRunCPU();
@@ -1600,14 +1700,17 @@ void DebuggerWindow::onRegistersContextMenu(const QPoint &pos)
 
 void DebuggerWindow::onEmuPausedChanged(bool paused)
 {
+    if (!paused)
+        m_forcedPausedUi = false;
+
     if (btnRun)
         btnRun->setEnabled(paused);
 
     if (btnStep)
         btnStep->setEnabled(paused);
 
-    if (btnBreak)
-        btnBreak->setEnabled(!paused);
+   // if (btnBreak)
+   //     btnBreak->setEnabled(!paused);
 
     if (btnGotoAddr)
         btnGotoAddr->setEnabled(paused);
@@ -1621,6 +1724,18 @@ void DebuggerWindow::onEmuPausedChanged(bool paused)
     if (paused) {
         updateAllViews();
     }
+
+
+// --- Program-tab LED update ---
+// paused = breakpoint/step mode => blink (grijs/geel)
+// !paused = running => groen
+if (paused) {
+    ensurePauseBlinkTimer(this)->start();
+    setProgramLedIcon(this, QIcon(":/images/images/LED_YELLOW.png"));
+} else {
+    stopPauseBlink(this);
+    setProgramLedIcon(this, QIcon(":/images/images/LED_GREEN.png"));
+}
 }
 
 void DebuggerWindow::writeMemoryByte(uint32_t address, uint8_t data)

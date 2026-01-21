@@ -6,8 +6,8 @@
 #include <QAudioSink>
 #include <QIODevice>
 #include <QElapsedTimer>
-#include <atomic>
 #include "coleco.h"
+#include <QSoundEffect>
 
 #define KB_F1 0x54
 #define KB_F2 0x55
@@ -42,12 +42,16 @@ public:
         Machine_Adam   = 1
     };
     Q_ENUM(MachineType)
+    bool AlreadyReset = false;
+    bool m_sgm_enabled = false;
 
 private:
     std::atomic_bool m_running {false};
     int      m_realFrames = 0;
     QImage m_frameBuffer;
-    bool m_paused = false;
+    //bool m_paused = false;
+    std::atomic_bool m_pauseOnBios{false};
+    std::atomic_bool m_paused{false};
 
     QAudioSink* m_audioSink = nullptr;
     QIODevice* m_audioDevice = nullptr;
@@ -65,6 +69,7 @@ public slots:
     void ejectColecoCartridge();
     void resetMachine();
     void resethMachine();
+    void powerOffMachine();
     void setSGMEnabled(bool enabled);
     void setVideoStandard(bool isNTSC);
     void onAdamKeyEvent(int adamKeyCode);
@@ -81,10 +86,20 @@ public slots:
     void ejectTape(int drive);
     void saveState(const QString& filePath);
     void loadState(const QString& filePath);
-    Q_INVOKABLE void setMachineType(int machineType); // 0=Coleco/Phoenix, 1=ADAM
-    Q_INVOKABLE void setMachineType(MachineType machineType);
-    Q_INVOKABLE void resetAdam();
-    Q_INVOKABLE void resetColeco();
+    void setMachineType(MachineType machineType);
+    void resetAdam();
+    void resetColeco();
+    void loadBiosRoms(const QString& colecoPath, const QString& eosPath, const QString& writerPath);
+    void updateBiosStatus();
+    void prepareForNewCRomAndPauseOnBios();
+    void prepareForNewARomAndPauseOnBios();
+    void startWithBios(const QString& colecoPath,
+                       const QString& eosPath,
+                       const QString& writerPath);
+    void bootCpmDisk();
+
+public slots:
+    void setDTsoundEnabled(bool enabled);
 
 signals:
     void frameReady(const QImage &frame);
@@ -93,10 +108,17 @@ signals:
     void videoStandardChanged(const QString &standard);
     void fpsUpdated(int fps);
     void sgmStatusChanged(bool enabled);
+    void col80StateChanged(bool enabled);
     void diskStatusChanged(int drive, const QString& fileName);
     void tapeStatusChanged(int drive, const QString& fileName);
     void machineTypeChanged(MachineType newType);
     void cartridgeStatusChanged(const QString& colecoName, const QString& adamName);
+    void onBiosStatusUpdated(int colecoExt, int eosExt, int writerExt);
+    void fatalBiosError(const QString& errorMessage);
+    void biosCFramesDone();
+    void biosAFramesDone();
+    void requestPlayDiskSound();
+    void requestPlayTapeSound();
 
 private:
     bool   m_isNTSC;
@@ -110,12 +132,39 @@ private:
     QString m_currentTapePath[MAX_TAPES];
     QString m_currentColecoCartPath;
     QString m_currentAdamCartPath;
+    QByteArray m_colecoPathBytes;
+    QByteArray m_eosPathBytes;
+    QByteArray m_writerPathBytes;
 
     QElapsedTimer m_fpsCalcTimer;
     int m_fpsFrameCount;
 
     QImage frameFromBridge();
     void doHardReset();
+    int  m_frameCCounter = 0;
+    bool m_waitForCBiosFrames = false;
+    int  m_frameACounter = 0;
+    bool m_waitForABiosFrames = false;
+    bool m_coreInitialized = false;
+    bool m_preserveMediaOnStop = false;
+
+    bool m_pendingCpmBootstrap = false;
+
+    void onResetPressed();
+    enum class BootPlan {
+        None,
+        NormalDiskBoot,
+        CpmTapeThenDiskA
+    };
+
+    BootPlan m_bootPlan = BootPlan::None;
+    QString  m_bootDisk0Path;   // wat er in slot 0 zit (pad)
+
+    // Deferred mount (CP/M tape-boot): hide disk during ROM boot, mount a bit later
+    QString m_deferredMountDisk0Path;
+    int m_deferredMountFramesRemaining = 0;
+
+    std::atomic<bool> m_dtSoundEnabled{true};
 };
 
 #endif

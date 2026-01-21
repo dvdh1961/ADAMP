@@ -7,6 +7,8 @@
 #include <QMutex>
 #include "mainwindow.h"
 
+extern bool m_80colEnabled;
+
 class ScreenWidget : public QWidget
 {
     Q_OBJECT
@@ -33,6 +35,10 @@ public:
    void setBackgroundColor(const QColor& color);
    void setSmoothScaling(bool enabled);
    void setFullScreenMode(bool enabled);
+
+   // 80-column mode control
+   void set80ColumnMode(bool enabled);
+   bool is80ColumnMode() const { return m_80colEnabled; }
 
 public slots:
     void updateFrame(const QImage &frame);
@@ -70,6 +76,12 @@ private:
     void applyCMYRasterFilter(QImage& image);
     void applyRGBRasterFilter(QImage& image);
 
+    // 80-column text mode support
+    QFont m_80colFont;
+    void render80ColumnText(QPainter& painter, const QRect& targetRect);
+    void read80ColumnVRAM(char textBuffer[24][80], unsigned char colorBuffer[24][80]);
+    void setText(QPainter& painter, const QRect& targetRect, int charwidth, int charHeight, unsigned char globalBgIdx);
+    static const QColor TMS_COLORS[16];
 };
 
 #endif

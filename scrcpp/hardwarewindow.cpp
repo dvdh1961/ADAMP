@@ -27,6 +27,7 @@
 #include <QDebug>
 
 bool HardwareWindow::m_sgmSelectionState = false;
+bool HardwareWindow::m_c80SelectionState = false;
 
 static QWidget* makeHSpacer(QWidget* parent=nullptr) {
     auto *w = new QWidget(parent);
@@ -113,6 +114,9 @@ void HardwareWindow::buildUi()
     m_machineGroup->addButton(m_btnAdamP,  static_cast<int>(MACHINE_ADAMP));
     m_machineGroup->addButton(m_btnAdam,   static_cast<int>(MACHINE_ADAM));
 
+    m_btnAdamP->setEnabled(false);
+
+
     connect(m_machineGroup, &QButtonGroup::idClicked,
             this, [this](int){ onMachineChanged(); });
 
@@ -159,12 +163,12 @@ void HardwareWindow::buildUi()
     // === Additional Hardware ===
     m_groupAddHw = new QGroupBox("Additional Hardware", this);
     m_btnSGM  = new QToolButton(m_groupAddHw);
-    m_btnF18A = new QToolButton(m_groupAddHw);
+    m_btn80C = new QToolButton(m_groupAddHw);
     m_btnPrinter = new QToolButton(m_groupAddHw);
 
     auto *layHw = new QHBoxLayout;
     layHw->addWidget(makeLabeledButton(m_btnSGM,  ":/images/images/hw_sgm.png",  "Opcode SGM",       false));
-    layHw->addWidget(makeLabeledButton(m_btnF18A, ":/images/images/hw_f18a.png", "F18A VGA Adapter", false));
+    layHw->addWidget(makeLabeledButton(m_btn80C, ":/images/images/hw_c80.png", "C80 T-DOS", false));
 
     auto *wrapPrinter = makeLabeledButton(m_btnPrinter, ":/images/images/hw_printer.png", "Printer Output", false);
     layHw->addWidget(wrapPrinter);
@@ -174,26 +178,20 @@ void HardwareWindow::buildUi()
 
     connect(m_btnSGM,  &QToolButton::toggled, this, &HardwareWindow::onToggleSGM);
     connect(m_btnSGM,  &QToolButton::clicked, this, &HardwareWindow::updateAvailability);
-    connect(m_btnF18A, &QToolButton::clicked, this, &HardwareWindow::updateAvailability);
+    connect(m_btn80C,  &QToolButton::toggled, this, &HardwareWindow::onToggleC80);
+    connect(m_btn80C,  &QToolButton::clicked, this, &HardwareWindow::updateAvailability);
     connect(m_btnPrinter, &QToolButton::clicked, this, &HardwareWindow::onPrinterClicked);
 
     // === Video ===
     m_groupVideo = new QGroupBox("Video", this);
-    auto *lblDisp = new QLabel("Display Driver", m_groupVideo);
     auto *lblPal  = new QLabel("Palette", m_groupVideo);
-
-    m_cboDisplay = new QComboBox(m_groupVideo);
-    m_cboDisplay->addItems({"GDI", "OpenGL", "Software"});
 
     m_cboPalette = new QComboBox(m_groupVideo);
     m_cboPalette->addItems({"Coleco", "TMS9918", "MSX", "Grayscale"});
 
     auto *layVidTop = new QGridLayout;
-    layVidTop->addWidget(lblDisp,      0, 0);
-    layVidTop->addWidget(m_cboDisplay, 0, 1);
-    layVidTop->addWidget(lblPal,       1, 0);
-    layVidTop->addWidget(m_cboPalette, 1, 1);
-    layVidTop->setColumnStretch(1, 1);
+    layVidTop->addWidget(lblPal,       0, 0);
+    layVidTop->addWidget(m_cboPalette, 0, 1);
 
     // 16 kleur-swatch
     auto *palLayout = new QGridLayout();
@@ -250,7 +248,7 @@ void HardwareWindow::buildUi()
 
     // STRETCH FACTOR
     layEmuGrid->setColumnStretch(0, 1); // Code Label (Smalle kolom)
-    layEmuGrid->setColumnStretch(1, 8); // Beschrijving Label (Brede kolom)
+    layEmuGrid->setColumnStretch(1, 7); // Beschrijving Label (Brede kolom)
 
     // --- Headers (Rij 0) ---
     QLabel *lblHwCol = new QLabel("Code", m_groupEmu);
@@ -317,16 +315,9 @@ void HardwareWindow::buildUi()
     m_lblEmuD6 = createEmuLabel("No disc");
     addTableRow(6, "D6", m_lblEmuD6);
 
-    m_lblEmuD7 = createEmuLabel("No disc");
-    addTableRow(7, "D7", m_lblEmuD7);
-
     // Emu Layout (combineert image, widgets en grid)
     auto *layEmu = new QVBoxLayout;
     layEmu->addWidget(imgEmu, 0, Qt::AlignHCenter);
-    layEmu->addWidget(m_chkStartDebug);
-    layEmu->addWidget(m_chkNoDelayBios);
-    layEmu->addWidget(m_chkPatchBiosPAL);
-    layEmu->addWidget(m_cboFrequency);
     layEmu->addLayout(layEmuGrid);
     layEmu->addStretch(1);
     m_groupEmu->setLayout(layEmu);
@@ -402,7 +393,7 @@ void HardwareWindow::loadFromConfig(const HardwareConfig& c)
     m_btnAdamP  ->setChecked(c.machine == MACHINE_ADAMP);
 
     // Video
-    m_cboDisplay->setCurrentIndex(qBound(0, c.renderMode, m_cboDisplay->count()-1));
+    //m_cboDisplay->setCurrentIndex(qBound(0, c.renderMode, m_cboDisplay->count()-1));
     m_cboPalette->setCurrentIndex(qBound(0, c.palette,    m_cboPalette->count()-1));
 
     if (!m_loading) { // Zorg dat dit alleen gebeurt bij het openen van de dialoog
@@ -410,7 +401,7 @@ void HardwareWindow::loadFromConfig(const HardwareConfig& c)
     }
     // Additional hardware
     m_btnSGM->setChecked(HardwareWindow::m_sgmSelectionState);
-    m_btnF18A->setChecked(c.f18aEnabled);
+    m_btn80C->setChecked(c.c80Enabled);
 
     // Controllers
     m_btnSteering->setChecked(c.steeringWheel);
@@ -433,12 +424,12 @@ HardwareConfig HardwareWindow::readFromUi() const
     else                               c.machine = MACHINE_COLECO;
 
     // Video
-    c.renderMode = m_cboDisplay->currentIndex();
+    //c.renderMode = m_cboDisplay->currentIndex();
     c.palette    = m_cboPalette->currentIndex();
 
     // Additional hardware
     c.sgmEnabled  = !m_btnAdam->isChecked() && m_btnSGM->isChecked();
-    c.f18aEnabled = m_btnF18A->isChecked();
+    c.c80Enabled = m_btn80C->isChecked();
 
     c.steeringWheel = m_btnSteering->isChecked();
     c.rollerCtrl    = m_btnRoller->isChecked();
@@ -461,12 +452,16 @@ void HardwareWindow::updateAvailability()
 
         HardwareWindow::m_sgmSelectionState = m_btnSGM->isChecked();
         m_btnSGM->setEnabled(false);
+        m_btn80C->setEnabled(true);
 
     } else {
         m_btnSGM->setEnabled(true);
         m_btnSGM->setChecked(HardwareWindow::m_sgmSelectionState);
-    }
-    m_btnF18A->setEnabled(true);
+        m_btn80C->setEnabled(false);
+        m_btn80C->setChecked(HardwareWindow::m_c80SelectionState);
+        m_btn80C->setChecked(false);
+        // m_80colEnabled = false;
+     }
     m_btnPrinter->setEnabled(true);
 
     const bool padControllers = isColeco || isAdamP;
@@ -494,8 +489,13 @@ void HardwareWindow::updateAvailability()
     setBorder(m_btnRoller);
     setBorder(m_btnSuperAction);
     setBorder(m_btnSGM);
-    setBorder(m_btnF18A);
+    setBorder(m_btn80C);
     setBorder(m_btnPrinter);
+}
+
+void HardwareWindow::onToggleC80(bool checked)
+{
+    m_c80SelectionState = checked;
 }
 
 void HardwareWindow::onToggleSGM(bool checked)

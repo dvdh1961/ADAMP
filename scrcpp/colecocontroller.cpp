@@ -7,6 +7,7 @@
 #include <QAudioFormat>
 #include <QTimer>
 #include <QFile>
+#include <QDir>
 
 // ==== C++-core header ====
 #include "coleco.h"
@@ -24,10 +25,25 @@ extern "C" {
 
 #include <stdint.h>
 
+ColecoController *g_controller = nullptr;
+static std::atomic<bool> g_dtSoundEnabled{true};
+
+
 extern "C" void adamnet_inject_scancode(uint8_t sc);
 extern "C" void adamnet_block_ascii_fkeys(int count);
 extern "C" void PutKBD(unsigned int Key);
 extern "C" void adamnet_host_prn_write_ascii(const char* s);
+extern "C" void coleco_set_bios_paths(const char* coleco_path, const char* eos_path, const char* writer_path);
+extern "C" void sendAsciiSequenceWithDelay(QObject* context,const QByteArray& seq, int delayMs = 80)
+{
+    int t = 0;
+    for (unsigned char ch : seq) {
+        QTimer::singleShot(t, context, [ch]() {
+            PutKBD(static_cast<unsigned int>(ch));
+        });
+        t += delayMs;
+    }
+}
 
 // ==== Palet-symbolen ====
 extern unsigned char cv_palette[];
@@ -35,7 +51,6 @@ extern int           cv_pal32[];
 void RenderCalcPalette(unsigned char *dst, int nbcolors);
 
 // =====================================================================================
-
 ColecoController::ColecoController(QObject *parent)
     : QObject(parent)
     , m_running(false)
@@ -47,6 +62,7 @@ ColecoController::ColecoController(QObject *parent)
     , m_currentAdamCartPath()
     , m_fpsFrameCount(0)
 {
+    g_controller = this;
     m_monoBuf = new int16_t[882];
     m_stereoBuf = new int16_t[882 * 2];
 
@@ -54,6 +70,47 @@ ColecoController::ColecoController(QObject *parent)
     m_SampleRate = 44100;
 
     setVideoStandard(true);
+
+    // In de constructor van ColecoController (colecocontroller.cpp)
+    QTimer *heartbeat = new QTimer(this);
+
+    // Aparte statische timers voor onafhankelijke cooldown
+    static QElapsedTimer diskCooldown;
+    static QElapsedTimer tapeCooldown;
+    if (!diskCooldown.isValid()) diskCooldown.start();
+    if (!tapeCooldown.isValid()) tapeCooldown.start();
+
+    connect(heartbeat, &QTimer::timeout, this, [this]() {
+        if (!m_running || m_paused) return;
+
+        // Globale enable/disable voor disk/tape "activity" sounds
+
+
+        if (!g_dtSoundEnabled.load()) {
+            // Consume triggers zodat ze niet blijven opstapelen terwijl geluid uit staat
+            g_diskSoundActive.store(false);
+            g_tapeSoundActive.store(false);
+            return;
+        }
+
+        // Onafhankelijke check voor Disk
+        if (g_diskSoundActive.exchange(false)) {
+            if (diskCooldown.elapsed() > 60) {
+                emit requestPlayDiskSound();
+                diskCooldown.restart();
+            }
+        }
+
+        // Onafhankelijke check voor Tape
+        if (g_tapeSoundActive.exchange(false)) {
+            if (tapeCooldown.elapsed() > 60) {
+                emit requestPlayTapeSound();
+                tapeCooldown.restart();
+            }
+        }
+
+    });
+    heartbeat->start(35);
 }
 
 ColecoController::~ColecoController()
@@ -70,208 +127,18 @@ extern "C" {
 extern tTMS9981A tms;
 }
 
-/*
-    Key0 = 0x1E;        // !
-    Key0 = 0x1F;        // @
-    Key0 = 0x20;        // #
-    Key0 = 0x21;        // $
-    Key0 = 0x22;        // %
-    Key0 = 0x2D;        // _
-    Key0 = 0x24;        // &
-    Key0 = 0x25;        // *
-    Key0 = 0x26;        // (
-    Key0 = 0x27;        // )
-    Key0 = F1;          // F1
-    Key0 = F2;          // F2
-    Key0 = F3;          // F3
-    Key0 = F4;          // F4
-    Key0 = F5;          // F5
-    Key0 = F6;          // F6
-    Key0 = F7;          // F7
-    Key0 = F8;          // F8
-    Key0 = F9;          // F9
-    Key0 = F10; 		// F10
-    Key0 = F11; 		// F11
-    Key0 = F12; 		// F12
-    Key0 = HOME;        // home
-    Key0 = LEFT;        // left arrow
-    Key0 = UP;          // up arrow
-    Key0 = RIGHT;       // right arrow
-    Key0 = DOWN;        // down arrow
-
-    Key0 = 0x27;        // 0
-    Key0 = 0x35;        // `
-    Key0 = 0x2D;        // -
-    Key0 = 0x2E;        // +
-    Key0 = 0x2F;        // {
-    Key0 = 0x30;        // }
-    Key0 = 0x33;        // :
-    Key0 = 0x34;        // "
-    Key0 = 0x36;        // <
-    Key0 = 0x37;        // >
-    Key0 = 0x38;        // ?
-    Key0 = 0x31;        // '\'
-    Key0 = SPACE;       // space
-    Key0 = 0x2A;        // backspace
-    Key0 = 0x49;        // insert
-    Key0 = 0x2B;        // tab
-
-    Key0 = 0x04;        // control a
-    Key0 = 0x06;        // control c
-    Key0 = 0x07;        // control d
-    Key0 = 0x19;        // control v
-
-    Key0 = 0x2E;        // =
-    Key0 = 0x2F;        // [
-    Key0 = 0x30;        // ]
-    Key0 = 0x33;        // ;
-    Key0 = 0x34;        // '
-    Key0 = 0x36;        // ,
-    Key0 = 0x37;        // .
-    Key0 = 0x38;        // /
-*/
-
-static uint8_t s_fgActiveMask = 0;
-
-// void ColecoController::onAdamKeyEvent(int code)
-// {
-//     // ====== AdamNet scancode pad (marker >= 0x100) ======
-//     if (code >= 0x100) {
-//         qDebug() << "[code]:" << Qt::hex << code;
-//         uint8_t sc = uint8_t(code & 0xFF); // bv. 0x54 of 0xD4
-//         // FG1..FG6 mask
-//         if ((sc & 0x7F) >= 0x54 && (sc & 0x7F) <= 0x5D) {
-//             const int bit = (sc & 0x7F) - 0x54;  // 0..5
-//             if (sc & 0x80) s_fgActiveMask &= uint8_t(~(1 << bit));  // break
-//             else           s_fgActiveMask |=  uint8_t( 1 << bit);   // make
-//         }
-
-//         // Stuur de RAUWE PC-scancode (0x54, 0xD4)
-//         // De C-laag (adamnet_queue_key) doet de remap
-//         qDebug() << "[Controller] FUNCTIETOETSEN:" << Qt::hex << sc;
-
-//         adamnet_inject_scancode(sc);
-//         return;
-//     }
-
-//     // --- ASCII pad (PutKBD) ---
-//     const uint8_t ascii = uint8_t(code & 0xFF);
-
-
-//     // Blokkeer ASCII T..Y (0x54..0x59) én '4'..'9' (0x34..0x39)
-//     // zolang de overeenkomstige F-key (F1..F6) actief is.
-//     if ((ascii >= 0x54 && ascii <= 0x59) || (ascii >= 0x34 && ascii <= 0x39)) {
-//         int bit = (ascii >= 0x54) ? (ascii - 0x54) : (ascii - 0x34); // 0..5
-//         if (s_fgActiveMask & (1 << bit)) {
-//             qDebug() << "[Controller] DROP ASCII (T..Y of '4'..'9') omdat FG actief is:" << Qt::hex << ascii;
-//             return; // NIET naar PutKBD
-//         }
-//     }
-
-//     qDebug() << "[Controller] Doorgeven aan C-laag:" << Qt::hex << ascii;
-//     PutKBD(unsigned(ascii));
-
-
-//     // --- ASCII pad ---
-//     bool is_make = !(code & 0x80); // True als het een press is (geen 0x80 bit)
-
-//     uint8_t scancode = 0;
-
-//     // ADAMNet Scancodes voor Cijfers: '1' t/m '9' mappen naar 0x01 t/m 0x09
-//     if (ascii >= '1' && ascii <= '9') {
-//         scancode = ascii - '0'; // '1' (0x31) wordt 0x01, '9' (0x39) wordt 0x09
-//     } else if (ascii == '0') {
-//         scancode = 0x0A; // '0' (0x30) wordt 0x0A
-//     }
-//     // Opmerking: Voor Letters A-Z zou dit 0x11 t/m 0x2A zijn, maar '1' is hier het probleem.
-
-
-//     if (scancode != 0) {
-//         // ADAMNet MAKE-scancode = Scancode + 0x80
-//         if (is_make) {
-//            // scancode |= 0x80;
-//             adamnet_queue_key(scancode | 0x80);
-
-//         } else { PutKBD(unsigned(ascii));}
-
-//        // adamnet_queue_key(scancode);
-//         qDebug() << "[Controller] ADAMNet Queue Scancode:" << Qt::hex << scancode;
-//     }
-
-//}
-
 void ColecoController::onAdamKeyEvent(int code)
 {
-    // extern Z80_Regs Z80;
-    // if (Z80.pc.w.l != 0x2F)
-    // {
-    // Z80.pc.w.l = 0x2F; // Low byte van 0xE02F
-    // Z80.pc.w.h = 0xE0 >> 8; // High byte van 0xE02F
-    // }
-
-    // ====== AdamNet scancode pad (marker >= 0x100) ======
+    //qDebug() << "[CTRL] onAdamKeyEvent ontvangen:" << Qt::hex << code << " CODE";
     if (code >= 0x100) {
-        qDebug() << "[code]:" << Qt::hex << code;
-        uint8_t sc = uint8_t(code & 0xFF); // bv. 0x54 of 0xD4
-        // FG1..FG6 mask
-        if ((sc & 0x7F) >= 0x54 && (sc & 0x7F) <= 0x5D) {
-            const int bit = (sc & 0x7F) - 0x54;  // 0..5
-            if (sc & 0x80) s_fgActiveMask &= uint8_t(~(1 << bit));  // break
-            else           s_fgActiveMask |=  uint8_t( 1 << bit);   // make
-        }
-
-        // Stuur de RAUWE PC-scancode (0x54, 0xD4)
-        // De C-laag (adamnet_queue_key) doet de remap
-        qDebug() << "[Controller] FUNCTIETOETSEN:" << Qt::hex << sc;
-
+        uint8_t sc = uint8_t(code & 0xFF);
+        //qDebug() << "  -> ROUTE: ADAMNET Scancode:" << Qt::hex << sc << ")";
         adamnet_inject_scancode(sc);
-        return;
+    } else {
+        uint8_t ascii = uint8_t(code & 0xFF);
+        //qDebug() << "  -> ROUTE: ASCII BUFFER (PutKBD:" << Qt::hex << ascii << ")";
+        PutKBD(unsigned(ascii));
     }
-
-    // --- ASCII pad (PutKBD) ---
-    const uint8_t ascii = uint8_t(code & 0xFF);
-
-    // Blokkeer ASCII T..Y (0x54..0x59) én '4'..'9' (0x34..0x39)
-    // zolang de overeenkomstige F-key (F1..F6) actief is.
-    if ((ascii >= 0x54 && ascii <= 0x59) || (ascii >= 0x34 && ascii <= 0x39)) {
-        int bit = (ascii >= 0x54) ? (ascii - 0x54) : (ascii - 0x34); // 0..5
-        if (s_fgActiveMask & (1 << bit)) {
-            qDebug() << "[Controller] DROP ASCII (T..Y of '4'..'9') omdat FG actief is:" << Qt::hex << ascii;
-            return; // NIET naar PutKBD
-        }
-    }
-
-    qDebug() << "[Controller] Doorgeven aan C-laag:" << Qt::hex << ascii;
-
-    PutKBD(unsigned(ascii));
-
-}
-
-void ColecoController::setMachineType(int machineType)
-{
-    const int isAdam = (machineType == 1) ? 1 : 0;
-
-    coleco_set_machine_type(isAdam);
-
-    if (isAdam) {
-        emulator->SGM = 0;
-        emit sgmStatusChanged(false);
-    }
-
-    // BIOS-blobs laden (Writer/EOS/OS7 of Coleco)
-    coleco_initialise();
-
-    // ADAM-poorten/mapping + CPU/VDP resetten
-    coleco_reset_and_restart_bios();
-
-    // Audio syncen
-    PsgBridge::init(m_Clock, m_SampleRate);
-    ay8910_init(m_Clock, m_SampleRate);
-    machine.interrupt = 0;
-
-    qDebug() << "[Controller] Machine switched to"
-             << (isAdam ? "ADAM" : "COLECO")
-             << "with fresh initialise() + reset_bios()";
 }
 
 // --- video-standaard slot ---
@@ -299,20 +166,37 @@ void ColecoController::setVideoStandard(bool isNTSC)
     emit videoStandardChanged(m_isNTSC ? "NTSC" : "PAL");
 
     if (m_running) {
-        qDebug() << "[Controller] Resetting core for new video standard.";
+        qDebug() << "[CTRL] Resetting core for new video standard.";
         PsgBridge::reset(m_Clock, m_SampleRate);
         coleco_reset();
     }
 }
 
-
 void ColecoController::startEmulation()
 {
-    qDebug() << "[Controller] startEmulation()";
+    qDebug() << "[CTRL] startEmulation()";
 
-    // 1. Setup Core Emulatie
+    m_frameCCounter = 0;
+    m_frameACounter = 0;
     m_realFrames = 0;
-    coleco_initialise();
+
+    if (emulator->currentMachineType != MACHINEADAM)
+    {
+        coleco_initialise();
+    }
+    else
+    {
+    if (!m_coreInitialized) {
+        qDebug() << "[CTRL] Core init (cold start).";
+        coleco_initialise();  // doet base_init + BIOS load + reset_bios
+        m_coreInitialized = true;
+    } else {
+        // géén coleco_initialise() meer! enkel herstart mapping/CPU/VDP
+        qDebug() << "[CTRL] Core restart (no initialise).";
+        coleco_reset_and_restart_bios();
+    }
+    }
+
     PsgBridge::init(m_Clock, m_SampleRate);
     PsgBridge::reset(m_Clock, m_SampleRate);
     machine.interrupt = 0;
@@ -354,7 +238,7 @@ void ColecoController::startEmulation()
     m_paused = false;
     emit emuPausedChanged(false);
 
-    qDebug() << "[Controller] Emulation loop running met QAudioSink (met throttle)...";
+    //qDebug() << "[CTRL] Emulation loop running met QAudioSink (met throttle)...";
 
     double tstate_accumulator = 0.0;
 
@@ -364,6 +248,22 @@ void ColecoController::startEmulation()
 
     while (m_running)
     {
+        if (m_waitForCBiosFrames)
+            m_frameCCounter++;
+        if (m_waitForCBiosFrames && m_frameCCounter >= 10) {
+            m_waitForCBiosFrames = false;
+
+            emit biosCFramesDone();
+        }
+
+        if (m_waitForABiosFrames)
+            m_frameACounter++;
+        if (m_waitForABiosFrames && m_frameACounter >= 10) {
+            m_waitForABiosFrames = false;
+
+            emit biosAFramesDone();
+        }
+
         // === A: Verwerk events (pause, stop, etc.) ===
         QCoreApplication::processEvents();
 
@@ -439,8 +339,9 @@ void ColecoController::startEmulation()
             );
 
         // === G: Stuur videoframe uit ===
-        if (g_video_dirty) {
-            g_video_dirty = 0;
+        if (video_get_dirty()) {
+            // redraw
+            video_set_dirty(0);
             QImage real = frameFromBridge();
             emit frameReady(real);
         }
@@ -453,26 +354,42 @@ void ColecoController::startEmulation()
             m_fpsFrameCount = 0;             // Reset de teller
             m_fpsCalcTimer.restart();        // Herstart de 1-seconde timer
         }
+
+        // === I: Deferred disk mount (used for CP/M tape-boot) ===
+        if (m_deferredMountFramesRemaining > 0) {
+            m_deferredMountFramesRemaining--;
+            if (m_deferredMountFramesRemaining == 0 && !m_deferredMountDisk0Path.isEmpty()) {
+                qDebug() << "[CTRL][CPM] Mount deferred disk as A: now:" << m_deferredMountDisk0Path;
+                if (coleco_load_disk(0, QFile::encodeName(m_deferredMountDisk0Path).constData()) != 0) {
+                    qWarning() << "[CTRL][CPM] Deferred mount failed for A:";
+                }
+                m_deferredMountDisk0Path.clear();
+            }
+        }
     }
 
     // 5. Opruimen
-    qDebug() << "[Controller] Emulation loop finished.";
+    qDebug() << "[CTRL] Emulation loop finished.";
+
     if (m_audioSink) {
         m_audioSink->stop();
     }
 
-    for (int i = 0; i < MAX_DISKS; ++i)
-        ejectDisk(i);
-    for (int i = 0; i < MAX_TAPES; ++i)
-        ejectTape(i);
-
+    if (!m_preserveMediaOnStop) {
+        for (int i = 0; i < MAX_DISKS; ++i)
+            ejectDisk(i);
+        for (int i = 0; i < MAX_TAPES; ++i)
+            ejectTape(i);
+    } else {
+        qDebug() << "[CTRL] Preserving media on stop (reboot/bootCPM).";
+    }
     emit emulationStopped();
 }
 
 void ColecoController::pauseEmulation()
 {
     if (m_paused) return;
-    qDebug() << "[Controller] pauseEmulation()";
+    qDebug() << "[CTRL] pauseEmulation()";
     m_paused = true;
     if (m_audioSink) m_audioSink->suspend();
     emit emuPausedChanged(true);
@@ -481,7 +398,7 @@ void ColecoController::pauseEmulation()
 void ColecoController::resumeEmulation()
 {
     if (!m_paused) return;
-    qDebug() << "[Controller] resumeEmulation()";
+    qDebug() << "[CTRL] resumeEmulation()";
 
     if (emulator) {
         emulator->stop = 0;
@@ -495,8 +412,7 @@ void ColecoController::resumeEmulation()
 
 void ColecoController::stopEmulation()
 {
-    qDebug() << "[Controller] stopEmulation() requested.";
-
+    qDebug() << "[CTRL] stopEmulation() requested.";
 
     m_running = false;
 }
@@ -506,7 +422,7 @@ void ColecoController::stepOnce()
     if (!m_paused) {
         pauseEmulation();
     }
-    qDebug() << "[Controller] stepOnce()";
+    qDebug() << "[CTRL] stepOnce()";
 
     if (emulator) {
         emulator->stop = 0;
@@ -516,8 +432,9 @@ void ColecoController::stepOnce()
         coleco_do_scanline();
     }
 
-    if (g_video_dirty) {
-        g_video_dirty = 0;
+    if (video_get_dirty()) {
+        // redraw
+        video_set_dirty(0);
         QImage real = frameFromBridge();
         emit frameReady(real);
     }
@@ -531,7 +448,7 @@ void ColecoController::sstepOnce()
         pauseEmulation();
     }
 
-    qDebug() << "[Controller] sstepOnce()";
+    qDebug() << "[CTRL] sstepOnce()";
 
     if (!emulator) {
         return;
@@ -546,9 +463,7 @@ void ColecoController::sstepOnce()
 
 void ColecoController::stepOver(uint16_t returnAddress)
 {
-    // *** Dit slot draait op de emulator-thread ***
-
-    qDebug() << "[Controller] stepOver() requested to return to PC:" << Qt::hex << returnAddress;
+    //qDebug() << "[CTRL] stepOver() requested to return to PC:" << Qt::hex << returnAddress;
 
     // HIER: De gebruiker moet de code toevoegen die het externe C-mechanisme activeert.
     // Bijvoorbeeld: temp_step_over_addr = returnAddress;
@@ -569,24 +484,20 @@ void ColecoController::gotoAddr(uint16_t newPC)
 
     pauseEmulation();
 
-    // Z80 heeft PC in de union:
-    // Z80.pc.w.l = low byte
-    // Z80.pc.w.h = high byte
-    Z80.pc.w.l = newPC & 0xFF;
-    Z80.pc.w.h = (newPC >> 8) & 0xFF;
+    Z80.pc.w.l = newPC;
 
-    qDebug() << "[Controller] PC manually set to" << Qt::hex << newPC;
+    qDebug() << "[CTRL] PC manually set to" << Qt::hex << newPC;
 }
 
 void ColecoController::loadRom(const QString &romPath)
 {
-    qDebug() << "[Controller] loadRom:" << romPath;
+    //qDebug() << "[CTRL] loadRom:" << romPath;
     m_realFrames = 0;
 
     QByteArray path = QFile::encodeName(romPath);
     BYTE ok = coleco_loadcart(path.data());
     if (ok != 0) {
-        qWarning() << "[Controller] ROM laden faalde, code =" << int(ok);
+        qWarning() << "[CTRL] ROM failed loading, code =" << int(ok);
         return;
     }
 
@@ -596,7 +507,7 @@ void ColecoController::loadRom(const QString &romPath)
 
 void ColecoController::AdamCartridge(const QString &romPath)
 {
-    qDebug() << "[Controller] load Adam Rom:" << romPath;
+    //qDebug() << "[CTRL] load Adam Rom:" << romPath;
     m_realFrames = 0;
 
     QByteArray path = QFile::encodeName(romPath);
@@ -605,6 +516,7 @@ void ColecoController::AdamCartridge(const QString &romPath)
     //setMachineType(Machine_Coleco);
 
     // Laad de cartridge data
+
     BYTE retload = coleco_loadcart(path.data());
 
     if (retload == ROM_LOAD_PASS)
@@ -615,12 +527,12 @@ void ColecoController::AdamCartridge(const QString &romPath)
     }
     else if (retload == ROM_VERIFY_FAIL)
     {
-        qDebug() << "[Controller] Can't verify the rom file";
+        qDebug() << "[CTRL] Can't verify the rom file";
         m_currentAdamCartPath.clear();
         m_currentColecoCartPath.clear();
     }
     else {
-        qWarning() << "[Controller] ADAM ROM laden faalde, code =" << int(retload);
+        qWarning() << "[CTRL] ADAM ROM laden faalde, code =" << int(retload);
         m_currentAdamCartPath.clear();
         m_currentColecoCartPath.clear();
     }
@@ -633,12 +545,12 @@ void ColecoController::ejectAdamCartridge()
     if (!m_currentAdamCartPath.isEmpty()) {
         m_currentAdamCartPath.clear();
         emit cartridgeStatusChanged(m_currentColecoCartPath, m_currentAdamCartPath);
-        qDebug() << "[Controller] ADAM Cartridge ejected (GUI updated).";
+        qDebug() << "[CTRL] ADAM Cartridge ejected (GUI updated).";
     }
 }
 void ColecoController::ColecoCartridge(const QString &romPath)
 {
-    qDebug() << "[Controller] load Coleco Rom:" << romPath;
+    //qDebug() << "[CTRL] load Coleco Rom:" << romPath;
     m_realFrames = 0;
 
     QByteArray path = QFile::encodeName(romPath);
@@ -647,7 +559,7 @@ void ColecoController::ColecoCartridge(const QString &romPath)
 
     //setMachineType(Machine_Adam);
     if (retload != 0) {
-        qWarning() << "[Controller] COLECO ROM laden faalde, code =" << int(retload);
+        qWarning() << "[CTRL] COLECO ROM failed loading, code =" << int(retload);
         m_currentColecoCartPath.clear();
         m_currentAdamCartPath.clear();
     } else {
@@ -662,28 +574,68 @@ void ColecoController::ejectColecoCartridge()
     if (!m_currentColecoCartPath.isEmpty()) {
         m_currentColecoCartPath.clear();
         emit cartridgeStatusChanged(m_currentColecoCartPath, m_currentAdamCartPath);
-        qDebug() << "[Controller] Coleco Cartridge ejected (GUI updated).";
+        qDebug() << "[CTRL] Coleco Cartridge ejected (GUI updated).";
     }
 }
 
-void ColecoController::resetMachine()
+void ColecoController::resetMachine() // SOFT
 {
-    qDebug() << "[Controller] resetMachine()";
+    if (AlreadyReset) return;
+    AlreadyReset = true;
+
+    qDebug() << "[CTRL] resetMachine()";
     coleco_reset();
     PsgBridge::reset(m_Clock, m_SampleRate);
 }
 
-void ColecoController::resethMachine()
+void ColecoController::resethMachine() // HARD
 {
-    qDebug() << "[Controller] hard resetMachine()";
+    // Hard reset button / user reset: execute prepared boot plan.
+    if (AlreadyReset) return;
+    AlreadyReset = true;
+
+    qDebug() << "[CTRL] resethMachine()";
+    // Make the core deterministic first
     coleco_hardreset();
-    coleco_reset_and_restart_bios();
-    PsgBridge::reset(m_Clock, m_SampleRate);
+
+    // Allow next reset press
+    AlreadyReset = false;
 }
 
+void ColecoController::powerOffMachine()
+{
+    qDebug() << "[CTRL] power off Machine()";
+
+    // Stop eventueel lopende CP/M deferred mount
+    m_deferredMountFramesRemaining = 0;
+    m_deferredMountDisk0Path.clear();
+
+    // Power-cycle naar Writer/EOS
+    // 1️⃣ First reset (direct)
+    coleco_initialise();
+    coleco_reset_and_restart_bios();
+
+    // 2️⃣ second reset when cp/m loaded
+    if (m_cpm_enabled || emulator->currentMachineType == MACHINEADAM)
+    {
+        QTimer::singleShot(500, QCoreApplication::instance(), []() {
+            qDebug() << "[CTRL] doubleResetToWriter() SECOND reset";
+
+            coleco_initialise();
+            coleco_reset_and_restart_bios();
+        });
+
+    }
+
+    m_cpm_enabled = false;
+
+    PsgBridge::reset(m_Clock, m_SampleRate);
+    AlreadyReset = false;
+}
 
 void ColecoController::setSGMEnabled(bool enabled)
 {
+
     if (emulator->currentMachineType == MACHINEADAM)
     {
         // ADAM Modus
@@ -734,48 +686,78 @@ QImage ColecoController::frameFromBridge()
 void ColecoController::loadDisk(int drive, const QString& path)
 {
     if (drive >= MAX_DISKS) return;
+    // ✅ Als dezelfde disk al ingestoken is: NIET ejecten/opslaan/herladen
+    if (!m_currentDiskPath[drive].isEmpty() &&
+        QDir::cleanPath(m_currentDiskPath[drive]) == QDir::cleanPath(path))
+    {
+        //qDebug() << "[CTRL] Disk" << drive << "already loaded, skipping reload:" << path;
+        return;
+    }
+
+    // Anders pas ejecten
     ejectDisk(drive);
 
-    // cPath bevat het VOLLEDIGE PAD, nodig voor de C-core functie coleco_load_disk
     QByteArray cPath = QFile::encodeName(path);
-    qDebug() << "[Controller] Loading Disk" << drive << ":" << path;
+    qDebug() << "[CTRL] ========================================";
+    qDebug() << "[CTRL] Loading Disk" << drive << ":" << path;
+    qDebug() << "[CTRL] ========================================";
+
+    const QString p = QFileInfo(path).fileName().toLower();
+
+    // Check if CP/M or T-DOS disk
+    bool isCpmDisk = p.contains("cpm") || p.contains("cp-m");
+    bool isTdosDisk = p.contains("tdos") || p.contains("t-dos");
+    ::m_tdos_enabled = isTdosDisk;
+    ::m_cpm_enabled = isCpmDisk || isTdosDisk;
+
+    if (::m_cpm_enabled)
+    {
+        qDebug() << "[CTRL] *** CP/M DISK DETECTED ***";
+        qDebug() << "[CTRL] Setting CP/M mode and preparing boot sequence";
+    }
+    else
+    {
+        qDebug() << "[CTRL] Normal ADAM disk detected";
+    }
+
     BYTE ok = coleco_load_disk(drive, cPath.constData());
 
     if (ok == 0) {
-        // [FIX] Sla het VOLLEDIGE PAD op
         m_currentDiskPath[drive] = path;
+        qDebug() << "[CTRL] Disk" << drive << "loaded successfully";
 
         if (emulator->currentMachineType != MACHINEADAM) {
+            qDebug() << "[CTRL] Switching to ADAM mode for disk boot";
             setMachineType(Machine_Adam);
             emit machineTypeChanged(Machine_Adam);
-            qDebug() << "[Controller] Forced machine type to ADAM for disk boot.";
             adamnet_block_ascii_fkeys(100);
         }
 
+        if (::m_cpm_enabled) {
+            qDebug() << "[CTRL] CP/M disk loaded - system ready for reset/boot";
+            qDebug() << "[CTRL] User must press RESET to boot CP/M";
+        }
+
     } else {
-        qWarning() << "Failed to load disk image.";
+        qWarning() << "[CTRL] *** FAILED TO LOAD DISK ***";
         m_currentDiskPath[drive].clear();
     }
 
-    // Stuur bestandsnaam naar de GUI
     emit diskStatusChanged(drive, QFileInfo(m_currentDiskPath[drive]).fileName());
 }
 
 void ColecoController::ejectDisk(int drive)
 {
     if (drive >= MAX_DISKS) return;
-
-    // Save state en eject in de C-kern
+    // Save state and eject C-kern
     if (!m_currentDiskPath[drive].isEmpty()) {
         QByteArray cOldPath = QFile::encodeName(m_currentDiskPath[drive]);
-        qDebug() << "[Controller] Saving and Ejecting Disk" << drive << ":" << m_currentDiskPath[drive];
+        qDebug() << "[CTRL] Saving and Ejecting Disk" << drive << ":" << m_currentDiskPath[drive];
         int result = coleco_save_disk(drive, cOldPath.constData());
         qDebug() << "DISK SAVE RESULT:" << result;
         coleco_eject_disk(drive);
-        m_currentDiskPath[drive].clear(); // Status in de controller wissen
+        m_currentDiskPath[drive].clear(); // Clear status
     }
-
-    // Stuur een lege string om de GUI terug op default te zetten
     emit diskStatusChanged(drive, "");
 }
 
@@ -784,20 +766,29 @@ void ColecoController::loadTape(int drive, const QString& path)
     if (drive >= MAX_TAPES) return;
     ejectTape(drive);
 
-    // cPath bevat het VOLLEDIGE PAD, nodig voor de C-core functie coleco_load_tape
+    // cPath full path, needed by C-core function coleco_load_tape
     QByteArray cPath = QFile::encodeName(path);
-    qDebug() << "[Controller] Loading Tape" << drive << ":" << path;
+
+    const QString p = QFileInfo(path).fileName().toLower();
+
+    // Check if CP/M or T-DOS tape
+    bool isCpmTape = p.contains("cpm") || p.contains("cp-m");
+    bool isTdosTape = p.contains("tdos") || p.contains("t-dos");
+    ::m_tdos_enabled = isTdosTape;
+    ::m_cpm_enabled = isCpmTape || isTdosTape;
+
+    qDebug() << "[CTRL] Loading Tape" << drive << ":" << path;
     BYTE ok = coleco_load_tape(drive, cPath.constData());
 
     if (ok == 0) {
-        // [FIX] Sla het VOLLEDIGE PAD op
+        // save full path
         m_currentTapePath[drive] = path;
     } else {
         qWarning() << "Failed to load disk image.";
         m_currentTapePath[drive].clear();
     }
 
-    // Stuur bestandsnaam naar de GUI
+    // Sent filename to GUI
     emit tapeStatusChanged(drive, QFileInfo(m_currentTapePath[drive]).fileName());
 }
 
@@ -807,9 +798,9 @@ void ColecoController::ejectTape(int drive)
 
     if (!m_currentTapePath[drive].isEmpty()) {
         QByteArray cOldPath = QFile::encodeName(m_currentTapePath[drive]);
-        qDebug() << "[Controller] Saving and Ejecting Tape" << drive << ":" << m_currentTapePath[drive];
+        //qDebug() << "[CTRL] Saving and Ejecting Tape" << drive << ":" << m_currentTapePath[drive];
         int result = coleco_save_tape(drive, cOldPath.constData());
-        qDebug() << "TAPE SAVE RESULT:" << result;
+        //qDebug() << "[CTRL] TAPE SAVE RESULT:" << result;
         coleco_eject_tape(drive);
         m_currentTapePath[drive].clear();
     }
@@ -817,60 +808,70 @@ void ColecoController::ejectTape(int drive)
     emit tapeStatusChanged(drive, "");
 }
 
+void ColecoController::bootCpmDisk()
+{
+    stopEmulation();
+
+    // 3. Stel geheugenpoorten in voor RAM-dominantie
+    coleco_port60 = 0x01; // Map RAM naar lower 32K
+    coleco_setadammemory(true);
+
+    // 4. Start de emulatie opnieuw
+    resethMachine();
+    startEmulation();
+}
+
 void ColecoController::saveState(const QString& filePath)
 {
     if (filePath.isEmpty()) {
-        qWarning() << "[Controller] saveState(): leeg pad, niets te doen";
+        qWarning() << "[CTRL] saveState(): leeg pad, niets te doen";
         return;
     }
 
     QByteArray cPath = QFile::encodeName(filePath);
-    qDebug() << "[Controller] saveState ->" << filePath;
+    qDebug() << "[CTRL] saveState ->" << filePath;
 
     BYTE ok = coleco_savestate(cPath.data());
     if (!ok) {
-        qWarning() << "[Controller] saveState FAILED for" << filePath;
+        qWarning() << "[CTRL] saveState FAILED for" << filePath;
     } else {
-        qDebug() << "[Controller] saveState OK";
+        qDebug() << "[CTRL] saveState OK";
     }
 }
 
 void ColecoController::loadState(const QString& filePath)
 {
     if (filePath.isEmpty()) {
-        qWarning() << "[Controller] loadState(): leeg pad, niets te doen";
+        qWarning() << "[CTRL] loadState(): emty path, nothing to do";
         return;
     }
 
     QByteArray cPath = QFile::encodeName(filePath);
-    qDebug() << "[Controller] loadState <-" << filePath;
+    qDebug() << "[CTRL] loadState <-" << filePath;
 
     BYTE ok = coleco_loadstate(cPath.data());
     if (!ok) {
-        qWarning() << "[Controller] loadState FAILED for" << filePath;
+        qWarning() << "[CTRL] loadState FAILED for" << filePath;
         return;
     }
 
-    // Na een loadstate audio/PSG opnieuw syncen
+    // After loadstate sync audio/PSG again
     PsgBridge::init(m_Clock, m_SampleRate);
     PsgBridge::reset(m_Clock, m_SampleRate);
     ay8910_init(m_Clock, m_SampleRate);
 
-    qDebug() << "[Controller] loadState OK";
+    qDebug() << "[CTRL] loadState OK";
 }
 
 void ColecoController::resetAdam()
 {
-    setMachineType(Machine_Adam);  // hier stel je ADAM-mode in
-    doHardReset();                 // daarna pas reset (ROM/RAM/VDP/CPU, etc.)
-    emit machineTypeChanged(Machine_Adam);
+    setMachineType(Machine_Adam);
 }
 
 void ColecoController::resetColeco()
 {
-    setMachineType(Machine_Coleco); // naar Coleco-mode
-    doHardReset();                  // en dan resetten
-    emit machineTypeChanged(Machine_Coleco);
+    setMachineType(Machine_Coleco);
+
 }
 
 void ColecoController::doHardReset()
@@ -879,7 +880,89 @@ void ColecoController::doHardReset()
 }
 
 void ColecoController::setMachineType(ColecoController::MachineType machineType)
+ {
+     const int isAdam = (machineType == 1) ? 1 : 0; // 0=COLECO 1=ADAM
+     coleco_set_machine_type(isAdam);
+     qDebug() << "[CTRL] Machine switched to "
+              << (isAdam ? "ADAM" : "COLECO");
+
+     // Audio sync
+     PsgBridge::init(m_Clock, m_SampleRate);
+     ay8910_init(m_Clock, m_SampleRate);
+     machine.interrupt = 0;
+
+     if (isAdam) {
+         emulator->SGM = 0;
+         emit sgmStatusChanged(false);
+         if (!m_cpm_enabled)
+            resethMachine();
+         else
+             bootCpmDisk();
+
+     }
+     else
+     {
+         coleco_initialise();
+         resetMachine();
+     }
+
+     emit machineTypeChanged(machineType);
+ }
+
+extern "C" void coleco_set_bios_paths(const char* coleco_path, const char* eos_path, const char* writer_path);
+
+void ColecoController::loadBiosRoms(const QString& colecoPath, const QString& eosPath, const QString& writerPath)
 {
-    // Forward naar de int-versie (0 = Coleco, 1 = ADAM)
-    setMachineType(static_cast<int>(machineType));
+    m_colecoPathBytes = colecoPath.isEmpty() ? QByteArray() : QFile::encodeName(colecoPath);
+    m_eosPathBytes    = eosPath.isEmpty()    ? QByteArray() : QFile::encodeName(eosPath);
+    m_writerPathBytes = writerPath.isEmpty() ? QByteArray() : QFile::encodeName(writerPath);
+
+    coleco_set_bios_paths(
+        m_colecoPathBytes.isEmpty() ? nullptr : m_colecoPathBytes.constData(),
+        m_eosPathBytes.isEmpty()    ? nullptr : m_eosPathBytes.constData(),
+        m_writerPathBytes.isEmpty() ? nullptr : m_writerPathBytes.constData()
+        );
+
+    qDebug() << "[CTRL] BIOS reloads --> with media inserted";
+
+    coleco_probe_bios_status_all();
+    updateBiosStatus();
+}
+
+void ColecoController::startWithBios(const QString& colecoPath,
+                                     const QString& eosPath,
+                                     const QString& writerPath)
+{
+    loadBiosRoms(colecoPath, eosPath, writerPath); // set paths
+    startEmulation();                              // then start thread
+}
+
+void ColecoController::updateBiosStatus()
+{
+    emit onBiosStatusUpdated(
+        coleco_get_bios_status(0),
+        coleco_get_bios_status(1),
+        coleco_get_bios_status(2)
+        );
+}
+
+void ColecoController::prepareForNewCRomAndPauseOnBios()
+{   // COLECO CARTRIDGE
+    stopEmulation();
+    coleco_reset_and_restart_bios();
+    m_waitForCBiosFrames=true;
+    startEmulation();
+}
+
+void ColecoController::prepareForNewARomAndPauseOnBios()
+{   // ADAM CARTRIDGE
+    stopEmulation();
+    coleco_reset_and_restart_bios();
+    m_waitForABiosFrames=true;
+    startEmulation();
+}
+
+void ColecoController::setDTsoundEnabled(bool enabled)
+{
+    g_dtSoundEnabled.store(enabled, std::memory_order_relaxed);
 }

@@ -4,7 +4,6 @@
         <file>images/ctrl_roller.png</file>
         <file>images/ctrl_sterring.png</file>
         <file>images/ctrl_superaction.png</file>
-        <file>images/hw_f18a.png</file>
         <file>images/hw_sgm.png</file>
         <file>images/machine_adam.png</file>
         <file>images/machine_adamp.png</file>
@@ -26,12 +25,10 @@
         <file>images/adamp_logo_reset_cartridge_off.png</file>
         <file>images/adamp_logo_reset_cartridge_on.png</file>
         <file>images/adamp_logo0.png</file>
-        <file>images/Hardware.png</file>
         <file>images/adamp_logo_power_adam_off.png</file>
         <file>images/adamp_logo_power_adam_on.png</file>
         <file>images/wallpaper_coleco.png</file>
         <file>images/wallpaper_adam.png</file>
-        <file>images/adamp_logo1.png</file>
         <file>images/adamp_logo_reset_cartridge_blink.png</file>
         <file>images/adamp_logo_reset_adam_blink.png</file>
         <file>images/noCheck.png</file>
@@ -41,7 +38,24 @@
         <file>images/STEP.png</file>
         <file>images/GOTO.png</file>
         <file>images/RUN.png</file>
-        <file>images/BREAK.png</file>
         <file>images/STEPOVER.png</file>
+        <file>images/BREAK.png</file>
+        <file>images/LED_GRAY.png</file>
+        <file>images/LED_GREEN.png</file>
+        <file>images/LED_YELLOW.png</file>
+        <file>images/adamp_logo_t_locked_adam_off.png</file>
+        <file>images/adamp_logo_d_locked_adam_off.png</file>
+        <file>images/adamp_logo_c_locked_cartridge_off.png</file>
+        <file>images/adamp_logo_csgm_locked_cartridge_off.png</file>
+        <file>images/adamp_logo_dcpm_locked_adam_off.png</file>
+        <file>images/adamp_logo_tcpm_locked_adam_off.png</file>
+        <file>images/adamp_logo1.png</file>
+        <file>images/hw_c80.png</file>
+        <file>images/Hardware.png</file>
+    </qresource>
+    <qresource prefix="/sounds">
+        <file>sounds/adam_tape.wav</file>
+        <file>sounds/adam_disk1.wav</file>
+        <file>sounds/adam_disk2.wav</file>
     </qresource>
 </RCC>

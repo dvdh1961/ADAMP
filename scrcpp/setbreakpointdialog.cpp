@@ -21,7 +21,8 @@ static QString formatBreakpointString(const QString& input)
     qDebug() << "[SetBreakpointDialog] formatBreakpointString validating:" << input;
 
     QString s = input.toUpper().trimmed();
-    s.replace(QRegularExpression("\\s+"), " ");
+    static const QRegularExpression reWhitespace(QStringLiteral("\\s+"));
+    s.replace(reWhitespace, " ");
     QStringList parts = s.split(' ');
     if (parts.isEmpty()) return QString();
 
@@ -117,25 +118,24 @@ static QString mapUiTypeToCore(QString type) {
 }
 
 static QString mapCoreTypeToUi(QString type) {
-    // Map *core* type naar de exacte UI-string in de combobox
-    if (type == "EXE")  return "01.Execute address";
-    if (type == "RD")   return "02.Read memory";
-    if (type == "WR")   return "03.Write memory";
-    if (type == "OUT")  return "04.Out 16B value";
-    if (type == "OUTH") return "05.Out High significant Byte 8B value";
-    if (type == "OUTL") return "06.Out Low significant Byte 8B value";
-    if (type == "IN")   return "07.IN 16B value";
-    if (type == "INH")  return "08.IN High significant Byte 8B";
-    if (type == "INL")  return "09.IN Low significant Byte 8B value";
-    if (type == "CLK")  return "10.Clock";
-    if (type == "MEM")  return "11.Memory";
-    if (type == "REG")  return "12.Register";
-    if (type == "FLAG") return "13.Flag";
+    if (type == "EXE")  return "01.  Execute on memory address";
+    if (type == "RD")   return "02.  Break when it reads from memory";
+    if (type == "WR")   return "03.  Break when it writes to memory";
+    if (type == "OUT")  return "04.  OUT exact port (OUT (n),A / OUT (C),A)";
+    if (type == "OUTH") return "05.  OUT match high byte (port & FF00)";
+    if (type == "OUTL") return "06.  OUT match low byte (port & 00FF)";
+    if (type == "IN")   return "07.  IN exact port (IN A,(n) / IN A,(C))";
+    if (type == "INH")  return "08.  IN match high byte (port & FF00)";
+    if (type == "INL")  return "09.  IN match low byte (port & 00FF)";
+    if (type == "CLK")  return "10.  Clock (T-states - profiling)";
+    if (type == "MEM")  return "11.  Break when into selected memory";
+    if (type == "REG")  return "12.  Break on any selected register";
+    if (type == "FLAG") return "13.  Break on any selected flag";
 
     bool ok = false;
     type.toUInt(&ok, 16);
     if (ok)
-        return "01.Execute address";
+        return "01.  Execute on memory address";
 
     return type;
 }
@@ -160,23 +160,32 @@ SetBreakpointDialog::SetBreakpointDialog(QWidget *parent)
 void SetBreakpointDialog::setupUi()
 {
     setWindowTitle(tr("Set Breakpoint"));
-    resize(480, 260);
+    setFixedSize(480,440);
 
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
     QGridLayout *gridLayout = new QGridLayout();
     m_typeLabel       = new QLabel(tr("Type:"), this);
     m_addrCondLabel   = new QLabel(tr("Condition:"), this);
-    m_addr1Label      = new QLabel(tr("Addr Start:"), this);
+    m_addr1Label      = new QLabel(tr("Addr/Port:"), this);
     m_valueCondLabel  = new QLabel(tr("Condition:"), this);
     m_valueLabel      = new QLabel(tr("Value:"), this);
 
     m_typeCombo = new QComboBox(this);
     m_typeCombo->addItems({
-        "01.Execute address", "02.Read memory", "03.Write memory",
-        "04.Out 16B value", "05.Out High significant Byte 8B value", "06.Out Low significant Byte 8B value",
-        "07.IN 16B value", "08.IN High significant Byte 8B", "09.IN Low significant Byte 8B value",
-        "10.Clock", "11.Memory", "12.Register", "13.Flag"
+        "01.  Execute on memory address",
+        "02.  Break when it reads from memory",
+        "03.  Break when it writes to memory",
+        "04.  OUT exact port (OUT (n),A / OUT (C),A)",
+        "05.  OUT match high byte (port & FF00)",
+        "06.  OUT match low byte (port & 00FF)",
+        "07.  IN exact port (IN A,(n) / IN A,(C))",
+        "08.  IN match high byte (port & FF00)",
+        "09.  IN match low byte (port & 00FF)",
+        "10.  Clock (T-states - profiling)",
+        "11.  Break when into selected memory",
+        "12.  Break on any selected register",
+        "13.  Break on any selected flag"
     });
 
     m_addrCondCombo  = new QComboBox(this);
@@ -213,11 +222,10 @@ void SetBreakpointDialog::setupUi()
 
     m_helpEdit = new QTextEdit(this);
     m_helpEdit->setReadOnly(true);
-    m_helpEdit->setMinimumHeight(60);
+    m_helpEdit->setFixedHeight(250);
     m_helpEdit->setWordWrapMode(QTextOption::WordWrap);
     mainLayout->addWidget(m_helpEdit);
-
-    mainLayout->addStretch();
+    mainLayout->addStretch(1);
 
     QHBoxLayout *buttonLayout = new QHBoxLayout();
     QIcon okIcon(":/images/images/OK.png");
@@ -296,18 +304,29 @@ void SetBreakpointDialog::onTypeChanged(const QString &type)
 
     setAllControlsVisible(true);
 
+    // Make I/O breakpoints less confusing: use "Port" instead of "Addr"
+    const bool isIoType = (type.startsWith("04") || type.startsWith("05") || type.startsWith("06") ||
+                           type.startsWith("07") || type.startsWith("08") || type.startsWith("09"));
+
     m_addr1Edit->setVisible(true);
     m_registerCombo->setVisible(false);
     m_flagCombo->setVisible(false);
 
     m_addrCondLabel->setText(tr("Condition:"));
-    m_addr1Label->setText(tr("Addr Start:"));
+    m_addr1Label->setText(isIoType ? tr("Port:") : tr("Addr Start:"));
     m_valueCondLabel->setText(tr("Condition:"));
     m_valueLabel->setText(tr("Value:"));
     m_addrCondCombo->clear();
     m_valueCondCombo->clear();
     m_addrCondCombo->addItems(m_addrCondList);
     m_valueCondCombo->addItems(m_valueCondList);
+
+
+    m_addr1Edit->setPlaceholderText(isIoType ? tr("Hex port, e.g. 98 or F198") : tr("Hex address, e.g. 8000"));
+    m_addr2Edit->setPlaceholderText(isIoType ? tr("Hex value or end port") : tr("Hex value or end address"));
+    m_addr1Edit->setToolTip(isIoType
+        ? tr("I/O port in hex. For OUT (98),A enter 98. For OUT (C),A with BC=F198 enter F198.")
+        : tr("Address in hex."));
 
     if (label.startsWith("Register")) {
         m_addr1Edit->setVisible(false);
@@ -370,8 +389,10 @@ void SetBreakpointDialog::onTypeChanged(const QString &type)
 
 void SetBreakpointDialog::onAddrCondChanged(const QString &addrCond)
 {
-    QString type = m_typeCombo->currentText();
-    if (QStringList{"Register", "Flag", "Memory", "Clock"}.contains(type)) {
+    QString typeText = m_typeCombo->currentText();
+    int dotPos = typeText.indexOf('.');
+    QString label = (dotPos != -1) ? typeText.mid(dotPos + 1) : typeText;
+    if (label.startsWith("Register") || label.startsWith("Flag") || label.startsWith("Memory") || label.startsWith("Clock")) {
         return;
     }
     if (addrCond == "->") {
@@ -384,7 +405,7 @@ void SetBreakpointDialog::onAddrCondChanged(const QString &addrCond)
     else {
         m_valueLabel->setVisible(false);
         m_addr2Edit->setVisible(false);
-        if (type != "Execute") {
+        if (!label.startsWith("Execute")) {
             m_valueCondLabel->setText(tr("Condition:"));
             m_valueLabel->setText(tr("Value:"));
             m_valueCondLabel->setVisible(true);
@@ -431,37 +452,82 @@ void SetBreakpointDialog::onCancelClicked()
 
 QString SetBreakpointDialog::buildOutputString() const
 {
-    QString type = mapUiTypeToCore(m_typeCombo->currentText());
-    QString addrCond = m_addrCondCombo->currentText();
-    QString valCond = m_valueCondCombo->currentText();
-    QString addr2 = m_addr2Edit->text().toUpper();
+    QString type    = mapUiTypeToCore(m_typeCombo->currentText());
+    QString addrCond = m_addrCondCombo->currentText().trimmed();
+    QString valCond  = m_valueCondCombo->currentText().trimmed();
 
+    QString addr1 = m_addr1Edit->text().trimmed().toUpper();
+    QString addr2 = m_addr2Edit->text().trimmed().toUpper();
+
+    // Allow "0x" prefix in GUI fields
+    if (addr1.startsWith("0X")) addr1 = addr1.mid(2);
+    if (addr2.startsWith("0X")) addr2 = addr2.mid(2);
+
+    // REG: "REG <reg> <cond> <value>"
     if (type == "REG") {
-        QString reg = m_registerCombo->currentText();
+        const QString reg = m_registerCombo->currentText().trimmed().toUpper();
+        if (reg.isEmpty() || addrCond.isEmpty() || addr2.isEmpty())
+            return QString();
         return QString("REG %1 %2 %3").arg(reg, addrCond, addr2);
     }
+
+    // FLAG: "FLAG Z = 0/1"
     if (type == "FLAG") {
-        QString flag = m_flagCombo->currentText();
-        QString addr = m_addr1Edit->text().toUpper();
-        if (addr.isEmpty()) return QString();   // dan is 'm_resultString' leeg
-
-        return QString("EXE %1 FLAG %2=%3").arg(addr, flag, addr2);
+        const QString flag = m_flagCombo->currentText().trimmed().toUpper();
+        if (flag.isEmpty() || addrCond.isEmpty() || addr2.isEmpty())
+            return QString();
+        return QString("FLAG %1 %2 %3").arg(flag, addrCond, addr2);
     }
-    QString addr1 = m_addr1Edit->text().toUpper();
 
-    if (type == "MEM") {
-        return QString("MEM %1 %2 %3").arg(addr1, valCond, addr2);
-    }
+    // CLK: keep existing special format used by your parser: "CLK = <a> <> <b>"
     if (type == "CLK") {
+        if (addr1.isEmpty() || addr2.isEmpty())
+            return QString();
         return QString("CLK = %1 <> %2").arg(addr1, addr2);
     }
-    if (addrCond == "->") { // Range
+
+    // Types that require an address/port
+    const bool needsAddr =
+        (type == "EXE" || type == "RD" || type == "WR" || type == "MEM" ||
+         type == "IN"  || type == "OUT" ||
+         type == "INH" || type == "INL" || type == "OUTH" || type == "OUTL");
+
+    if (needsAddr && addr1.isEmpty())
+        return QString();
+
+    // Range: "<TYPE> <start> ... <end>"
+    if (addrCond == "->") {
+        if (addr2.isEmpty())
+            return QString();
         return QString("%1 %2 ... %3").arg(type, addr1, addr2);
     }
-    if (type == "EXE") { // Enkel adres
+
+    // Auto-fix Z80 reality for immediate IO ports (OUT (n),A / IN A,(n)):
+    // The Z80 uses A as the *high* byte for these forms, so matching an 8-bit port
+    // is almost always done via low-byte matching (OUTL/INL).
+    // If the user entered only 1–2 hex digits (e.g. "98"), treat it as low-byte match.
+    auto isShortHex = [](const QString& s) -> bool {
+        if (s.isEmpty() || s.size() > 2) return false;
+        bool ok = false;
+        s.toUInt(&ok, 16);
+        return ok;
+    };
+
+    QString effectiveType = type;
+    if (type == "OUT" && isShortHex(addr1)) effectiveType = "OUTL";
+    if (type == "IN"  && isShortHex(addr1)) effectiveType = "INL";
+
+    // Value compare: "<TYPE> <addr> <cond> <value>"
+    // Only emit if the value field is visible (UI intent) and value is provided.
+    if (m_valueCondCombo->isVisible() && m_addr2Edit->isVisible() && !addr2.isEmpty()) {
+        return QString("%1 %2 %3 %4").arg(effectiveType, addr1, valCond, addr2);
+    }
+
+    // Simple: "<TYPE> <addr>"
+    if (effectiveType == "EXE") {
         return QString("EXE %1").arg(addr1);
     }
-    return QString("%1 %2 %3 %4").arg(type, addr1, valCond, addr2);
+    return QString("%1 %2").arg(effectiveType, addr1);
 }
 
 void SetBreakpointDialog::parseInputString(const QString &input)
@@ -473,7 +539,8 @@ void SetBreakpointDialog::parseInputString(const QString &input)
     }
 
     QString s = input.toUpper();
-    s.replace(QRegularExpression("\\s+"), " ");
+    static const QRegularExpression reWhitespace(QStringLiteral("\\s+"));
+    s.replace(reWhitespace, " ");
     QStringList parts = s.split(' ');
     QString coreType = parts[0];
 
@@ -607,18 +674,68 @@ void SetBreakpointDialog::updateHelpText(const QString &type)
                  "  WR 6000 = 80\n"
                  "  WR 6000 -> 67FF");
     } else if (t == "04") {
-        msg = tr("Break on OUT to full 16-bit I/O port address (OUT PORT-B0..B15).");
+        msg = tr("Break on OUT to an exact I/O port.\n"
+                 "Covers both Z80 forms:\n"
+                 "  OUT (n),A   (8-bit port, e.g. OUT (98),A)\n"
+                 "  OUT (C),A   (16-bit port via BC, e.g. BC=F198 -> OUT (C),A)\n"
+                 "\nDialog fields:\n"
+                 "  Port: enter the port in hex (e.g. 98 or F198)\n"
+                 "  Value: optional (match the byte written)\n"
+                 "\nExamples:\n"
+                 "  OUT 98\n"
+                 "  OUT 98 = 80\n"
+                 "  OUT F198");
     } else if (t == "05") {
-        msg = tr("Break on OUT to (HSB) high-byte of I/O port (OUT PORT-B8..B15).\n"
-                 "Low 8 bits are 'xx'.");
+        msg = tr("Break on OUT when the HIGH byte of the 16-bit port matches.\n"
+                 "Match rule: (port & FF00) == (xx << 8)\n"
+                 "So OUTH F1 matches ports F100..F1FF.\n"
+                 "\nDialog fields:\n"
+                 "  Port: enter the HIGH byte (00..FF)\n"
+                 "  Value: optional\n"
+                 "\nExamples:\n"
+                 "  OUTH F1\n"
+                 "  OUTH F1 = 80");
     } else if (t == "06") {
-        msg = tr("Break on OUT to (LSB) low-byte of I/O port (OUT PORT-B0..B7).");
+        msg = tr("Break on OUT when the LOW byte of the 16-bit port matches.\n"
+                 "Match rule: (port & 00FF) == nn\n"
+                 "So OUTL 98 matches 0098, 0198, F198, ...\n"
+                 "\nDialog fields:\n"
+                 "  Port: enter the LOW byte (00..FF)\n"
+                 "  Value: optional\n"
+                 "\nExamples:\n"
+                 "  OUTL 98\n"
+                 "  OUTL 98 <> 00");
     } else if (t == "07") {
-        msg = tr("Break on IN from full 16-bit I/O port address (IN PORT-B0..B15).");
+        msg = tr("Break on IN from an exact I/O port.\n"
+                 "Covers both Z80 forms:\n"
+                 "  IN A,(n)    (8-bit port, e.g. IN A,(99))\n"
+                 "  IN A,(C)    (16-bit port via BC, e.g. BC=F198 -> IN A,(C))\n"
+                 "\nDialog fields:\n"
+                 "  Port: enter the port in hex (e.g. 99 or F198)\n"
+                 "  Value: optional (match the byte read)\n"
+                 "\nExamples:\n"
+                 "  IN 99\n"
+                 "  IN 99 = 80\n"
+                 "  IN F198");
     } else if (t == "08") {
-        msg = tr("Break on IN from high-byte of I/O port (IN PORT-B8..B15).");
+        msg = tr("Break on IN when the HIGH byte of the 16-bit port matches.\n"
+                 "Match rule: (port & FF00) == (xx << 8)\n"
+                 "So INH F1 matches ports F100..F1FF.\n"
+                 "\nDialog fields:\n"
+                 "  Port: enter the HIGH byte (00..FF)\n"
+                 "  Value: not used for INH\n"
+                 "\nExample:\n"
+                 "  INH F1");
     } else if (t == "09") {
-        msg = tr("Break on IN from low-byte of I/O port (IN PORT-0..B7).");
+        msg = tr("Break on IN when the LOW byte of the 16-bit port matches.\n"
+                 "Match rule: (port & 00FF) == nn\n"
+                 "So INL 99 matches 0099, 0199, F199, ...\n"
+                 "\nDialog fields:\n"
+                 "  Port: enter the LOW byte (00..FF)\n"
+                 "  Value: optional\n"
+                 "\nExamples:\n"
+                 "  INL 99\n"
+                 "  INL 99 = 80");
     } else if (t == "10") {
         msg = tr("Break on Z80 T-states (CPU clock cycles).\n"
                  "Format: CLK = <addr> <> <tstates>\n"

@@ -1,7 +1,37 @@
 #include "screenwidget.h"
 #include <QMutexLocker>
 #include <cstring>
-#include <QtGlobal>  // voor qBound, qRed, qGreen, qBlue, qAlpha, qRgba
+#include <QtGlobal>
+#include <QtDebug>
+#include <QPainterPath>
+#include "coleco.h"
+
+bool m_80colEnabled = false;
+
+extern "C" {
+    #include "coleco.h"
+    #include "tms9928a.h"
+}
+
+// TMS9928A color palette
+const QColor ScreenWidget::TMS_COLORS[16] = {
+    QColor(0, 0, 0),         // 0: Transparent (Black)
+    QColor(0, 0, 0),         // 1: Black
+    QColor(33, 200, 66),     // 2: Medium Green
+    QColor(94, 220, 120),    // 3: Light Green
+    QColor(84, 85, 237),     // 4: Dark Blue
+    QColor(125, 118, 252),   // 5: Light Blue
+    QColor(212, 82, 77),     // 6: Dark Red
+    QColor(66, 235, 245),    // 7: Cyan
+    QColor(252, 85, 84),     // 8: Medium Red
+    QColor(255, 121, 120),   // 9: Light Red
+    QColor(212, 193, 84),    // A: Dark Yellow
+    QColor(230, 206, 128),   // B: Light Yellow
+    QColor(33, 176, 59),     // C: Dark Green
+    QColor(201, 91, 186),    // D: Magenta
+    QColor(204, 204, 204),   // E: Gray
+    QColor(255, 255, 255)    // F: White
+};
 
 ScreenWidget::ScreenWidget(QWidget *parent)
     : QWidget(parent),
@@ -11,14 +41,84 @@ ScreenWidget::ScreenWidget(QWidget *parent)
     m_isFullScreen(false),
     m_scalingMode(ModeSmooth),
     m_epxBuffer()
+    //m_80colEnabled(false)
 {
     // Begin met een zwart scherm
     m_frame.fill(Qt::black);
+    
+    // Setup 80-column font
+    m_80colFont = QFont("Consolas", 9);
+    m_80colFont.setStyleHint(QFont::Monospace);
+    m_80colFont.setFixedPitch(true);
+    m_80colFont.setBold(true);
 }
 
 ScreenWidget::~ScreenWidget()
 {
 }
+
+// ============================================================================
+// 80-COLUMN MODE HELPERS
+// ============================================================================
+
+static bool auto80 = true;
+static bool ones = false;
+
+// --- TDOS 80-col detectie (ADAMEm-style) ---
+static inline uint8_t z80rb(uint16_t a) {
+    return (uint8_t)coleco_ReadByte(a);
+}
+
+static inline uint16_t z80rw(uint16_t a) {
+    return (uint16_t)z80rb(a) | ((uint16_t)z80rb(a + 1) << 8);
+}
+
+// Return: startadres van TDOS 80-col buffer (0 = niet actief)
+static uint16_t CheckTDOS80BufferAddr()
+{
+    uint16_t base = (uint16_t)z80rb(0x01) | ((uint16_t)z80rb(0x02) << 8);
+
+    uint16_t addr = (uint16_t)z80rb(0x01) | ((uint16_t)z80rb(0x02) << 8);
+    addr = (uint16_t)(addr + 0x6D - 3);
+
+    uint16_t routinePtr = z80rw(addr);
+
+    // Signature check (exact zoals ADAMEm)
+    if ( z80rb(routinePtr + 0)  != 0xF5) return 0;
+    if ( z80rb(routinePtr + 1)  != 0xC5) return 0;
+    if ( z80rb(routinePtr + 2)  != 0xD5) return 0;
+    if ( z80rb(routinePtr + 3)  != 0xCD) return 0;
+    if ( z80rb(routinePtr + 6)  != 0x30) return 0;
+    if ( z80rb(routinePtr + 8)  != 0xE1) return 0;
+    if ( z80rb(routinePtr + 9)  != 0x11) return 0;
+    if ( z80rb(routinePtr + 12) != 0x01) return 0;
+    if ( z80rb(routinePtr + 13) != 0x00) return 0;
+    if ( z80rb(routinePtr + 14) != 0x04) return 0;
+    if ( z80rb(routinePtr + 15) != 0xED) return 0;
+    if ( z80rb(routinePtr + 16) != 0xB0) return 0;
+
+    if ( (tms.VR[0] & 0x02) != 0x00 ) return 0;
+    if ( (tms.VR[1] & 0x18) != 0x10 ) return 0;
+
+    uint16_t bufBase = z80rw((uint16_t)(routinePtr + 10));
+    uint16_t result  = (uint16_t)(bufBase + 0x400);
+
+    return result;
+}
+
+static int GetTDOSNumLines()
+{
+    uint16_t i = (uint16_t)z80rb(0x01) | ((uint16_t)z80rb(0x02) << 8);
+    i = (uint16_t)(i + 0x64 - 3);
+
+    uint16_t p = z80rw(i);
+    uint16_t q = z80rw((uint16_t)(p + 3));
+    int num = (int)z80rb(q) + 1;
+    if (num < 0) num = 0;
+    if (num > 24) num = 24;
+    return num;
+}
+
 
 void ScreenWidget::setScalingMode(ScreenWidget::ScalingMode mode)
 {
@@ -44,7 +144,7 @@ void ScreenWidget::applyEPX(const QImage& source)
         QImage convertedSource = source.convertToFormat(QImage::Format_RGB32);
         if (convertedSource.isNull()) {
             qWarning() << "EPX: Kan bron-image niet converteren naar 32-bit.";
-            m_epxBuffer.fill(Qt::magenta); // Fout
+            m_epxBuffer.fill(Qt::magenta);
             return;
         }
         applyEPX(convertedSource);
@@ -98,31 +198,53 @@ void ScreenWidget::applyEPX(const QImage& source)
 
 void ScreenWidget::applyLCDizeFilter(QImage& image)
 {
-    const int W = image.width();
-    const int H = image.height();
+    if (image.format() != QImage::Format_RGB32 && image.format() != QImage::Format_ARGB32) {
+        image = image.convertToFormat(QImage::Format_RGB32);
+    }
 
-    // Lcdize werkt op 2x2 blokken.
-    // De originele code dimt de ene helft van de 2x2 blokken en verheldert de andere.
-    // De logica is: Dimmen op oneven kolommen, verhelderen op even kolommen, voor alle rijen.
-    const quint32 BRIGHTNESS_MASK = 0x000F0F0F;
+    const int w = image.width();
+    const int h = image.height();
 
-    // LcdizeImage (in Image.c) werkt met paren (W&=~1)
+    for (int y = 0; y < h; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            QRgb pixel = line[x];
+            int r = qRed(pixel);
+            int g = qGreen(pixel);
+            int b = qBlue(pixel);
 
-    for (int y = 0; y < H; ++y)
-    {
-        quint32* P = reinterpret_cast<quint32*>(image.scanLine(y));
-
-        for (int x = 0; x < W; ++x)
-        {
-            if (x & 1) // Oneven kolommen: Brighten
-            {
-                // P[X]+=(~P[X]>>4)&0x000F0F0F
-                P[x] += (~P[x] >> 4) & BRIGHTNESS_MASK;
+            // LCD subpixel pattern effect
+            if (x % 3 == 0) {
+                r = qBound(0, r + 20, 255);
+            } else if (x % 3 == 1) {
+                g = qBound(0, g + 20, 255);
+            } else {
+                b = qBound(0, b + 20, 255);
             }
-            else // Even kolommen: Darken
-            {
-                // P[X]-=(P[X]>>4)&0x000F0F0F
-                P[x] -= (P[x] >> 4) & BRIGHTNESS_MASK;
+
+            line[x] = qRgb(r, g, b);
+        }
+    }
+}
+
+void ScreenWidget::applyTVScanlinesFilter(QImage& image)
+{
+    if (image.format() != QImage::Format_RGB32 && image.format() != QImage::Format_ARGB32) {
+        image = image.convertToFormat(QImage::Format_RGB32);
+    }
+
+    const int w = image.width();
+    const int h = image.height();
+
+    for (int y = 0; y < h; ++y) {
+        if (y % 2 == 1) {
+            QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+            for (int x = 0; x < w; ++x) {
+                QRgb pixel = line[x];
+                int r = qRed(pixel) * 0.7;
+                int g = qGreen(pixel) * 0.7;
+                int b = qBlue(pixel) * 0.7;
+                line[x] = qRgb(r, g, b);
             }
         }
     }
@@ -130,75 +252,192 @@ void ScreenWidget::applyLCDizeFilter(QImage& image)
 
 void ScreenWidget::applyRasterizeFilter(QImage& image)
 {
-    const int W = image.width();
-    const int H = image.height();
-    const quint32 BRIGHTNESS_MASK = 0x000F0F0F;
+    if (image.format() != QImage::Format_RGB32 && image.format() != QImage::Format_ARGB32) {
+        image = image.convertToFormat(QImage::Format_RGB32);
+    }
 
-    for (int y = 0; y < H; ++y)
-    {
-        quint32* P = reinterpret_cast<quint32*>(image.scanLine(y));
+    const int w = image.width();
+    const int h = image.height();
 
-        if (y & 1) // Oneven rijen: Dim de hele rij (zoals TV Scanlines)
-        {
-            // P[X]-=(P[X]>>4)&0x000F0F0F
-            for (int x = 0; x < W; ++x) {
-                P[x] -= (P[x] >> 4) & BRIGHTNESS_MASK;
+    for (int y = 0; y < h; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            QRgb pixel = line[x];
+            int r = qRed(pixel);
+            int g = qGreen(pixel);
+            int b = qBlue(pixel);
+
+            // Apply raster pattern
+            if ((x + y) % 2 == 0) {
+                r = qBound(0, r - 30, 255);
+                g = qBound(0, g - 30, 255);
+                b = qBound(0, b - 30, 255);
             }
-        }
-        else // Even rijen: Dim/verhelder per kolom (zoals LCD)
-        {
-            for (int x = 0; x < W; ++x) {
-                if (x & 1) {
-                    // Oneven kolommen: Brighten
-                    // P[X]+=(~P[X]>>4)&0x000F0F0F
-                    P[x] += (~P[x] >> 4) & BRIGHTNESS_MASK;
-                } else {
-                    // Even kolommen: Darken
-                    // P[X]-=(P[X]>>4)&0x000F0F0F
-                    P[x] -= (P[x] >> 4) & BRIGHTNESS_MASK;
-                }
-            }
+
+            line[x] = qRgb(r, g, b);
         }
     }
 }
 
-// Pas de oude TV-filter aan de nieuwe naam aan
-void ScreenWidget::applyTVScanlinesFilter(QImage& image)
+void ScreenWidget::applyMonochromeFilter(QImage& image)
 {
-    const int W = image.width();
-    const int H = image.height();
+    if (image.format() != QImage::Format_RGB32 && image.format() != QImage::Format_ARGB32) {
+        image = image.convertToFormat(QImage::Format_RGB32);
+    }
 
-    // Masker voor snelle manipulatie van R, G en B componenten.
-    // Dit maskeer 4 bits (een factor 16) van elke R/G/B component.
-    const quint32 BRIGHTNESS_MASK = 0x000F0F0F;
+    const int w = image.width();
+    const int h = image.height();
 
-    for (int y = 0; y < H; ++y)
-    {
-        quint32* P = reinterpret_cast<quint32*>(image.scanLine(y));
-
-        if (y & 1) // Oneven lijnen: Darken (Scanline OFF)
-        {
-            for (int x = 0; x < W; ++x) {
-                // P[X] -= (P[X] >> 4) & 0x000F0F0F;
-                P[x] -= (P[x] >> 4) & BRIGHTNESS_MASK;
-            }
-        }
-        else // Even lijnen: Brighten (Scanline ON - optionele versterking)
-        {
-            for (int x = 0; x < W; ++x) {
-                // P[X] += (~P[X] >> 4) & 0x000F0F0F;
-                P[x] += (~P[x] >> 4) & BRIGHTNESS_MASK;
-            }
+    for (int y = 0; y < h; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            QRgb pixel = line[x];
+            int gray = (qRed(pixel) + qGreen(pixel) + qBlue(pixel)) / 3;
+            line[x] = qRgb(gray, gray, gray);
         }
     }
 }
 
-// Ideale/standaard grootte is de basisresolutie
-QSize ScreenWidget::sizeHint() const {
-    return QSize(COLECO_WIDTH, COLECO_HEIGHT);
+void ScreenWidget::applySepiaFilter(QImage& image)
+{
+    if (image.format() != QImage::Format_RGB32 && image.format() != QImage::Format_ARGB32) {
+        image = image.convertToFormat(QImage::Format_RGB32);
+    }
+
+    const int w = image.width();
+    const int h = image.height();
+
+    for (int y = 0; y < h; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            QRgb pixel = line[x];
+            int r = qRed(pixel);
+            int g = qGreen(pixel);
+            int b = qBlue(pixel);
+
+            int tr = qBound(0, (int)(r * 0.393 + g * 0.769 + b * 0.189), 255);
+            int tg = qBound(0, (int)(r * 0.349 + g * 0.686 + b * 0.168), 255);
+            int tb = qBound(0, (int)(r * 0.272 + g * 0.534 + b * 0.131), 255);
+
+            line[x] = qRgb(tr, tg, tb);
+        }
+    }
 }
 
-// Minimale grootte is de basisresolutie
+void ScreenWidget::applyGreenCRTFilter(QImage& image)
+{
+    if (image.format() != QImage::Format_RGB32 && image.format() != QImage::Format_ARGB32) {
+        image = image.convertToFormat(QImage::Format_RGB32);
+    }
+
+    const int w = image.width();
+    const int h = image.height();
+
+    for (int y = 0; y < h; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            QRgb pixel = line[x];
+            int gray = (qRed(pixel) + qGreen(pixel) + qBlue(pixel)) / 3;
+            line[x] = qRgb(0, gray, 0);
+        }
+    }
+}
+
+void ScreenWidget::applyAmberCRTFilter(QImage& image)
+{
+    if (image.format() != QImage::Format_RGB32 && image.format() != QImage::Format_ARGB32) {
+        image = image.convertToFormat(QImage::Format_RGB32);
+    }
+
+    const int w = image.width();
+    const int h = image.height();
+
+    for (int y = 0; y < h; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            QRgb pixel = line[x];
+            int gray = (qRed(pixel) + qGreen(pixel) + qBlue(pixel)) / 3;
+            int r = qBound(0, gray, 255);
+            int g = qBound(0, (int)(gray * 0.7), 255);
+            line[x] = qRgb(r, g, 0);
+        }
+    }
+}
+
+void ScreenWidget::applyCMYRasterFilter(QImage& image)
+{
+    if (image.format() != QImage::Format_RGB32 && image.format() != QImage::Format_ARGB32) {
+        image = image.convertToFormat(QImage::Format_RGB32);
+    }
+
+    const int w = image.width();
+    const int h = image.height();
+
+    for (int y = 0; y < h; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            QRgb pixel = line[x];
+            int r = qRed(pixel);
+            int g = qGreen(pixel);
+            int b = qBlue(pixel);
+
+            if (x % 3 == 0) {      // Cyan
+                r = qBound(0, r - 50, 255);
+            } else if (x % 3 == 1) { // Magenta
+                g = qBound(0, g - 50, 255);
+            } else {               // Yellow
+                b = qBound(0, b - 50, 255);
+            }
+
+            line[x] = qRgb(r, g, b);
+        }
+    }
+}
+
+void ScreenWidget::applyRGBRasterFilter(QImage& image)
+{
+    if (image.format() != QImage::Format_RGB32 && image.format() != QImage::Format_ARGB32) {
+        image = image.convertToFormat(QImage::Format_RGB32);
+    }
+
+    const int w = image.width();
+    const int h = image.height();
+
+    for (int y = 0; y < h; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            QRgb pixel = line[x];
+            int r = qRed(pixel);
+            int g = qGreen(pixel);
+            int b = qBlue(pixel);
+
+            if (x % 3 == 0) {
+                g = qBound(0, g - 50, 255);
+                b = qBound(0, b - 50, 255);
+            } else if (x % 3 == 1) {
+                r = qBound(0, r - 50, 255);
+                b = qBound(0, b - 50, 255);
+            } else {
+                r = qBound(0, r - 50, 255);
+                g = qBound(0, g - 50, 255);
+            }
+
+            line[x] = qRgb(r, g, b);
+        }
+    }
+}
+
+void ScreenWidget::setBackgroundColor(const QColor& color)
+{
+    m_backgroundColor = color;
+    update();
+}
+
+QSize ScreenWidget::sizeHint() const
+{
+    return QSize(COLECO_WIDTH * 2, COLECO_HEIGHT * 2);
+}
+
 QSize ScreenWidget::minimumSizeHint() const {
     return QSize(COLECO_WIDTH, COLECO_HEIGHT);
 }
@@ -214,6 +453,13 @@ void ScreenWidget::setScanlinesMode(ScanlinesMode mode)
 {
     if (m_scanlinesMode == mode) return;
     m_scanlinesMode = mode;
+    update();
+}
+
+void ScreenWidget::setColorFilterMode(ColorFilterMode mode)
+{
+    if (m_colorFilterMode == mode) return;
+    m_colorFilterMode = mode;
     update();
 }
 
@@ -242,9 +488,19 @@ void ScreenWidget::setSmoothScaling(bool enabled)
     m_smoothScaling = enabled;
     update();
 }
-
 void ScreenWidget::paintEvent(QPaintEvent *event)
 {
+    static uint16_t lastBuf = 0;
+    uint16_t buf = CheckTDOS80BufferAddr();
+    if (buf != lastBuf) {
+        qDebug() << "[TDOS80] paintEvent bufAddr=" << QString("0x%1").arg(buf,4,16,QChar('0'))
+        << " (m_80colEnabled was" << m_80colEnabled << ")";
+        lastBuf = buf;
+    }
+
+    // AUTO: als TDOS 80-buffer bestaat => 80-col mode aan
+    auto80 = (buf != 0);
+
     Q_UNUSED(event);
     QPainter p(this);
     QImage frameCopy;
@@ -348,230 +604,187 @@ void ScreenWidget::paintEvent(QPaintEvent *event)
 
     // Bepaal de doelhoogte (volledige widget-hoogte)
     int targetHeight = widgetSize.height();
+    int targetWidth = widgetSize.width();
 
-    // Bereken de doelbreedte met behoud van aspect ratio
-    if (imageToDraw.height() == 0) return; // Voorkom delen door nul
-    int targetWidth = (targetHeight * imageToDraw.width()) / imageToDraw.height();
+    // Bereken aspect ratio
+    double sourceAspect = (double)imageToDraw.width() / imageToDraw.height();
+    double targetAspect = (double)targetWidth / targetHeight;
 
-    // Bepaal de x-positie om horizontaal te centreren
-    int x = (widgetSize.width() - targetWidth) / 2;
-    int y = 0; // Altijd 0, want we vullen de hoogte
+    QRect targetRect;
 
-    // Maak de doel-rechthoek
-    QRect targetRect(x, y, targetWidth, targetHeight);
+    if (targetAspect > sourceAspect) {
+        // Widget is breder dan image -> gebruik volledige hoogte
+        int scaledWidth = (int)(targetHeight * sourceAspect);
+        int offsetX = (targetWidth - scaledWidth) / 2;
+        targetRect = QRect(offsetX, 0, scaledWidth, targetHeight);
+    } else {
+        // Widget is smaller of exact -> gebruik volledige breedte
+        int scaledHeight = (int)(targetWidth / sourceAspect);
+        int offsetY = (targetHeight - scaledHeight) / 2;
+        targetRect = QRect(0, offsetY, targetWidth, scaledHeight);
+    }
 
-    // Teken de achtergrond (vult het hele venster)
+    // Fill background
     p.fillRect(rect(), bgColor);
 
-    // Teken het spel
-    p.drawImage(targetRect, imageToDraw);
+    // === Skip TMS rendering in 80-col mode ===
+    if (m_80colEnabled && auto80) {
+        // 80-column mode: only render text
+        p.fillRect(rect(), bgColor);
+        render80ColumnText(p, targetRect);
+    } else {
+        // Normal mode: render TMS9928A graphics
+        p.drawImage(targetRect, imageToDraw);
+    }
+    // ---- Black gamescreen border (4px) ----
+    const int b = 3;
+    QRect r = targetRect;
 
-    Q_UNUSED(event);
-
-    // Teken de achtergrond
-    p.fillRect(rect(), bgColor);
-
-    // Teken het spel
-    p.drawImage(targetRect, imageToDraw);
-
-    QPen borderPen(Qt::black); // Kleur: Zwart
-    borderPen.setWidth(4);     // Dikte: 4 pixels
-
-    // MiterJoin zorgt voor scherpe, rechte hoeken in plaats van afgeronde
-    borderPen.setJoinStyle(Qt::MiterJoin);
-
-    p.setPen(borderPen);
-    p.setBrush(Qt::NoBrush);
-
-    // Teken de rechthoek precies op de rand van het spelbeeld
-    p.drawRect(targetRect);
-    // ----------------------------------------
+    // boven
+    p.fillRect(QRect(r.left() - b, r.top() - b, r.width() + b, b), Qt::black);
+    // onder
+    p.fillRect(QRect(r.left() - b, r.bottom() - 2, r.width() + b, b), Qt::black);
+    // links
+    p.fillRect(QRect(r.left() - b, r.top(), b, r.height()), Qt::black);
+    // rechts
+    p.fillRect(QRect(r.right() + 1, r.top(), b, r.height()), Qt::black);
 }
 
-void ScreenWidget::setColorFilterMode(ColorFilterMode mode)
+
+// ============================================================================
+// 80-COLUMN MODE FUNCTIONS
+// ============================================================================
+
+void ScreenWidget::set80ColumnMode(bool enabled)
 {
-    if (m_colorFilterMode == mode) return;
-    m_colorFilterMode = mode;
+    if (m_80colEnabled == enabled) return;
+    m_80colEnabled = enabled;
+    ones=false;
     update();
 }
 
-void ScreenWidget::applyMonochromeFilter(QImage& image)
+
+void ScreenWidget::read80ColumnVRAM(char textBuffer[24][80], unsigned char colorBuffer[24][80])
 {
-    const int W = image.width();
-    const int H = image.height();
+     const unsigned char fgIdx = (tms.VR[7] >> 4) & 0x0F;
 
-    for (int y = 0; y < H; ++y) {
-        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
-        for (int x = 0; x < W; ++x) {
-            QRgb px = line[x];
-            int r = qRed(px);
-            int g = qGreen(px);
-            int b = qBlue(px);
+    // // 1) Probeer TDOS 80-col buffer in RAM (ADAMEm manier)
+     uint16_t tdosAddr = CheckTDOS80BufferAddr();
+     if (tdosAddr != 0) {
 
-            // 77+151+28 = 256 => zelfde stijl als EMULib (Image.c)
-            int gray = (77 * r + 151 * g + 28 * b) >> 8;
-            gray = qBound(0, gray, 255);
+        int numLines = GetTDOSNumLines();
 
-            line[x] = qRgba(gray, gray, gray, qAlpha(px));
+        // Copy offscreen buffer: numLines * 80 bytes uit Z80-RAM
+        for (int row = 0; row < numLines; ++row) {
+            for (int col = 0; col < 80; ++col) {
+                textBuffer[row][col] = (char)z80rb((uint16_t)(tdosAddr + row * 80 + col));
+                colorBuffer[row][col] = fgIdx;
+            }
         }
+
+        unsigned int nameTableBase = (tms.VR[2] & 0x0F) << 10;
+
+        if (!ones) {
+            memset(RAM_Memory + 0xF900, 0, 0x284);
+            ones=true;
+        }
+
+        unsigned char block = VDP_Memory[(nameTableBase + 21*40 + 0) & 0x3FFF];
+        for (int r = 21; r < 24; ++r) {
+            for (int c = 0; c < 40; ++c) {
+                unsigned char raw = VDP_Memory[(nameTableBase + r*40 + c) & 0x3FFF];
+                textBuffer[r][c] = (char)raw;
+                colorBuffer[r][c] = fgIdx;
+                //textBuffer[r][c+40] = (char)raw;
+                //colorBuffer[r][c+40] = fgIdx;
+            }
+            for (int c = 40; c < 80; ++c) {
+                textBuffer[r][c] = block;
+                colorBuffer[r][c] = fgIdx;
+            }
+        }
+
+        textBuffer[22][67]=' ';
+        textBuffer[22][68]='T';
+        textBuffer[22][69]='-';
+        textBuffer[22][70]='D';
+        textBuffer[22][71]='O';
+        textBuffer[22][72]='S';
+        textBuffer[22][73]=' ';
+        textBuffer[22][74]='8';
+        textBuffer[22][75]='0';
+        textBuffer[22][76]=' ';
+
+        return; // TDOS-pad gebruikt, klaar.
+    }
+
+    // 2) Fallback: jouw oude lineaire VRAM lezing (24x80)
+    unsigned int nameTableBase = (tms.VR[2] & 0x0F) << 10;
+    for (int i = 0; i < 1920; i++) {
+        int row = i / 80;
+        int col = i % 80;
+
+        unsigned char rawByte = VDP_Memory[(nameTableBase + i) & 0x3FFF];
+        textBuffer[row][col] = (char)rawByte;
+        colorBuffer[row][col] = fgIdx;
     }
 }
 
-void ScreenWidget::applySepiaFilter(QImage& image)
+
+void ScreenWidget::setText(QPainter& painter, const QRect& targetRect,int charWidth, int charHeight, unsigned char globalBgIdx)
 {
-    const int W = image.width();
-    const int H = image.height();
 
-    for (int y = 0; y < H; ++y) {
-        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
-        for (int x = 0; x < W; ++x) {
-            QRgb px = line[x];
-            int r = qRed(px);
-            int g = qGreen(px);
-            int b = qBlue(px);
+    painter.save();
+    painter.translate(targetRect.left(), targetRect.top());
+    // Schaal naar een virtueel canvas van 80x24
+    painter.scale((double)targetRect.width() / (80.0 * charWidth),
+                  (double)targetRect.height() / (24.0 * charHeight));
 
-            // Int-versie van klassieke sepia (ongeveer wat SepiaImage doet)
-            int sr = (393 * r + 769 * g + 189 * b) / 1000;
-            int sg = (349 * r + 686 * g + 168 * b) / 1000;
-            int sb = (272 * r + 534 * g + 131 * b) / 1000;
+    globalBgIdx = tms.VR[7] & 0x0F;
 
-            sr = qBound(0, sr, 255);
-            sg = qBound(0, sg, 255);
-            sb = qBound(0, sb, 255);
 
-            line[x] = qRgba(sr, sg, sb, qAlpha(px));
-        }
-    }
+    painter.fillRect(0, 0, 80 * charWidth, 24 * charHeight, TMS_COLORS[globalBgIdx]);
 }
 
-void ScreenWidget::applyGreenCRTFilter(QImage& image)
+void ScreenWidget::render80ColumnText(QPainter& painter, const QRect& targetRect)
 {
-    const int W = image.width();
-    const int H = image.height();
+    char textBuffer[24][80];
+    unsigned char colorBuffer[24][80];
+    read80ColumnVRAM(textBuffer, colorBuffer);
 
-    for (int y = 0; y < H; ++y) {
-        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
-        for (int x = 0; x < W; ++x) {
-            QRgb px = line[x];
-            int r = qRed(px);
-            int g = qGreen(px);
-            int b = qBlue(px);
+    unsigned char globalBgIdx = tms.VR[7] & 0x0F;
 
-            // Eerst naar grijs (zoals MonochromeImage)
-            int gray = (77 * r + 151 * g + 28 * b) >> 8;
-            gray = qBound(0, gray, 255);
+    // font and metrics
+    painter.setFont(m_80colFont);
+    QFontMetrics fm(m_80colFont);
+    int charWidth = fm.horizontalAdvance('M');
+    int charHeight = fm.height();
 
-            int nr = qBound(0, (92 * gray) >> 8, 255);   // ~0.36 * gray
-            int ng = gray;                               // hoofdcomponent
-            int nb = qBound(0, (51 * gray) >> 8, 255);   // ~0.2 * gray
+    // setText scaling and background
+    setText(painter, targetRect, charWidth, charHeight, globalBgIdx);
 
-            line[x] = qRgba(nr, ng, nb, qAlpha(px));
-        }
-    }
-}
+    // draw lineair 0..79 over 24 rows
+    for (int row = 0; row < 24; row++) {
+        for (int col = 0; col < 80; col++) {
+            unsigned char rawCh = (unsigned char)textBuffer[row][col];
+            bool inverted = (rawCh & 0x80);
+            char displayCh = (char)(rawCh & 0x7F);
 
-void ScreenWidget::applyAmberCRTFilter(QImage& image)
-{
-    const int W = image.width();
-    const int H = image.height();
+            int x = col * charWidth;
+            int y = row * charHeight;
 
-    for (int y = 0; y < H; ++y) {
-        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
-        for (int x = 0; x < W; ++x) {
-            QRgb px = line[x];
-            int r = qRed(px);
-            int g = qGreen(px);
-            int b = qBlue(px);
-
-            // 1. Calculate weighted grayscale (Luminance approximation)
-            int gray = (77 * r + 151 * g + 28 * b) >> 8;
-            gray = qBound(0, gray, 255);
-
-            // 2. Apply Orange/Amber color filter
-
-            // Red component: Maximale intensiteit voor een diepe oranje tint
-            int nr = gray;
-
-            // Green component: Iets verlaagd om het van groen naar oranje te verschuiven
-            // Gebruik een factor rond 180 (180/256 ≈ 0.7) voor een oranjere kleur.
-            int ng = qBound(0, (180 * gray) >> 8, 255);
-
-            // Blue component: Lage intensiteit om blauwe of paarse tinten te vermijden
-            int nb = qBound(0, (51 * gray) >> 8, 255);
-
-            line[x] = qRgba(nr, ng, nb, qAlpha(px));
-        }
-    }
-}
-
-void ScreenWidget::applyCMYRasterFilter(QImage& image)
-{
-    const int W = image.width();
-    const int H = image.height();
-
-    for (int y = 0; y < H; ++y) {
-        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
-        for (int x = 0; x < W; ++x) {
-            QRgb px = line[x];
-            int r = qRed(px);
-            int g = qGreen(px);
-            int b = qBlue(px);
-
-            switch (x % 3) {
-            case 0: // C (Cyan = G+B, R wat dimmen)
-                r = r * 5 / 10;
-                g = qMin(255, g * 12 / 10);
-                b = qMin(255, b * 12 / 10);
-                break;
-            case 1: // M (Magenta = R+B, G dimmen)
-                r = qMin(255, r * 12 / 10);
-                g = g * 5 / 10;
-                b = qMin(255, b * 12 / 10);
-                break;
-            case 2: // Y (Yellow = R+G, B dimmen)
-                r = qMin(255, r * 12 / 10);
-                g = qMin(255, g * 12 / 10);
-                b = b * 5 / 10;
-                break;
+            if (inverted) {
+                painter.fillRect(x, y, charWidth, charHeight, TMS_COLORS[colorBuffer[row][col]]);
+                painter.setPen(TMS_COLORS[globalBgIdx]);
+            } else {
+                painter.setPen(TMS_COLORS[colorBuffer[row][col]]);
             }
 
-            line[x] = qRgba(r, g, b, qAlpha(px));
-        }
-    }
-}
-
-void ScreenWidget::applyRGBRasterFilter(QImage& image)
-{
-    const int W = image.width();
-    const int H = image.height();
-
-    for (int y = 0; y < H; ++y) {
-        QRgb* line = reinterpret_cast<QRgb*>(image.scanLine(y));
-        for (int x = 0; x < W; ++x) {
-            QRgb px = line[x];
-            int r = qRed(px);
-            int g = qGreen(px);
-            int b = qBlue(px);
-
-            switch (x % 3) {
-            case 0: // R
-                r = qMin(255, r * 13 / 10);
-                g = g * 6 / 10;
-                b = b * 6 / 10;
-                break;
-            case 1: // G
-                r = r * 6 / 10;
-                g = qMin(255, g * 13 / 10);
-                b = b * 6 / 10;
-                break;
-            case 2: // B
-                r = r * 6 / 10;
-                g = g * 6 / 10;
-                b = qMin(255, b * 13 / 10);
-                break;
+            if ((unsigned char)displayCh > 32 || inverted) {
+                QString txt = (displayCh <= 32) ? " " : QString(QChar(displayCh));
+                painter.drawText(x, y + charHeight - 2, txt);
             }
-
-            line[x] = qRgba(r, g, b, qAlpha(px));
         }
     }
+    painter.restore();
 }

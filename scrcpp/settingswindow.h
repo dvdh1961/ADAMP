@@ -23,6 +23,9 @@ public:
     void setSymbolPath(const QString& path);
     void setAdamBezelPath(const QString &path);
     void setCvBezelPath(const QString &path);
+    void setColecoBiosPath(const QString& path);
+    void setEosBiosPath(const QString& path);
+    void setWriterBiosPath(const QString& path);
 
     QString romPath() const;
     QString diskPath() const;
@@ -33,6 +36,9 @@ public:
     QString symbolPath() const;
     QString adamBezelPath() const;
     QString cvBezelPath() const;
+    QString colecoBiosPath() const;
+    QString eosBiosPath() const;
+    QString writerBiosPath() const;
 
 private slots:
     void onBrowseRomPath();
@@ -46,6 +52,13 @@ private slots:
     void onBrowseCvBezelPath();
     void onLoadAdamBezel();
     void onLoadCvBezel();
+    void onBrowseColecoBiosPath();
+    void onBrowseEosBiosPath();
+    void onBrowseWriterBiosPath();
+    void onDefaultColecoBiosPath();
+    void onDefaultEosBiosPath();
+    void onDefaultWriterBiosPath();
+    void onResetAllPathsToDefault();
 
 private:
     void setupUI();
@@ -73,6 +86,18 @@ private:
     QDialogButtonBox *m_buttonBox;
     QPushButton *m_okButton;
     QPushButton *m_cancelButton;
+    QLineEdit *m_colecoBiosPathEdit;
+    QPushButton *m_colecoBiosPathBtn;
+    QPushButton *m_colecoBiosDefaultBtn;
+    QPushButton *m_resetAllPathsBtn;
+
+    QLineEdit *m_eosBiosPathEdit;
+    QPushButton *m_eosBiosPathBtn;
+    QPushButton *m_eosBiosDefaultBtn;
+
+    QLineEdit *m_writerBiosPathEdit;
+    QPushButton *m_writerBiosPathBtn;
+    QPushButton *m_writerBiosDefaultBtn;
 };
 
 #endif

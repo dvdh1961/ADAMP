@@ -17,7 +17,6 @@
 #include <QImage>
 
 #include "coleco.h"
-#include "f18a.h"
 
 extern "C" {
 #include "emu.h"
@@ -514,9 +513,6 @@ void NTableWindow::createTile(int screen_y)
             {
                 // Mode 1 gebruikt iy>>3 voor de hele tegel
                 vcol = coleco_gettmsval(CHRCOL, color_address >> 3, tms.Mode, iy >> 3);
-            }
-            else if (f18a.Mode == F18A_MODE_GRAPHICS){
-                vcol = coleco_gettmsval(CHRCOL, color_address, tms.Mode, iy >> 3);
             }
             else
             {

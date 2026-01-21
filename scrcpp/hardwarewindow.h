@@ -33,7 +33,7 @@ struct HardwareConfig {
 
     // Additional hardware
     bool sgmEnabled  = false;   // Opcode SGM
-    bool f18aEnabled = false;   // F18A
+    bool c80Enabled = false;   // 80 Columns
 
     // Controllers
     bool steeringWheel = false;
@@ -52,6 +52,7 @@ public:
     explicit HardwareWindow(const HardwareConfig& initial, QWidget *parent = nullptr);
     HardwareConfig config() const;
     void updateLoadedMedia(const QString& mediaName);
+    void updateAvailability();
 
     void setLoadedMediaDisplayNames(
         const QString& colecoCartridgeName,
@@ -69,12 +70,12 @@ private slots:
     void onPaletteChanged(int idx);
     void onPrinterClicked();
     void onToggleSGM(bool checked);
+    void onToggleC80(bool checked);
 
 private:
     void buildUi();
     void loadFromConfig(const HardwareConfig& c);
     HardwareConfig readFromUi() const;
-    void updateAvailability();
     void updatePaletteSwatches();
 
     QGroupBox*   m_groupMachine = nullptr;
@@ -91,7 +92,7 @@ private:
 
     QGroupBox*   m_groupAddHw = nullptr;
     QToolButton* m_btnSGM  = nullptr;
-    QToolButton* m_btnF18A = nullptr;
+    QToolButton* m_btn80C = nullptr;
     QToolButton* m_btnPrinter = nullptr;
 
     QGroupBox*   m_groupVideo = nullptr;
@@ -120,6 +121,7 @@ private:
 
     bool m_loading = false;
     static bool m_sgmSelectionState;
+    static bool m_c80SelectionState;
 };
 
 #endif

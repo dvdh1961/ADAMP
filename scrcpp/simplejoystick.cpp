@@ -218,7 +218,7 @@ bool SimpleJoystickLinux::tryOpenJs(int index)
     if (m_fd >= 0) {
         m_usingEvdev = false;
         // NIEUW: De notifier wordt NU geconnecteerd in de SimpleJoystick::startPolling
-        qDebug() << "SimpleJoystick: opened" << path;
+        qDebug() << "[JOY] SimpleJoystick: opened" << path;
         return true;
     }
     return false;
@@ -249,7 +249,7 @@ bool SimpleJoystickLinux::tryOpenEvdev()
                 m_usingEvdev = true;
                 // De notifier is in dit model nog steeds een probleem,
                 // we vertrouwen op de SimpleJoystick::onPollTimer voor polling
-                qDebug() << "SimpleJoystick: opened evdev" << namePath << "name:" << qname;
+                qDebug() << "[JOY] SimpleJoystick: opened evdev" << namePath << "name:" << qname;
                 ::closedir(dir);
                 return true;
             }
@@ -381,7 +381,7 @@ void SimpleJoystickWindows::openWindowsJoystick(int joystickIndex)
         if (joyGetPosEx(JOYSTICKID1 + i, &joyInfo) == JOYERR_NOERROR) {
             m_joystickIndex = i;
             m_is_joystick_open = true;
-            qDebug() << "Joystick: found at ID" << i;
+            qDebug() << "[JOY] Joystick: found at ID" << i;
             break;
         }
     }
@@ -456,17 +456,23 @@ void SimpleJoystickWindows::readWindowsJoystick()
     }
 
     // 3. POV HAT
-    if (joyInfo.dwPOV != 65535) {
-        RawJoystickInput hatInput;
+    RawJoystickInput hatInput;
+    hatInput.axisID = -1;
+    hatInput.buttonID = -1;
 
-        if (joyInfo.dwPOV == 0) hatInput.hatDirection = RawJoystickInput::Up;
-        else if (joyInfo.dwPOV == 4500) hatInput.hatDirection = RawJoystickInput::UpRight;
-        else if (joyInfo.dwPOV == 9000) hatInput.hatDirection = RawJoystickInput::Right;
+    if (joyInfo.dwPOV == 65535) {
+        hatInput.hatDirection = RawJoystickInput::Neutral;
+        mapAndEmitInput(hatInput);
+    } else {
+        if      (joyInfo.dwPOV == 0)     hatInput.hatDirection = RawJoystickInput::Up;
+        else if (joyInfo.dwPOV == 4500)  hatInput.hatDirection = RawJoystickInput::UpRight;
+        else if (joyInfo.dwPOV == 9000)  hatInput.hatDirection = RawJoystickInput::Right;
         else if (joyInfo.dwPOV == 13500) hatInput.hatDirection = RawJoystickInput::DownRight;
         else if (joyInfo.dwPOV == 18000) hatInput.hatDirection = RawJoystickInput::Down;
         else if (joyInfo.dwPOV == 22500) hatInput.hatDirection = RawJoystickInput::DownLeft;
         else if (joyInfo.dwPOV == 27000) hatInput.hatDirection = RawJoystickInput::Left;
         else if (joyInfo.dwPOV == 31500) hatInput.hatDirection = RawJoystickInput::UpLeft;
+        else                             hatInput.hatDirection = RawJoystickInput::Neutral; // safety
 
         mapAndEmitInput(hatInput);
     }
@@ -535,7 +541,7 @@ void SimpleJoystick::startPolling(int joystickIndex)
 
     if (m_privateImpl->start(joystickIndex)) {
         m_pollTimer.start(16); // ~60 Hz
-        qDebug() << "SimpleJoystick: Polling started.";
+        qDebug() << "[JOY] SimpleJoystick: Polling started.";
     } else {
         qWarning() << "SimpleJoystick: Failed to start platform device.";
     }
@@ -556,7 +562,7 @@ void SimpleJoystick::setJoystickType(int type)
     }
 
     m_joystickType = type;
-    qDebug() << "SimpleJoystick: Type set to" << type;
+    qDebug() << "[JOY] SimpleJoystick: Type set to" << type;
 
     if (m_pollTimer.isActive()) {
         m_privateImpl->setType(m_joystickType);

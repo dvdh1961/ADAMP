@@ -8,6 +8,7 @@
 #include <QSettings>
 #include <QMap>
 #include <QProgressDialog>
+#include <QSoundEffect>
 
 #include "simplejoystick.h"
 #include "hardwarewindow.h"
@@ -26,7 +27,6 @@ class SpriteWindow;
 class SettingsWindow;
 class HardwareWindow;
 class JoypadWindow;
-class KbWidget;
 class QActionGroup;
 class QMenu;
 
@@ -59,12 +59,11 @@ public:
 
     void appendLog(const QString& line);
     void setDebugger(DebuggerWindow *debugger);
+    bool emutype = 0;
+    bool m_cpm_status = 0;
 
 public slots:
-    // menu / UI acties
-    //void onOpenRom();
-    void onReset();
-    void onhReset();
+    void powerOff();
     void onRunStop();
     void onToggleSGM(bool checked);
     void onToggleKeyboard(bool on);
@@ -74,16 +73,15 @@ public slots:
     void onShowSpriteTable();
     void onShowPrinterWindow();
     void onToggleSnap(bool checked);
-    void onMachineTypeChanged(MachineType newType);
-    void onToggleResetAdamBlink();   // NIEUW: Voor de ADAM Reset-knop
-    void onToggleResetCartBlink();  // NIEUW: Voor de Cartridge Reset-knop
+    void onMachineTypeChanged(int newType);
+    void onToggleResetAdamBlink();
+    void onToggleResetCartBlink();
 
     // callbacks van emulator / thread
     void onThreadFinished();
     void onFramePresented();
-    // VERWIJDERD: void onFpsTick();
-    void onFpsUpdated(int fps); // <-- NIEUWE SLOT
-    void onSgmStatusChanged(bool enabled); // <-- NIEUWE SLOT
+    void onFpsUpdated(int fps);
+    void onSgmStatusChanged(bool enabled);
     void setVideoStandard(const QString& standard);
 
     // debugger-acties
@@ -105,6 +103,8 @@ public slots:
     void onResetWindowSize();
     void onOpenJoypadMapper();
     void onReleaseAll();
+    void forceStatusBarMediaFlag(QLabel* label);
+    void forceStatusBarMediaFlags();
 
 private slots:
     void onLoadDisk(int drive);
@@ -118,7 +118,7 @@ private slots:
     // --- MEDIA STATUS UPDATE SLOTS ---
     void onDiskStatusChanged(int drive, const QString& fileName);
     void onTapeStatusChanged(int drive, const QString& fileName);
-    void onAdamInputModeChanged();
+    void onAdamGameMode();
     void onToggleFullScreen(bool checked);
     void onFrameReceived(const QImage &frame);
     void onCycleScalingMode();
@@ -133,6 +133,10 @@ private slots:
     void onSaveSymbolDefinitions();
     void onLoadSymbolDefinitions();
     void onColorFilterModeChanged(QAction* action);
+    void onBiosStatusUpdated(int colecoExt, int eosExt, int writerExt);
+    void onBiosCFramesDone();
+    void onBiosAFramesDone();
+    void onToggleDTsound(bool checked);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -162,6 +166,8 @@ private:
     void switchToAdamMode();
     void switchToColecoMode();
     void updateHardwareWindowMediaDisplay();
+    void handleFatalBiosError(const QString& errorMessage);
+    void loadExternalBiosRoms();
 
 private:
     // emulator thread en controller
@@ -185,8 +191,6 @@ private:
     QPushButton  *m_resetAdamBtn  = nullptr;  // Adam Reset knop
     QPushButton  *m_resetCartBtn  = nullptr;  // Cartridge Reset knop
     QLabel       *m_logoLabel2    = nullptr;  // adam_logo2.png
-
-    KbWidget     *m_kbWidget     = nullptr;
 
     QTimer *m_resetAdamBlinkTimer = nullptr;
     QTimer *m_resetCartBlinkTimer = nullptr;
@@ -229,6 +233,7 @@ private:
     QAction *m_actAbout           = nullptr;
     QAction *m_settingsAction     = nullptr;
     QAction *m_actHardware        = nullptr;
+    QAction *m_actDTsound         = nullptr;
     QAction *m_actJoypadMapper    = nullptr;
     QAction *m_actSaveScreenshot  = nullptr;
 
@@ -260,7 +265,10 @@ private:
     QAction* m_actLoadSymbols     = nullptr;
     QAction* m_actResetSize       = nullptr;
     QAction* m_actToggleBezels    = nullptr;
-    QAction* m_actToggleSnap = nullptr;
+    QAction* m_actToggleSnap      = nullptr;
+    QAction *m_actStatusColecoBios = nullptr;
+    QAction *m_actStatusEosBios    = nullptr;
+    QAction *m_actStatusWriterBios = nullptr;
 
     // --- MEDIA STATUSBALK LABELS ---
     QLabel *m_diskLabelA          = nullptr;
@@ -296,6 +304,7 @@ private:
     int m_joystickType = 0; // 0=General, 1=PS, 2=Xbox (NIEUWE MEMBER)
     QAction *m_actTogglePaddleMode = nullptr;
     bool m_usePaddleMode = false;
+    bool m_useDTsound = false;
 
     bool m_isDiskLoadedA;
     bool m_isDiskLoadedB;
@@ -331,14 +340,12 @@ private:
 
     QActionGroup* m_adamInputGroup = nullptr;
     QMenu* m_adamInputMenu = nullptr;
-    QAction* m_actAdamKeyboard;
-    QAction* m_actAdamJoystick;
-    bool     m_adamInputModeJoystick; // false = KB, true = Joystick
+    QAction* m_actAdamGameOn;
+    QAction* m_actAdamGameOff;
+    bool     m_adamGameMode; // false = GameOff, true = GameOn
 
     void updateMediaMenuState();
     void updateMediaStatusLabels();
-
-    QMap<int, uint8_t> m_pressedKeyMap;
 
     // debugger venster
     DebuggerWindow *m_debugWin = nullptr;
@@ -355,7 +362,9 @@ private:
     QString m_symbolsPath;
     QString m_adamBezelPath;
     QString m_cvBezelPath;
-
+    QString m_colecoBiosPath;
+    QString m_eosBiosPath;
+    QString m_writerBiosPath;
     QMenu *m_adamRomMenu = nullptr;
     QMenu *m_colecoRomMenu = nullptr;
     QAction *m_openAdamRomAction = nullptr;
@@ -368,13 +377,28 @@ private:
     QString m_currentRomName;
     QAction *m_actReleaseAll = nullptr;
 
+    // BIOS Status Menu
+    QMenu   *m_biosSourceMenu = nullptr;
+    QAction *m_actColecoBiosSource = nullptr;
+    QAction *m_actEosBiosSource = nullptr;
+    QAction *m_actWriterBiosSource = nullptr;
+
     int m_paletteIndex = 0;
     int m_machineType = 0; // 0=Coleco/Phoenix, 1=ADAM
     bool m_sgmEnabled       = false;
-    bool m_f18aEnabled      = false;
+    bool m_c80Enabled      = false;
     bool m_ctrlSteering     = false;
     bool m_ctrlRoller       = false;
     bool m_ctrlSuperAction  = false;
+    bool m_resetAdamLocked  = false;
+    bool m_AdamTMedia_insert = false;
+    bool m_AdamDMedia_insert = false;
+    bool m_resetColecoLocked = false;
+    bool m_ColecoMedia_insert = false;
+
+    QSoundEffect *m_diskSound = nullptr;
+    QSoundEffect *m_tapeSound = nullptr;
+
 };
 
 #endif // MAINWINDOW_H
