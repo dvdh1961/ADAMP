@@ -8,15 +8,15 @@ SOURCES += \
            $$PWD/scrcpp/gotoaddressdialog.cpp \
            $$PWD/scrcpp/hardwarewindow.cpp \
            $$PWD/scrcpp/joypadwindow.cpp \
-           $$PWD/scrcpp/kbwidget.cpp \
            $$PWD/scrcpp/main.cpp \
            $$PWD/scrcpp/cartridgeinfowindow.cpp \
            $$PWD/scrcpp/colecocontroller.cpp \
-           #$$PWD/scrcpp/core_globals.cpp \
            $$PWD/scrcpp/debuggerwindow.cpp \
            $$PWD/scrcpp/inputwidget.cpp \
            $$PWD/scrcpp/logwindow.cpp \
            $$PWD/scrcpp/mainwindow.cpp \
+           $$PWD/scrcpp/maingui.cpp \
+           $$PWD/scrcpp/maindebug.cpp \
            $$PWD/scrcpp/memoryeditdialog.cpp \
            $$PWD/scrcpp/ntablewindow.cpp \
            $$PWD/scrcpp/patternwindow.cpp \
@@ -36,7 +36,6 @@ HEADERS += \
            $$PWD/scrcpp/gotoaddressdialog.h \
            $$PWD/scrcpp/hardwarewindow.h \
            $$PWD/scrcpp/joypadwindow.h \
-           $$PWD/scrcpp/kbwidget.h \
            $$PWD/scrcpp/mainwindow.h \
            $$PWD/scrcpp/cartridgeinfowindow.h \
            $$PWD/scrcpp/colecocontroller.h \

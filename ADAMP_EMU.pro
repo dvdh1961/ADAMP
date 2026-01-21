@@ -1,5 +1,5 @@
 # Qt6 basisconfiguratie
-QT       += core gui widgets multimedia printsupport
+QT       += core gui widgets multimedia printsupport concurrent
 CONFIG   += c++17
 CONFIG   -= console
 
@@ -18,6 +18,8 @@ LIBS += -lasound
 win32 {
 LIBS += -lwinmm
 }
+
+DEFINES += ADAMP_CPM_TRAP
 
 # Includepaden
 INCLUDEPATH += $$PWD/source \

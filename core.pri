@@ -2,11 +2,11 @@
 
 SOURCES += \
     $$PWD/source/adamnet.cpp \
+    $$PWD/source/adamnet_cpm.cpp \
+    $$PWD/source/adamnet_eos.cpp \
     $$PWD/source/ay8910.c \
     $$PWD/source/c24xx.c \
     $$PWD/source/coleco.cpp \
-    $$PWD/source/f18a.cpp \
-    $$PWD/source/f18agpu.cpp \
     $$PWD/source/fdidisk.c \
     $$PWD/source/keypad.cpp \
     $$PWD/source/sn76489.c \
@@ -21,8 +21,6 @@ HEADERS += \
     $$PWD/source/ay8910.h \
     $$PWD/source/c24xx.h \
     $$PWD/source/coleco.h \
-    $$PWD/source/f18a.h \
-    $$PWD/source/f18agpu.h \
     $$PWD/source/fdidisk.h \
     $$PWD/source/keypad.h \
     $$PWD/source/sn76489.h \
