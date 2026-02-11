@@ -19,7 +19,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ---
 
-![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_HARDWARE.png)
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_HARDWARE5.png)
 
 “Our brand-new hardware console — all parts and step-by-step documentation will be available on GitHub soon, so you can build it yourself!”
 “Built around the Raspberry Pi 5 running with our custom ADAM+ emulator on ARM.”
