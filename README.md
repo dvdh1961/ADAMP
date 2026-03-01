@@ -53,6 +53,32 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 
 ## 🚀 Versions
 
+Version 0.8.02.26 x86_64 Windows & Linux
+
+Dear Retro Fans,
+
+A brand-new update has arrived — packed with fixes, refinements & shiny new add-ons!
+
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/BG_ADAM_0.8.02.26.png)
+  
+  - Even greater compatibility with a wide range of ROMs
+
+  - More advanced reset controls
+
+  - Debugger memory dump add-on
+
+  - Preparations for our upcoming Adam+ hardware expansion
+
+  - SmartWriter improvements
+
+  - Game screen optimizations
+
+Fire it up, load your favorite cartridge, and enjoy the ride back to the golden age of computing.
+
+Have fun!
+
+---
+
 Version 0.7.01.26 x86_64 Windows & Linux
 
 We’re excited once again to announce a fresh update of AdamPlus Emulator.
