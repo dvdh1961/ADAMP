@@ -73,6 +73,8 @@ A brand-new update has arrived — packed with fixes, refinements & shiny new ad
 
   - Game screen optimizations
 
+  - drag and drop into roms,disk en tape map
+
 Fire it up, load your favorite cartridge, and enjoy the ride back to the golden age of computing.
 
 Have fun!
