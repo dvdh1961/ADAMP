@@ -147,6 +147,7 @@ typedef int      BOOL;
 #define ROMCARTRIDGENONE -1 // Geen cartridge geladen
 #define ROMCARTRIDGESTD   0 // <-- ADD THIS
 #define ROMCARTRIDGEMEGA  1 // <-- ADD THIS
+#define ROMCARTRIDGEOPCODE 2  // <-- TOEVOEGEN: Opcode Games SGM 4-window mapper
 
 // =========================================================================
 // >> START: Core Emulator Machine Definition <<

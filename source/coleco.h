@@ -91,7 +91,7 @@ extern BYTE RAMMask;      // Masker voor RAMPages
 
 // === 80-COLUMN MODE SUPPORT ===                                           │
 extern BYTE coleco_80col_enabled;  // 0=disabled, 1=enabled                 │
-
+extern bool g_adamCartridgeMode;
 //---------------------------------------------------------------------------
 extern unsigned short coleco_gettmsaddr(BYTE whichaddr, BYTE mode, BYTE y);
 extern BYTE coleco_gettmsval(BYTE whichaddr, unsigned short addr, BYTE mode, BYTE y);

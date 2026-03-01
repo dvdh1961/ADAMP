@@ -12,18 +12,41 @@
 bool isFormatting = false;
 static const byte interleave[8] = { 0, 5, 2, 7, 4, 1, 6, 3 };
 
+// ============================================================================
+// CP/M-only transfer state (prevents buffer/length races across busy polls)
+// NOTE: EOS/T-DOS paths are untouched; only CP/M uses this.
+// ============================================================================
+struct CPM_XferState {
+    byte active_id = 0xFF;   // disk/tape index currently active
+    byte dev = 0xFF;         // device number
+    bool pending_read = false;
+    word buf = 0;
+    int len = 0;
+};
+
+static CPM_XferState g_cpm_dsk;
+static CPM_XferState g_cpm_tap;
+
+static inline void FlushHoldingBufToRAM_CPM(const CPM_XferState& st)
+{
+    word dst = st.buf;
+    int n = st.len;
+    if (n <= 0) return;
+    if (n > 0x0400) n = 0x0400;
+    for (int i = 0; i < n; ++i)
+        RAM_Memory[(word)(dst + i)] = HoldingBuf[i];
+}
+
 void AdamFlushCache_CPM()
 {
-    for (int i = 0; i < savedLEN; ++i) {
-        // CRITICAL: Protect PCB area ($FEC0-$FEFF)
-        // Stop writing if we reach PCB area
-        if (savedBUF >= 0xFEC0 && savedBUF < 0xFF00) {
-            // Skip PCB area - don't overwrite it!
-            savedBUF = 0xFF00;
-        }
-
-        RAM_Memory[savedBUF] = HoldingBuf[i];
-        savedBUF++;
+    // Backward-compatible wrapper: flush whichever CP/M transfer is pending.
+    if (g_cpm_dsk.pending_read) {
+        FlushHoldingBufToRAM_CPM(g_cpm_dsk);
+        return;
+    }
+    if (g_cpm_tap.pending_read) {
+        FlushHoldingBufToRAM_CPM(g_cpm_tap);
+        return;
     }
 }
 
@@ -34,7 +57,6 @@ void UpdateDSK_CPM(byte N, byte Dev, int V)
     int K;
     byte *Data;
     uint32_t block;
-    word BUF;  // ← LOKAAL maken! Net zoals in tape!
 
     if (N >= MAX_DISKS) {
         return;
@@ -43,76 +65,30 @@ void UpdateDSK_CPM(byte N, byte Dev, int V)
     // ========================================================================
     // POLLING / BUSY CHECK
     // ========================================================================
-    static byte active_disk = 0xFF;  // Welke disk is nu bezig?
-
     if (V < 0) {
         static int poll_count = 0;
-
-        // CRITICAL: Maintain C940 during polling too!
-        RAM_Memory[0xC940] = 0x04 + N;
-        RAM_Memory[0xC9E6] = 0x04 + N;
-
-        // AGGRESSIVE: Force $FD6F to $18 whenever it's between $04-$07
-        static byte last_fd6f = 0xFF;
-        byte current_fd6f = RAM_Memory[0xFD6F];
-
-        // Log FD6F changes
-        if (current_fd6f != last_fd6f) {
-            qDebug() << "[FD6F-WATCH] Changed: $" << QString("%1").arg(last_fd6f, 2, 16, QChar('0'))
-            << "→ $" << QString("%1").arg(current_fd6f, 2, 16, QChar('0'));
-            last_fd6f = current_fd6f;
-        }
-
-        // AGGRESSIVELY force to $18 whenever stuck between $04-$07
-        if (current_fd6f >= 0x04 && current_fd6f < 0x08) {
-            RAM_Memory[0xFD6F] = 0x18;
-            if (current_fd6f != 0x18) {
-                qDebug() << "[FD6F-FORCE] $" << QString("%1").arg(current_fd6f, 2, 16, QChar('0'))
-                << "→ $18 (forcing completion)";
-            }
-        }
-
-        if (active_disk == N && ++poll_count % 1000 == 0) {
+        if (g_cpm_dsk.active_id == N && ++poll_count % 1000 == 0) {
             qDebug() << "[DISK-POLL] N=" << N << "Dev=" << Dev
                      << "io_busy=" << io_busy
-                     << "active=" << (active_disk == N ? "YES" : "NO");
+                     << "active=" << (g_cpm_dsk.active_id == N ? "YES" : "NO");
         }
 
         // Alleen deze disk pollen als het de actieve is
-        if (active_disk == N && io_busy > 0) {
+        if (g_cpm_dsk.active_id == N && io_busy > 0) {
             io_busy--;
             if (io_busy == 0) {
-                active_disk = 0xFF;  // Reset
-                if (last_command_read) {
-                    last_command_read = 0;
-                    AdamFlushCache_CPM();
+                // IO done for CP/M disk
+                if (g_cpm_dsk.pending_read) {
+                    FlushHoldingBufToRAM_CPM(g_cpm_dsk);
+                    g_cpm_dsk.pending_read = false;
                 }
+                g_cpm_dsk.active_id = 0xFF;
+                g_cpm_dsk.dev = 0xFF;
+                g_cpm_dsk.buf = 0;
+                g_cpm_dsk.len = 0;
 
-                // Set standard DCB status
                 SetDCB(Dev, DCB_CMD_STAT, RSP_STATUS);
-
-                // CRITICAL: CP/M checks DCB status at MULTIPLE locations!
-                // Force ALL possible status bytes to $80 (ready/success)
-                // DCB base for Dev 2 is around $FExx-$FFxx
-                // Aggressively set status bytes
-                word dcb_base = 0xFEC0 + (Dev * 21);  // Estimate DCB location
-                for (int offset = 0; offset < 21; offset++) {
-                    word addr = dcb_base + offset;
-                    // If byte looks like a status (0x00-0x0F), force to 0x80
-                    if (RAM_Memory[addr] < 0x10) {
-                        RAM_Memory[addr] = 0x80;
-                    }
-                }
-
-                // Also force high memory DCB area
-                for (word addr = 0xFF20; addr < 0xFF40; addr++) {
-                    if (RAM_Memory[addr] > 0 && RAM_Memory[addr] < 0x10) {
-                        RAM_Memory[addr] = 0x80;
-                    }
-                }
-
-                qDebug() << "[DISK-POLL] IO DONE - N=" << N << "Dev=" << Dev
-                         << "- Forced status bytes to $80";
+                qDebug() << "[DISK-POLL] IO DONE - N=" << N << "Dev=" << Dev;
             }
             else {
                 SetDCB(Dev, DCB_CMD_STAT, 0x00);
@@ -174,83 +150,109 @@ void UpdateDSK_CPM(byte N, byte Dev, int V)
 
     case CMD_SOFT_RESET:
         io_busy = 0;  // ← Ook hier
+        // CP/M-only: reset any in-flight transfer bookkeeping
+        g_cpm_dsk.active_id = 0xFF;
+        g_cpm_dsk.dev = 0xFF;
+        g_cpm_dsk.pending_read = false;
+        g_cpm_dsk.buf = 0;
+        g_cpm_dsk.len = 0;
         SetDCB(Dev, DCB_CMD_STAT, RSP_STATUS);
         break;
 
     case CMD_READ:
     case CMD_WRITE:
-        // MINIMAL: Only initialize device variables, NO patches
-        if (V == CMD_READ && GetDCBSector(Dev) == 0) {
-            byte device_id = 0x04 + N;
-
-            qDebug() << "[CPM-INIT] Sector 0 - init device vars (NO patches)";
-
-            // ONLY initialize variables
-            RAM_Memory[0xC940] = device_id;
-            RAM_Memory[0xC941] = 0x00;
-            RAM_Memory[0xC942] = 0x00;
-            RAM_Memory[0xC943] = 0x00;
-            RAM_Memory[0xC9E6] = device_id;
-
-            qDebug() << "[CPM-INIT] Set $C940=$C9E6=$"
-                     << QString("%1").arg(device_id, 2, 16, QChar('0'));
-        }
-
         qDebug() << "[DSK-CMD]" << (V == CMD_READ ? "READ" : "WRITE")
                  << "N=" << N << "Dev=" << Dev
                  << "Sector=" << GetDCBSector(Dev)
-                 << "BUF=" << QString("0x%1").arg(GetDCBBase(Dev), 4, 16, QChar('0'))
                  << "Setting active_disk=" << N << "io_busy=" << (DELAY_IO * 100);
 
         g_diskSoundActive.store(true, std::memory_order_relaxed);
         io_show_status = (V == CMD_READ) ? 1 : 2;
 
+        // If a CP/M disk operation is already in-flight, keep this request BUSY.
+        // This prevents saved buffer/len from being overwritten before the poll-time flush.
+        if (io_busy > 0 && g_cpm_dsk.active_id != 0xFF) {
+            SetDCB(Dev, DCB_CMD_STAT, 0x00);
+            return;
+        }
+
         SetDCB(Dev, DCB_CMD_STAT, 0x00);
-        active_disk = N;  // Markeer deze disk als actief
-        io_busy = DELAY_IO * 100;  // ← Per-disk busy counter!
+        g_cpm_dsk.active_id = N;
+        g_cpm_dsk.dev = Dev;
+        g_cpm_dsk.pending_read = false;
+        g_cpm_dsk.buf = 0;
+        g_cpm_dsk.len = 0;
+        io_busy = DELAY_IO * 100;  // busy counter
 
         if (!Disks[N].Data) {
             qDebug() << "[DSK] No disk data! N=" << N;
-            break;
+            io_busy = 0;
+            g_cpm_dsk.active_id = 0xFF;
+            g_cpm_dsk.dev = 0xFF;
+            g_cpm_dsk.pending_read = false;
+            SetDCB(Dev, DCB_CMD_STAT, RSP_ACK + 0x06); // no media / I/O error
+            return;
         }
 
-        BUF = GetDCBBase(Dev);
+        word buf = GetDCBBase(Dev);
         LEN = GetDCBLen(Dev);
         LEN = (LEN < 0x0400) ? LEN : 0x0400;
         SEC = GetDCBSector(Dev);
 
-        // CRITICAL: Only set savedBUF on FIRST read (sector 0)
-        // Otherwise keep the accumulated value from previous flushes!
-        if (savedBUF == 0 || SEC == 0) {
-            savedBUF = BUF;
-        }
-        savedLEN = LEN;
+        // qDebug() << "[DSK]" << (V == CMD_READ ? "READ" : "WRITE")
+        //          << "Dev=" << Dev
+        //          << "Sector=" << SEC
+        //          << "Len=" << LEN
+        //          << "Buf=" << QString("0x%1").arg(BUF, 4, 16, QChar('0'));
+
+        // store for poll-time flush (CP/M-only)
+        g_cpm_dsk.buf = buf;
+        g_cpm_dsk.len = LEN;
         block = SEC * 2;
 
+        bool ok = true;
         for (I = 0; I < LEN; I += 512)
         {
 
-            uint32_t physical_sector = (block & (~7)) | interleave[block & 7];
+            // NOTE: only apply 8-sector interleave if the mounted image actually uses 8 sectors/track.
+            uint32_t physical_sector = block;
+            if (Disks[N].Sectors == 8)
+                physical_sector = (block & (~7u)) | interleave[block & 7u];
 
             Data = LinearFDI(&Disks[N], physical_sector);
-
-            if (!Data) break;
+            if (!Data) { ok = false; break; }
             K = (I + 512 > LEN) ? LEN - I : 512;
 
             if (V == CMD_READ)
             {
-                last_command_read = true;
-                for (byte_idx = 0; byte_idx < K; ++byte_idx, ++BUF) {
+                for (byte_idx = 0; byte_idx < K; ++byte_idx, ++buf) {
                     HoldingBuf[I + byte_idx] = Data[byte_idx];
                 }
+                // LOGGING VOOR DE OPDRACHT:
+                // QString hex;
+                // for(int b=0; b<16 && b<K; b++) hex += QString("%1 ").arg(HoldingBuf[I+b], 2, 16, QChar('0'));
+                // qDebug() << "[FINAL-CHECK] Block" << SEC << "Sector" << block << "Phys" << physical_sector << "Data:" << hex;
             }
             else {
-                last_command_read = false;
-                for (byte_idx = 0; byte_idx < K; ++byte_idx, ++BUF)
-                    Data[byte_idx] = RAM_Memory[BUF & 0xFFFF];
+                for (byte_idx = 0; byte_idx < K; ++byte_idx, ++buf)
+                    Data[byte_idx] = RAM_Memory[buf & 0xFFFF];
+                Disks[N].Dirty = 1;
             }
             block++;
         }
+
+        if (!ok) {
+            // Fail safely: don't flush partial data into RAM, report error.
+            g_cpm_dsk.pending_read = false;
+            io_busy = 0;
+            g_cpm_dsk.active_id = 0xFF;
+            g_cpm_dsk.dev = 0xFF;
+            SetDCB(Dev, DCB_CMD_STAT, RSP_ACK + 0x06);
+            return;
+        }
+
+        if (V == CMD_READ)
+            g_cpm_dsk.pending_read = true;
 
         break;
     }
@@ -263,31 +265,28 @@ void UpdateTAP_CPM(byte N,byte Dev,int V)
     byte *Data;
 
     /* If reading DCB status, stop here */
-    static byte active_tape = 0xFF;  // Welke tape is nu bezig?
-
     if (V < 0)
     {
-        // Alleen deze tape pollen als het de actieve is
-        if (active_tape == N && io_busy > 0)
+        if (g_cpm_tap.active_id == N && io_busy > 0)
         {
             io_busy--;
             if (io_busy == 0)
             {
-                active_tape = 0xFF;  // Reset
-                // Net klaar: flush (indien READ) en direct READY zetten
-                if (last_command_read) {
-                    last_command_read = 0;
-                    AdamFlushCache();
+                if (g_cpm_tap.pending_read) {
+                    FlushHoldingBufToRAM_CPM(g_cpm_tap);
+                    g_cpm_tap.pending_read = false;
                 }
+                g_cpm_tap.active_id = 0xFF;
+                g_cpm_tap.dev = 0xFF;
+                g_cpm_tap.buf = 0;
+                g_cpm_tap.len = 0;
                 SetDCB(Dev, DCB_CMD_STAT, RSP_STATUS);
             }
             else
             {
-                // Nog bezig
                 SetDCB(Dev, DCB_CMD_STAT, 0x00);
             }
         }
-        // GEEN else - laat status zoals die is
         return;
     }
 
@@ -303,6 +302,12 @@ void UpdateTAP_CPM(byte N,byte Dev,int V)
         break;
 
     case CMD_SOFT_RESET:
+        io_busy = 0;
+        g_cpm_tap.active_id = 0xFF;
+        g_cpm_tap.dev = 0xFF;
+        g_cpm_tap.pending_read = false;
+        g_cpm_tap.buf = 0;
+        g_cpm_tap.len = 0;
         SetDCB(Dev,DCB_CMD_STAT,RSP_STATUS);
         break;
 
@@ -312,20 +317,38 @@ void UpdateTAP_CPM(byte N,byte Dev,int V)
         io_show_status = (V==CMD_READ) ? 1:2;
         // TODO if (io_show_status == 2) adam_unsaved_data = 1;
         /* Busy status by default */
+        // If a CP/M tape operation is already in-flight, keep this request BUSY.
+        if (io_busy > 0 && g_cpm_tap.active_id != 0xFF) {
+            SetDCB(Dev, DCB_CMD_STAT, 0x00);
+            return;
+        }
+
         SetDCB(Dev,DCB_CMD_STAT,0x00);
-        active_tape = N;  // Markeer deze tape als actief
+        g_cpm_tap.active_id = N;
+        g_cpm_tap.dev = Dev;
+        g_cpm_tap.pending_read = false;
+        g_cpm_tap.buf = 0;
+        g_cpm_tap.len = 0;
         io_busy = DELAY_IO;
         /* If no tape, stop here */
-        if(!Tapes[N].Data) break;
+        if(!Tapes[N].Data) {
+            io_busy = 0;
+            g_cpm_tap.active_id = 0xFF;
+            g_cpm_tap.dev = 0xFF;
+            SetDCB(Dev, DCB_CMD_STAT, RSP_ACK + 0x06);
+            return;
+        }
         /* Determine buffer address, length, block number */
         BUF = GetDCBBase(Dev);
         LEN = GetDCBLen(Dev);
         LEN = LEN<0x0400? LEN:0x0400;
         SEC = GetDCBSector(Dev);
-        savedBUF = BUF;
-        savedLEN = LEN;
+        g_cpm_tap.buf = BUF;
+        g_cpm_tap.len = LEN;
 
         /* For each 512-byte sector... */
+        {
+        bool ok = true;
         for(I=0, SEC<<=1 ; I<LEN ; ++SEC, I+=0x200)
         {
             /* Get pointer to sector data on tape */
@@ -333,6 +356,7 @@ void UpdateTAP_CPM(byte N,byte Dev,int V)
             /* If wrong sector number, stop here */
             if(!Data)
             {
+                ok = false;
                 SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x02);
                 SetDCB(Dev,DCB_SEC_LO, 0);
                 SetDCB(Dev,DCB_SEC_HI, 0);
@@ -352,6 +376,7 @@ void UpdateTAP_CPM(byte N,byte Dev,int V)
             {
                 last_command_read = false;
                 for(J=0;J<K;++J,++BUF) Data[J] = RAM(BUF);
+                Tapes[N].Dirty = 1;
             }
             /* If disk access failed, stop here */
             if(J<K)
@@ -361,6 +386,18 @@ void UpdateTAP_CPM(byte N,byte Dev,int V)
                 SetDCB(Dev,DCB_SEC_HI, 0);
                 break;
             }
+        }
+        if (!ok) {
+            g_cpm_tap.pending_read = false;
+            io_busy = 0;
+            g_cpm_tap.active_id = 0xFF;
+            g_cpm_tap.dev = 0xFF;
+            SetDCB(Dev, DCB_CMD_STAT, RSP_ACK + 0x06);
+            return;
+        }
+
+        if (V == CMD_READ)
+            g_cpm_tap.pending_read = true;
         }
         /* Done */
         break;

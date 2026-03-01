@@ -49,8 +49,8 @@
 #include "input_bridge.h"
 #include "debug_bridge.h"
 
-//static uint8_t g_tdos80_shadow[80*24];
-//static std::atomic<bool> g_tdos80_shadow_dirty{false};
+static uint8_t g_tdos80_shadow[80*24];
+static std::atomic<bool> g_tdos80_shadow_dirty{false};
 
 // BIOS loader prototype
 static int loadBios(const char *filename, BYTE *memory, int sizerm);
@@ -58,17 +58,20 @@ static void Out42(BYTE Val);
 // BIOS data komt nu uit colecobios.c en adambios.c (gedeclareerd in coleco.h)
 static int g_cpm_trace = 0;
 #ifdef ADAMP_CPM_TRAP
-//static bool g_cpm_memory_active = false;
+static bool g_cpm_memory_active = false;
 #endif
 static bool g_cpm_protection_active = false;
 static int  g_cleanup_phase = 0; // 0=Wachten, 1=Injectie DB, 2=Injectie BF, 3=Klaar
 
-//static BYTE EmptySpace[0x2000]; // 8KB buffer die 'leeg' geheugen simuleert
-//static int sgm_port60 = 0;
+static BYTE EmptySpace[0x2000]; // 8KB buffer die 'leeg' geheugen simuleert
+static int sgm_port60 = 0;
 
 int breakpoints[MAX_BREAKPOINTS];
 int breakpoint_count = 0;
-bool coleco_opcode_mapper = false;
+
+static BYTE coleco_megalayout = 0;          // 0 = switch@C000, 1 = switch@8000
+static bool coleco_megalayout_locked = false;
+static BYTE coleco_megalastbank = 0;        // index van laatste bank (mask)
 
 extern "C" BYTE adamnet_read_io(int address);
 
@@ -77,8 +80,8 @@ extern "C" void coleco_start_cpm_trace(int count)
     g_cpm_trace = count;
 }
 
-// 80-column mode flag
-BYTE coleco_80col_enabled = 0;  // 0=40-col, 1=80-col
+// 80-column mode flag                                                      │
+BYTE coleco_80col_enabled = 0;  // 0=40-col, 1=80-col                       │
 
 void coleco_clear_debug_flags(void)
 {
@@ -90,6 +93,28 @@ void coleco_clear_debug_flags(void)
 
 void DebugUpdate(void)
 {
+    // // 1. Normale Breakpoints
+    // if (!emulator->stop && !emulator->singlestep) {
+    //     if (DEBUG_BRIDGE.checkExecute(Z80.pc.w.l)) {
+    //         qDebug() << "[BP] Execute breakpoint hit at PC:" << Qt::hex << Z80.pc.w.l;
+    //         emulator->stop = 1;
+    //         return;
+    //     }
+    //     if (DEBUG_BRIDGE.checkPostExecutionBreakpoints()) {
+    //         qDebug() << "[BP] Post-execution breakpoint hit at PC:" << Qt::hex << Z80.pc.w.l;
+    //         emulator->stop = 1;
+    //         return;
+    //     }
+    //     extern int breakpoint_count;
+    //     for (int i = 0; i < breakpoint_count; i++) {
+    //         if (Z80.pc.w.l == breakpoints[i]) {
+    //             qDebug() << "[BP] Standard breakpoint" << i << "hit at PC:" << Qt::hex << Z80.pc.w.l;
+    //             emulator->stop = 1;
+    //             return;
+    //         }
+    //     }
+    // }
+
     if (!emulator->stop && !emulator->singlestep)
     {
         uint16_t pc = Z80.pc.w.l;
@@ -158,10 +183,6 @@ BYTE adam_128k_mode;
 BYTE coleco_megabank;
 BYTE coleco_megasize;
 BYTE coleco_megacart;
-// MegaCart mapping layout:
-//  1 = switchable @ 0x8000-0xBFFF, fixed(last bank) @ 0xC000-0xFFFF (most common)
-//  0 = switchable @ 0xC000-0xFFFF, fixed(last bank) @ 0x8000-0xBFFF (some homebrew)
-int  coleco_mega_layout = 1;
 
 BYTE coleco_joymode;
 unsigned int coleco_joystat;
@@ -180,6 +201,7 @@ bool g_adamCartridgeMode = false;
 FDIDisk Disks[MAX_DISKS] = {};
 FDIDisk Tapes[MAX_TAPES] = {};
 
+// In coleco.cpp (bij de globale variabelen, rond lijn 21)
 // --- Expansion RAM Variabelen (Definities) ---
 // Deze variabelen moeten vroeg gedefinieerd worden om zichtbaarheid te garanderen.
 BYTE RAMPages = 2;     // Standaard 2 pagina's = 128KB expansie (naast de 64KB basis)
@@ -243,6 +265,50 @@ const unsigned char TMS9918A_palette[6*16*3] = {
 
 //-----------------------------------------------------------------------------------------------------
 
+// MegaCart hotspot helper (plaats dit bovenaan coleco.cpp of in een header)
+static inline void coleco_megacart_hotspot(unsigned int address, unsigned int value, bool isWrite)
+{
+
+    if (!coleco_megacart) return;
+    if (emulator && emulator->currentMachineType == MACHINEADAM) return;
+
+    // FFC0..FFFF variant (address-select)
+    if (address >= 0xFFC0) {
+        BYTE bank = (BYTE)((address - 0xFFC0) & (coleco_megasize - 1));
+
+        static int hot = 0;
+        if (hot < 200) {
+            qDebug() << (isWrite ? "[MEGA-HOT-W]" : "[MEGA-HOT-R]")
+            << "addr=0x" << Qt::hex << (unsigned)address
+            << " bank=" << Qt::dec << (int)bank
+            << " val=0x" << Qt::hex << (unsigned)(value & 0xFF);
+        }
+        hot++;
+
+        megacart_bankswitch(bank);
+        return;
+    }
+
+    // FF80..FF9F variant
+    if ((address & 0xFFE0) == 0xFF80) {
+        BYTE bank = (BYTE)((address - 0xFF80) & (coleco_megasize - 1));
+
+        static int hot2 = 0;
+        if (hot2 < 200) {
+            qDebug() << (isWrite ? "[MEGA-HOT80-W]" : "[MEGA-HOT80-R]")
+            << "addr=0x" << Qt::hex << (unsigned)address
+            << " bank=" << Qt::dec << (int)bank
+            << " val=0x" << Qt::hex << (unsigned)(value & 0xFF);
+        }
+        hot2++;
+
+        megacart_bankswitch(bank);
+        return;
+    }
+
+    // (optioneel) FF00 range tracer als je nog niets ziet
+    // if ((address & 0xFF00) == 0xFF00) { ... }
+}
 
 //-----------------------------------------------------------------------------------------------------
 // Get tms vram adress
@@ -383,6 +449,7 @@ BYTE coleco_gettmsval(BYTE whichaddr, unsigned short addr, BYTE mode, BYTE y)
 }
 
 //---------------------------------------------------------------------------
+// Set a value
 void coleco_setval(BYTE whichaddr, unsigned short addr, BYTE y)
 {
     switch (whichaddr)
@@ -416,16 +483,195 @@ void coleco_setval(BYTE whichaddr, unsigned short addr, BYTE y)
 }
 
 //---------------------------------------------------------------------------
+static inline void megacart_map_fixed_bank()
+{
+    // vaste bank = hoogste bank (mask) in 0x8000-0xBFFF
+    MemoryMap[4] = ROM_Memory + ((unsigned int)coleco_megacart * 0x4000);
+    MemoryMap[5] = MemoryMap[4] + 0x2000;
+}
+
+//---------------------------------------------------------------------------
+static void megacart_map_fixed_lastbank()
+{
+    // last bank index = coleco_megalastbank (meestal gelijk aan mask)
+    unsigned int lastOfs = (unsigned int)coleco_megalastbank * 0x4000;
+
+    if (coleco_megalayout == 0) {
+        // fixed @ 0x8000-0xBFFF
+        MemoryMap[4] = ROM_Memory + lastOfs;
+        MemoryMap[5] = MemoryMap[4] + 0x2000;
+    } else {
+        // fixed @ 0xC000-0xFFFF
+        MemoryMap[6] = ROM_Memory + lastOfs;
+        MemoryMap[7] = MemoryMap[6] + 0x2000;
+    }
+}
+
+//---------------------------------------------------------------------------
+// BYTE coleco_loadcart(char *filename)
+// {
+//     long size;
+//     int adrlastbank;
+//     BYTE *hdr = nullptr;
+//     BYTE retf = ROM_LOAD_FAIL;
+
+//     FILE *fRomfile = fopen(filename, "rb");
+//     if (!fRomfile) return retf;
+
+//     fseek(fRomfile, 0, SEEK_END);
+//     size = ftell(fRomfile);
+//     fseek(fRomfile, 0, SEEK_SET);
+
+//     if (size <= 0 || size > (MAX_CART_SIZE * 1024)) {
+//         fclose(fRomfile);
+//         return retf;
+//     }
+
+//     memset(ROM_Memory, 0xFF, (MAX_CART_SIZE * 1024));
+//     if (fread((void*)ROM_Memory, 1, (size_t)size, fRomfile) != (size_t)size) {
+//         fclose(fRomfile);
+//         return retf;
+//     }
+//     fclose(fRomfile);
+
+//     emulator->cardsize = (DWORD)size;
+//     emulator->cardcrc  = CRC32Block(ROM_Memory, emulator->cardsize);
+
+//     coleco_megacart = 0x00;
+//     coleco_megasize = 2;
+//     coleco_megabank = 199;
+//     coleco_megalayout = 1; // default: switch@8000 (meest voorkomend)
+
+//     // Debug CRC
+//     qDebug() << "CARDCRC=0x"
+//              << QString("%1").arg(emulator->cardcrc, 8, 16, QChar('0')).toUpper();
+
+//     // --- Header verification (begin OR last 16K bank) ---
+//     auto is_hdr = [](const BYTE* p)->bool {
+//         return ( (p[0]==0x55 && p[1]==0xAA) ||
+//                 (p[0]==0xAA && p[1]==0x55) ||
+//                 (p[0]==0x66 && p[1]==0x99) );
+//     };
+
+//     if (is_hdr(ROM_Memory)) {
+//         hdr = ROM_Memory;
+//         coleco_megalayout = 1; // header in bank0 => bank0 moet op 0x8000 staan
+//     } else {
+//         adrlastbank = (int)((size & ~0x3FFF) - 0x4000);
+//         if (adrlastbank >= 0 && is_hdr(ROM_Memory + adrlastbank)) {
+//             hdr = ROM_Memory + adrlastbank;
+//             coleco_megalayout = 0; // header in lastbank => lastbank moet op 0x8000 staan
+//         }
+//     }
+
+//     if (!hdr) return ROM_VERIFY_FAIL;
+
+//     // --- Special case: Boxxle (Activision PCB) ---
+//     if (emulator->cardcrc == 0x62DACF07)
+//     {
+//         emulator->romCartridgeType = ROMCARTRIDGESTD;
+//         coleco_megacart = 0x03; // 64K
+
+//         // Boxxle gebruikt vaak een RAM-backed aanpak; laat jouw bestaande aanpak staan
+//         BYTE *p = RAM_Memory + 0x8000;
+//         memset(p, 0xFF, 0x8000);
+//         memcpy(p, ROM_Memory, 0x8000);
+
+//         MemoryMap[4] = RAM_Memory + 0x8000;
+//         MemoryMap[5] = RAM_Memory + 0xA000;
+//         MemoryMap[6] = RAM_Memory + 0xC000;
+//         MemoryMap[7] = RAM_Memory + 0xE000;
+
+//         qDebug() << "[CART] size=" << emulator->cardsize
+//                  << " crc=0x" << QString("%1").arg(emulator->cardcrc,8,16,QChar('0')).toUpper()
+//                  << " type=BOXXLE";
+//         return ROM_LOAD_PASS;
+//     }
+
+//     // --- Standard carts (<= 32K): map direct from ROM_Memory (SGM-safe) ---
+//     if (size <= 32 * 1024)
+//     {
+//         // mirror 8K pages inside the available ROM
+//         auto pagePtr = [&](int pageIndex)->BYTE* {
+//             // pageIndex: 0..3 => 0x8000..0xFFFF (per 8K)
+//             unsigned int offs = (unsigned int)pageIndex * 0x2000;
+//             unsigned int mask = (unsigned int)(size - 1);
+
+//             // size is not power-of-two always; safer wrap by modulo size
+//             offs = offs % (unsigned int)size;
+//             return ROM_Memory + offs;
+//         };
+
+//         MemoryMap[4] = pagePtr(0);
+//         MemoryMap[5] = pagePtr(1);
+//         MemoryMap[6] = pagePtr(2);
+//         MemoryMap[7] = pagePtr(3);
+
+//         emulator->romCartridgeType = ROMCARTRIDGESTD;
+
+//         qDebug() << "[CART] size=" << emulator->cardsize
+//                  << " crc=0x" << QString("%1").arg(emulator->cardcrc,8,16,QChar('0')).toUpper()
+//                  << " type=STD";
+//         return ROM_LOAD_PASS;
+//     }
+
+//     // --- MegaCart (> 32K) ---
+//     {
+//         long pages = ((size + 0x3FFF) & ~0x3FFF) >> 14; // 16K pages
+//         int j;
+//         for (j = 2; j < pages; j <<= 1) {}
+
+//         coleco_megasize = (BYTE)j;
+//         long paddedSize = ((long)j) << 14;
+
+//         if      (paddedSize ==  64 * 1024) coleco_megacart = 0x03;
+//         else if (paddedSize == 128 * 1024) coleco_megacart = 0x07;
+//         else if (paddedSize == 256 * 1024) coleco_megacart = 0x0F;
+//         else                               coleco_megacart = 0x1F;
+
+//         emulator->romCartridgeType = ROMCARTRIDGEMEGA;
+
+//         // last bank index (mask works for power-of-two sizes)
+//         BYTE lastBank = (BYTE)(coleco_megasize - 1);
+
+//         // Init fixed + switch windows depending on layout
+//         if (coleco_megalayout == 0) {
+//             // fixed@8000 = last bank
+//             BYTE* fixed = ROM_Memory + ((unsigned int)lastBank * 0x4000);
+//             MemoryMap[4] = fixed;
+//             MemoryMap[5] = fixed + 0x2000;
+
+//             // switch@C000 = bank0 initially
+//             coleco_megabank = 199;
+//             megacart_bankswitch(0);
+//         } else {
+//             // fixed@C000 = last bank
+//             BYTE* fixed = ROM_Memory + ((unsigned int)lastBank * 0x4000);
+//             MemoryMap[6] = fixed;
+//             MemoryMap[7] = fixed + 0x2000;
+
+//             // switch@8000 = bank0 initially
+//             coleco_megabank = 199;
+//             megacart_bankswitch(0);
+//         }
+
+//         qDebug() << "[CART] size=" << emulator->cardsize
+//                  << " crc=0x" << QString("%1").arg(emulator->cardcrc,8,16,QChar('0')).toUpper()
+//                  << " megasize=" << (int)coleco_megasize
+//                  << " megamask=0x" << Qt::hex << (int)coleco_megacart
+//                  << " layout=" << (int)coleco_megalayout
+//                  << " type=MEGA";
+//         return ROM_LOAD_PASS;
+//     }
+// }
 BYTE coleco_loadcart(char *filename)
 {
     long size;
-    int j;
-    BYTE *hdr;
+    int adrlastbank, j;
+    BYTE *hdr = nullptr;
     BYTE retf = ROM_LOAD_FAIL;
+
     FILE *fRomfile = fopen(filename, "rb");
-
-    coleco_opcode_mapper = false;
-
     if (!fRomfile) return retf;
 
     fseek(fRomfile, 0, SEEK_END);
@@ -438,7 +684,7 @@ BYTE coleco_loadcart(char *filename)
     }
 
     memset(ROM_Memory, 0xFF, (MAX_CART_SIZE * 1024));
-    if (fread((void*)ROM_Memory, 1, size, fRomfile) != (size_t)size) {
+    if (fread((void*)ROM_Memory, 1, (size_t)size, fRomfile) != (size_t)size) {
         fclose(fRomfile);
         return retf;
     }
@@ -451,92 +697,157 @@ BYTE coleco_loadcart(char *filename)
     coleco_megasize = 2;
     coleco_megabank = 199;
 
-    // --- Verbeterde Header Check ---
-    hdr = NULL;
+    // layout state reset
+    coleco_megalayout = 0;
+    coleco_megalayout_locked = false;
+    coleco_megalastbank = 0;
+
+    // --- Header verification (begin OR last 16K bank) ---
     if ((ROM_Memory[0]==0x55 && ROM_Memory[1]==0xAA) ||
-        (ROM_Memory[0]==0xAA && ROM_Memory[1]==0x55)) {
+        (ROM_Memory[0]==0xAA && ROM_Memory[1]==0x55) ||
+        (ROM_Memory[0]==0x66 && ROM_Memory[1]==0x99))
+    {
         hdr = ROM_Memory;
-    } else if (size >= 0x4000) {
-        int lastBankOffset = (int)(size - 0x4000);
-        if ((ROM_Memory[lastBankOffset]==0x55 && ROM_Memory[lastBankOffset+1]==0xAA) ||
-            (ROM_Memory[lastBankOffset]==0xAA && ROM_Memory[lastBankOffset+1]==0x55)) {
-            hdr = ROM_Memory + lastBankOffset;
+    }
+    else
+    {
+        adrlastbank = (size & ~0x3FFF) - 0x4000;
+        if (adrlastbank >= 0 &&
+            ((ROM_Memory[adrlastbank]==0x55 && ROM_Memory[adrlastbank+1]==0xAA) ||
+             (ROM_Memory[adrlastbank]==0xAA && ROM_Memory[adrlastbank+1]==0x55)))
+        {
+            hdr = ROM_Memory + adrlastbank;
         }
     }
 
-    // Fallback voor Moon Cresta (128K SGM vaak zonder header aan start)
-    if (!hdr && size == 128 * 1024) {
-        qDebug() << "[CART] 128K SGM detected without standard header.";
-        hdr = ROM_Memory; // Forceer herkenning
-    }
-
-    if (!hdr && size <= 32768) hdr = ROM_Memory;
     if (!hdr) return ROM_VERIFY_FAIL;
 
-    BYTE *p = RAM_Memory + 0x8000;
-    memset(p, 0xFF, 0x8000);
+    qDebug() << "CARDCRC=0x"
+             << QString("%1").arg(emulator->cardcrc, 8, 16, QChar('0')).toUpper();
 
-    // --- Standaard Carts ---
-    if (size <= 32 * 1024) {
+    // --- Special case: Boxxle (Activision PCB) ---
+    if (emulator->cardcrc == 0x62DACF07)
+    {
+        emulator->romCartridgeType = ROMCARTRIDGESTD;
+        coleco_megacart = 0x03;
+
+        BYTE *p = RAM_Memory + 0x8000;
+        memset(p, 0xFF, 0x8000);
+        memcpy(p, ROM_Memory, 0x8000);
+
+        MemoryMap[4] = RAM_Memory + 0x8000;
+        MemoryMap[5] = RAM_Memory + 0xA000;
+        MemoryMap[6] = RAM_Memory + 0xC000;
+        MemoryMap[7] = RAM_Memory + 0xE000;
+
+        qDebug() << "[CART] size=" << emulator->cardsize
+                 << " crc=0x" << QString("%1").arg(emulator->cardcrc,8,16,QChar('0')).toUpper()
+                 << " type=BOXXLE";
+        return ROM_LOAD_PASS;
+    }
+
+    // --- Standard carts (<= 32K): fill 32K window by repeating ROM ---
+    if (size <= 32 * 1024)
+    {
+        BYTE *p = RAM_Memory + 0x8000;
+        memset(p, 0xFF, 0x8000);
+
         long copied = 0;
         while (copied < 0x8000) {
             long chunk = size;
             if (copied + chunk > 0x8000) chunk = 0x8000 - copied;
-            memcpy(p + copied, ROM_Memory, chunk);
+            memcpy(p + copied, ROM_Memory, (size_t)chunk);
             copied += chunk;
         }
+
+        MemoryMap[4] = RAM_Memory + 0x8000;
+        MemoryMap[5] = RAM_Memory + 0xA000;
+        MemoryMap[6] = RAM_Memory + 0xC000;
+        MemoryMap[7] = RAM_Memory + 0xE000;
+
         emulator->romCartridgeType = ROMCARTRIDGESTD;
+
+        qDebug() << "[CART] size=" << emulator->cardsize
+                 << " crc=0x" << QString("%1").arg(emulator->cardcrc,8,16,QChar('0')).toUpper()
+                 << " type=STD";
         return ROM_LOAD_PASS;
     }
 
-    // --- MegaCart ---
+    // --- MegaCart (> 32K) ---
     {
-        long pages = ((size + 0x3FFF) & ~0x3FFF) >> 14;
+        long pages = ((size + 0x3FFF) & ~0x3FFF) >> 14; // 16K pages
         for (j = 2; j < pages; j <<= 1) {}
         coleco_megasize = (BYTE)j;
 
-        // Opcode SGM detectie
-        bool isOpcode = (ROM_Memory[0]==0x55 && ROM_Memory[1]==0xAA &&
-                         ROM_Memory[2]==0x4F && ROM_Memory[3]==0x50);
+        BYTE mask = (BYTE)(j - 1);
+        coleco_megacart = mask;
+        coleco_megalastbank = mask;
 
-        coleco_mega_layout = (hdr == ROM_Memory) ? 1 : 0;
-        coleco_megacart = (BYTE)(j - 1);
-        unsigned int lastBase = (unsigned int)coleco_megacart * 0x4000;
+        // Default layout keuze:
+        // start met layout 0 (example game 1942),
+        // maar laat auto-detect in Read/Write het locken zodra hotspot FF80 of FFC0 gezien wordt.
+        coleco_megalayout = 0;  // switchable @ 0xC000-0xFFFF
+        coleco_megalayout_locked = false;
 
-        // layout 1: switchable @ 0x8000-0xBFFF (pages 4,5), fixed last bank @ 0xC000-0xFFFF (pages 6,7)
-        // layout 0: fixed last bank @ 0x8000-0xBFFF (pages 4,5), switchable @ 0xC000-0xFFFF (pages 6,7)
-
-        unsigned int bank0 = 0;
-        unsigned int base0 = bank0 * 0x4000;
-
-        if (coleco_mega_layout == 1) {
-            // switchable region starts at bank 0
-            MemoryMap[4] = ROM_Memory + base0;
-            MemoryMap[5] = MemoryMap[4] + 0x2000;
-
-            // fixed region = last bank
-            MemoryMap[6] = ROM_Memory + lastBase;
-            MemoryMap[7] = MemoryMap[6] + 0x2000;
-        } else {
-            // fixed region = last bank
-            MemoryMap[4] = ROM_Memory + lastBase;
-            MemoryMap[5] = MemoryMap[4] + 0x2000;
-
-            // switchable region starts at bank 0
-            MemoryMap[6] = ROM_Memory + base0;
-            MemoryMap[7] = MemoryMap[6] + 0x2000;
+        if (emulator->cardcrc == 0xDDDD1396) {
+            // Black Onyx
+            coleco_megalayout = 1; // switchable @ 0x8000-0xBFFF
+        }
+        if (emulator->cardcrc == 0x30D337E4) {
+            // Gradius
+            coleco_megalayout = 1; // switchable @ 0x8000-0xBFFF
+        }
+        if (emulator->cardcrc == 0xBDAE4248) {
+            // Mooncresta
+            coleco_megalayout = 1; // switchable @ 0x8000-0xBFFF
         }
 
-        // zet ook je huidige bank state
-        coleco_megabank = 0;
-        //coleco_megabank = 199;
-        //megacart_bankswitch(0);
+        // Zet fixed last bank volgens huidige layout
+        megacart_map_fixed_lastbank();
 
-        emulator->romCartridgeType = isOpcode ? ROMCARTRIDGEOPCODE : ROMCARTRIDGEMEGA;
-        qDebug() << "[CART] romCartridgeType=" << emulator->romCartridgeType
-                 << "isOpcode=" << isOpcode;
+        // Init switch bank = 0
+        coleco_megabank = 0xFF;
+        megacart_bankswitch(0);
+
+        emulator->romCartridgeType = ROMCARTRIDGEMEGA;
+
+        qDebug() << "[CART] size=" << emulator->cardsize
+                 << " crc=0x" << QString("%1").arg(emulator->cardcrc,8,16,QChar('0')).toUpper()
+                 << " megasize=" << (int)coleco_megasize
+                 << " megamask=0x" << Qt::hex << (int)coleco_megacart
+                 << " layout=" << Qt::dec << (int)coleco_megalayout
+                 << " type=MEGA";
         return ROM_LOAD_PASS;
     }
+}
+
+//---------------------------------------------------------------------------
+void megacart_bankswitch(BYTE bank)
+{
+    if (!coleco_megacart) return;
+
+    bank &= (BYTE)(coleco_megasize - 1);
+    if (bank == coleco_megabank) return;
+
+    BYTE* src = ROM_Memory + ((unsigned int)bank * 0x4000);
+
+    if (coleco_megalayout == 1) // Specials
+    {
+        // switchable @ 0x8000-0xBFFF
+        MemoryMap[4] = src;            // 0x8000-0x9FFF
+        MemoryMap[5] = src + 0x2000;   // 0xA000-0xBFFF
+        // MemoryMap[6]/[7] blijven fixed last bank
+    }
+    else // Classic
+    {
+        // switchable @ 0xC000-0xFFFF
+        MemoryMap[6] = src;            // 0xC000-0xDFFF
+        MemoryMap[7] = src + 0x2000;   // 0xE000-0xFFFF
+        // MemoryMap[4]/[5] blijven fixed last bank
+    }
+
+    qDebug() << "[MEGA-SW]" << "bank" << (int)bank << "layout" << (int)coleco_megalayout;
+    coleco_megabank = bank;
 }
 //---------------------------------------------------------------------------
 // update the 16 colors Coleco
@@ -552,7 +863,7 @@ void coleco_setpalette(int palette) {
         RenderCalcPalette(cv_palette,16);
 }
 ///---------------------------------------------------------------------------
-// 0 = Coleco, 1 = ADAM
+// 0 = Coleco/Phoenix, 1 = ADAM
 void coleco_set_machine_type(int isAdam)
 {
     if (isAdam) {
@@ -704,35 +1015,65 @@ void coleco_setadammemory(bool resetAdamNet)
 //---------------------------------------------------------------------------
 void coleco_setupsgm(void)
 {
-    if (sgm_neverenable || emulator->currentMachineType == MACHINEADAM) return;
+    // Super DK mag nooit SGM hebben
+    if (sgm_neverenable) return;
+    if (emulator->currentMachineType == MACHINEADAM) return;
 
-    sgm_enable = (coleco_port53 & 0x01) ? 1 : 0;
+    // Port 53 bit 0 bepaalt SGM memory enable
+    sgm_enable = (coleco_port53 & 0x01) ? 1:0;
+
+    // Clear SGM RAM bij de eerste keer (alleen 24K, 0x2000-0x7FFF)
+    // if (sgm_enable && sgm_firstwrite)
+    // {
+    //     memset(RAM_Memory+0x2000, 0x00, 0x6000);
+    //     sgm_firstwrite = 0;
+    // }
 
     if (sgm_enable) {
-        // SGM RAM actief: 24KB RAM op 0x2000-0x7FFF
         MemoryMap[1] = RAM_Memory + 0x2000;
         MemoryMap[2] = RAM_Memory + 0x4000;
         MemoryMap[3] = RAM_Memory + 0x6000;
-    } else {
-        // STANDAARD COLECO: BIOS spiegels zijn verplicht!
-        // Zonder deze spiegels start de console niet op (zwart beeld).
-        MemoryMap[1] = BIOS_Memory + 0x0000; // Spiegel 1
-        MemoryMap[2] = BIOS_Memory + 0x0000; // Spiegel 2
-        MemoryMap[3] = RAM_Memory + 0x6000;  // 1KB RAM
+    }/* else {
+        // ESSENTIEEL VOOR MOON CRESTA:
+        // Vul de lege ruimte met 0xFF. Als de game buiten zijn boekje leest,
+        // crasht de Z80 niet op 0x00 (instabiel), maar leest hij 0xFF.
+        memset(EmptySpace, 0xFF, 0x2000);
+        MemoryMap[1] = EmptySpace;
+        MemoryMap[2] = EmptySpace;
+        MemoryMap[3] = EmptySpace;
+    }*/
+
+    // Port 60 bit 1 (0x02) bepaalt BIOS (1) of 8K SGM RAM (0)
+    if (coleco_port60 & 0x02)
+    {
+        // BIOS is AAN
+        if (sgm_low_addr != 0xFFFF) // 0xFFFF = marker voor BIOS
+        {
+            sgm_low_addr = 0xFFFF;
+            MemoryMap[0] = BIOS_Memory + 0x0000;
+        }
+    }
+    else
+    {
+        // BIOS is UIT, map 8K SGM RAM
+        sgm_enable = 1; // Forceren, zoals in emultwo
+        if (sgm_low_addr != 0x0000) // 0x0000 = marker voor RAM
+        {
+            MemoryMap[0] = RAM_Memory + 0x0000;
+            sgm_low_addr = 0x0000;
+        }
     }
 
-    // BIOS of 8K Low RAM switch
-    if (coleco_port60 & 0x02) {
-        MemoryMap[0] = BIOS_Memory + 0x0000;
-        sgm_low_addr = 0xFFFF;
-    } else {
-        MemoryMap[0] = RAM_Memory + 0x0000;
-        sgm_low_addr = 0x0000;
-    }
+    // OPMERKING: We raken 0x2000-0xFFFF (Blok 1-7) NIET AAN.
+    // Dit laat de "copy-to-RAM" mapping van coleco_reset (751)
+    // intact, waardoor de SGM >32K crash wordt voorkomen.
 }
+
 //---------------------------------------------------------------------------
 void coleco_reset(void)
 {
+    int i;
+
     // Init memory pages (plat 64K RAM)
     MemoryMap[0] = RAM_Memory + 0x0000;
     MemoryMap[1] = RAM_Memory + 0x2000;
@@ -756,24 +1097,11 @@ void coleco_reset(void)
          }
     }
 
+    // Randomize 0x6000-0x7FFF (NetPlay-consistentie); ok om te laten
     if (emulator->currentMachineType != MACHINEADAM) {
-        // Randomiseer alleen de eerste 1KB
-        for (int i = 0; i < 0x0400; i++) {
-            BYTE r = rand() % 256;
-            // Spiegel deze waarde over het hele 8KB blok (0x6000-0x7FFF)
-            for (int mirror = 0; mirror < 8; mirror++) {
-                RAM_Memory[0x6000 + i + (mirror * 0x0400)] = r;
-            }
-        }
+        for (i=0;i<0x2000;i++)
+            RAM_Memory[i+0x6000] = rand() % 256;
     }
-
-    if (emulator->romCartridgeType == ROMCARTRIDGEOPCODE)
-    {
-        // Default bank 0 in alle 8K cartridge slots
-        for (int i = 4; i <= 7; i++)
-            MemoryMap[i] = ROM_Memory + ((i - 4) * 0x2000);
-    }
-
 
     sgm_enable     = 0;
     sgm_firstwrite = 1;
@@ -818,7 +1146,6 @@ void coleco_reset(void)
     case 0xEF25AF90:
     case 0xC2E7F0E0: sgm_neverenable = 1;           break;
     }
-
     // VDP reset
     tms9918_reset();
     tms.ScanLines = emulator->NTSC ? TMS9918_LINES : TMS9929_LINES;
@@ -852,35 +1179,69 @@ void coleco_reset(void)
         coleco_setupsgm();           // laat port53/port60 regels bepalen of low 8K BIOS/RAM is
     }
 
+    if (emulator->currentMachineType != MACHINEADAM && coleco_megacart)
+    {
+        megacart_map_fixed_bank();
+        coleco_megabank = 199;
+        megacart_bankswitch(0);
+    }
 }
 
 //---------------------------------------------------------------------------
 void coleco_reset_and_restart_bios()
 {
-    // 1. Hardware Reset
-    if (emulator->currentMachineType == MACHINEADAM) {
-        coleco_port60 = g_adamCartridgeMode ? 0x0F : 0x00;
-        coleco_setadammemory(true);
-    } else {
-        coleco_port60 = 0x0F; // BIOS aan
-        coleco_port53 = emulator->SGM ? 0x01 : 0x00;
-        coleco_setupsgm();    // Mapt BIOS en spiegels
-    }
 
-    // 2. Cartridge Mapping - MOET HIER GEBEUREN
-    if (emulator->romCartridgeType == ROMCARTRIDGEOPCODE) {
-        int last8kPage = (coleco_megasize * 2) - 1;
-        MemoryMap[4] = ROM_Memory + 0x0000; // Bank 0 op 0x8000
-        MemoryMap[5] = ROM_Memory + 0x2000; // Bank 1 op 0xA000
-        MemoryMap[6] = ROM_Memory + ((last8kPage - 1) * 0x2000); // Code op 0xC000
-        MemoryMap[7] = ROM_Memory + (last8kPage * 0x2000);       // Code op 0xE000
-        qDebug() << "[OPCODE] Moon Cresta Boot Mapping Applied.";
-    } else if (coleco_megacart) {
+    // 1) Defaults per machine
+    if (emulator->currentMachineType == MACHINEADAM) {
+        // ADAM: geen SGM; memory wordt door 0x60 bits gestuurd
+        emulator->SGM = false;
+        coleco_port53 = 0x00;
+        coleco_writeport(0x53, coleco_port53, nullptr);
+
+        // ADAM default memorycontrol: WRITER/EOS + cart in hoge 32K
+        // (pas aan indien jouw setadammemory iets anders verwacht)
+        //coleco_port60 = 0x00;
+        //coleco_writeport(0x60, coleco_port60, nullptr);
+        // 2) Bouw ADAM-mapping op
+        //coleco_setadammemory(/*resetAdamNet=*/true);
+
+        coleco_port60 = g_adamCartridgeMode ? 0x0F : 0x00;
+        coleco_writeport(0x60, coleco_port60, nullptr);
+        coleco_setadammemory(true);
+
+    } else {
+        // Coleco/Phoenix: standaard BIOS+cart
+        // MOET ALTIJD 0x0F (BIOS AAN) zijn bij een reset!
+        coleco_port60 = 0x0F;
+        coleco_writeport(0x60, coleco_port60, nullptr);
+
+        // Stel de SGM hardware poort (0x53) wel alvast in
+        coleco_port53 = emulator->SGM ? 0x01 : 0x00;
+        coleco_writeport(0x53, coleco_port53, nullptr);
+
+        // 2) Bouw Coleco-mapping op (die nu 0x0F respecteert)
+        coleco_setupsgm();
+     }
+
+    // 3) Cartridge pages voor de zekerheid opnieuw (met respect voor megacarts)
+    if (coleco_megacart)
+    {
+        // Forceer bank her-evaluatie
+        megacart_map_fixed_bank();
         coleco_megabank = 199;
-        megacart_bankswitch(0);
+        megacart_bankswitch(0); // Zet bank 0 op 0x8000
+    }
+    else
+    {
+        if (emulator->currentMachineType != MACHINEADAM)
+        {
+            coleco_setupsgm();
+        }        // Standaard 32K cart mapping
     }
 
     tms9918_reset();
+    tms.ScanLines = emulator->NTSC ? TMS9918_LINES : TMS9929_LINES;
+
     z80_reset();
 }
 //---------------------------------------------------------------------------
@@ -961,7 +1322,7 @@ int loadBios(const char *filename, BYTE *memory, int sizerm)
 
     // File size debug
     fseek(fbios, 0, SEEK_END);
-    //long fsize = ftell(fbios);
+    long fsize = ftell(fbios);
     fseek(fbios, 0, SEEK_SET);
   //  qDebug() << "[BIOS] loadBios: file size =" << fsize;
 
@@ -1087,9 +1448,9 @@ void coleco_base_init(void)
 {
     z80_init();
     tStatesCount = 0;
-   // coleco_megasize = 2;
-    //coleco_megacart = 0;
-    //emulator->romCartridgeType = ROMCARTRIDGENONE;
+    coleco_megasize = 2;
+    coleco_megacart = 0;
+    emulator->romCartridgeType = ROMCARTRIDGENONE;
 
     memset(ROM_Memory,  0xFF, MAX_CART_SIZE  * 1024);
     memset(RAM_Memory,  0xFF, MAX_RAM_SIZE   * 1024);
@@ -1097,6 +1458,7 @@ void coleco_base_init(void)
     //memset(SRAM_Memory, 0xFF, MAX_EEPROM_SIZE * 1024);
 
     //coleco_load_bios();
+
 
     // Verwijder alle Adam-media
     for (int i = 0; i < MAX_DISKS;  ++i) EjectFDI(&Disks[i]);
@@ -1123,33 +1485,6 @@ void coleco_initialise(void)
     // 3. Na de BIOS-lading: herstart de CPU met de nieuwe mapping
     // Dit zorgt ervoor dat de Z80 start op 0x0000 met de geladen BIOS data
     coleco_reset_and_restart_bios();
-}
-//---------------------------------------------------------------------------
-// Switch banks. Up to 512K of the Colecovision Mega Cart ROM can be stored
-void megacart_bankswitch(BYTE bank)
-{
-    if (!coleco_megacart) return;
-    if (emulator->romCartridgeType == ROMCARTRIDGEOPCODE) return;
-
-    bank &= (BYTE)(coleco_megasize - 1);
-    if (coleco_megabank == bank) return;
-
-    // layout 1: switchable @ 0x8000-0xBFFF (pages 4,5)
-    // layout 0: switchable @ 0xC000-0xFFFF (pages 6,7)
-    unsigned int base = ((unsigned int)bank * 0x4000);
-    if (coleco_mega_layout== 1)
-    {
-        MemoryMap[4] = ROM_Memory + base;
-        MemoryMap[5] = MemoryMap[4] + 0x2000;
-    }
-    else
-    {
-        MemoryMap[6] = ROM_Memory + base;
-        MemoryMap[7] = MemoryMap[6] + 0x2000;
-    }
-
-    qDebug() << "[MEGA-SW]" << "bank" << (int)bank << "layout" << coleco_mega_layout;
-    coleco_megabank = bank;
 }
 //---------------------------------------------------------------------------
 void coleco_WriteByte(unsigned int Address, int Data)
@@ -1184,32 +1519,32 @@ void coleco_WriteByte(unsigned int Address, int Data)
     // --- COLECO MODUS (else) ---
     else
     {
-        // --- COLECO MODUS ---
-        // SGM RAM check: Alleen lineair schrijven als de SGM echt ENABLED is via poort 0x53
-        if (sgm_enable) {
-            // 0x0000-0x1FFF: Alleen schrijven naar RAM als BIOS uit staat
-            if (Address < 0x2000 && sgm_low_addr == 0x0000) {
-                RAM_Memory[Address] = (BYTE)Data;
-                return;
+        // SGM RAM
+        if (sgm_enable)
+        {
+            if (Address < 0x2000 && sgm_low_addr == 0x0000)
+            {
+                RAM_Memory[Address] = Data;
+                return; // Klaar
             }
-            // 0x2000-0x7FFF: In SGM-modus is dit lineair RAM (geen mirroring!)
-            if (Address >= 0x2000 && Address < 0x8000) {
-                RAM_Memory[Address] = (BYTE)Data;
-                return;
+            else if (Address >= 0x2000 && Address < 0x8000)
+            {
+                RAM_Memory[Address] = Data; // Schrijf naar 24K SGM RAM
+                return; // Klaar
             }
         }
-        else {
-            // STANDAARD COLECO (SGM UIT): Hier is mirroring VERPLICHT voor de test-ROM
-            if (Address >= 0x6000 && Address < 0x8000) {
-                unsigned int MirroredAddr = 0x6000 + (Address & 0x03FF); // Masker naar 1KB
-                // Schrijf naar alle 8 spiegels in het 8KB blok
-                for (int i = 0; i < 8; i++) {
-                    RAM_Memory[MirroredAddr + (i * 0x0400)] = (BYTE)Data;
-                }
-                return;
-            }
+        // Standaard 1K RAM (gespiegeld)
+        else if((Address>0x5FFF)&&(Address<0x8000))
+        {
+            Address&=0x03FF;
+            RAM_Memory[0x6000+Address]=RAM_Memory[0x6400+Address]=
+                RAM_Memory[0x6800+Address]=RAM_Memory[0x6C00+Address]=
+                RAM_Memory[0x7000+Address]=RAM_Memory[0x7400+Address]=
+                RAM_Memory[0x7800+Address]=RAM_Memory[0x7C00+Address]=Data;
+            return; // Klaar
         }
     }
+
     // --- STAP 2: Hardware/Cartridge-write (Gedeeld door Adam & Coleco) ---
     // Als de code hier komt, was het geen schrijf-actie naar RAM.
     // Het moet dus hardware zijn (SRAM, EEPROM, of Megacart).
@@ -1246,39 +1581,36 @@ void coleco_WriteByte(unsigned int Address, int Data)
         return; // Belangrijk: return ook als het geen van de cases was
     }
 
+    // Handle Megacart Hot Spot writes
+    // else if (Address >= 0xFFC0)
+    // {
+    //     megacart_bankswitch(Address & coleco_megacart);
+    //     return;
+    // }
+
+    // else if (coleco_megacart && Address >= 0xFFC0)
+    // {
+    //     BYTE bank = (BYTE)((Address - 0xFFC0) & (coleco_megasize - 1));
+    //     megacart_bankswitch(bank);
+    //     return;
+    // }
+    // Handle Megacart Hot Spot writes
+    // Sommige MegaCarts gebruiken >=0xFFC0, andere (of extra) 0xFF80..0xFFBF
     else if (coleco_megacart)
     {
-        // Opcode SGM Mapper (FFFC-FFFF)
-        if (emulator->romCartridgeType == ROMCARTRIDGEOPCODE && Address >= 0xFFFC)
+        if (Address >= 0xFFC0)
         {
-            // aantal 8K pages in ROM:
-            // coleco_megasize lijkt bij jou "aantal 16K banken" te zijn.
-            // Dus 8K pages = coleco_megasize * 2
-            int pages8k = (int)coleco_megasize * 2;
-            int mask8k  = pages8k - 1;
-
-            int bank8k  = (Data & mask8k);
-            int slot    = 4 + (Address & 0x03);        // FFFC..FFFF -> slot 4..7
-
-            MemoryMap[slot] = ROM_Memory + (bank8k * 0x2000);
-
-            // optioneel: debug
-            // qDebug() << "[OPCODE]" << hex << Address << "slot" << slot << "bank8k" << bank8k;
-
+            if (!coleco_megalayout_locked) { coleco_megalayout = 0; coleco_megalayout_locked = true; megacart_map_fixed_lastbank(); coleco_megabank = 0xFF; }
+            megacart_bankswitch(Address & coleco_megacart);
             return;
         }
-        // Standaard MegaCart (Adres-gebaseerd, 16KB blokken)
-        else
-        {        // Standaard MegaCart
-            if (coleco_mega_layout == 1 && Address >= 0xFF80 && Address <= 0xFFBF)
+        else if (Address >= 0xFF80 && Address <= 0xFFBF)
+        {
+            // let op: niet pakken als je EEPROM-cart actief is
+            if ((emulator->typebackup != EEP24C08) && (emulator->typebackup != EEP24C256))
             {
-                megacart_bankswitch((BYTE)((Address - 0xFF80) & (coleco_megasize - 1)));
-                return;
-            }
-            // Gebruikt bij sommige homebrew games
-            else if (coleco_mega_layout == 0 && Address >= 0xFFC0)
-            {
-                megacart_bankswitch((BYTE)((Address - 0xFFC0) & (coleco_megasize - 1)));
+                if (!coleco_megalayout_locked) { coleco_megalayout = 1; coleco_megalayout_locked = true; megacart_map_fixed_lastbank(); coleco_megabank = 0xFF; }
+                megacart_bankswitch(Address & coleco_megacart);
                 return;
             }
         }
@@ -1296,46 +1628,35 @@ void coleco_writebyte(unsigned int Address, int Data) { // Vanuit Z80
 //---------------------------------------------------------------------------
 BYTE coleco_ReadByte(int Address)
 {
-    // -----------------------------------------------------
-    // Opcode / MegaCart hotspot bank switching (READ based)
-    // -----------------------------------------------------
+    // --- Megacart read-hotspots ---
+    // Bij lezen >= 0xFFC0 eerst bankswitchen,
+    // maar GEEN rare waarden teruggeven
+    // if (emulator->currentMachineType != MACHINEADAM && coleco_megacart) {
+    //     if (Address >= 0xFFC0) {
+    //         //megacart_bankswitch(Address & coleco_megacart);
+    //         BYTE bank = (BYTE)((Address - 0xFFC0) & (coleco_megasize - 1));
+    //         megacart_bankswitch(bank);
+    //     }
+    // }
+    // --- Megacart read-hotspots ---
     if (emulator->currentMachineType != MACHINEADAM && coleco_megacart)
     {
         if (Address >= 0xFFC0)
         {
-            BYTE bank = (BYTE)((Address - 0xFFC0) & (coleco_megasize - 1));
-
-            if (emulator->romCartridgeType == ROMCARTRIDGEOPCODE) {
-                // voor opcode: doe hetzelfde als megacart_bankswitch, maar zonder de early-return
-                unsigned int base = ((unsigned int)bank * 0x4000);
-                if (coleco_mega_layout == 1) {
-                    MemoryMap[4] = ROM_Memory + base;
-                    MemoryMap[5] = MemoryMap[4] + 0x2000;
-                } else {
-                    MemoryMap[6] = ROM_Memory + base;
-                    MemoryMap[7] = MemoryMap[6] + 0x2000;
-                }
-                coleco_megabank = bank;
-            } else {
-                megacart_bankswitch(bank);
+            if (!coleco_megalayout_locked) { coleco_megalayout = 0; coleco_megalayout_locked = true; megacart_map_fixed_lastbank(); coleco_megabank = 0xFF; }
+            megacart_bankswitch(Address & coleco_megacart);
+        }
+        else if (Address >= 0xFF80 && Address <= 0xFFBF)
+        {
+            // niet storen als het een EEPROM-data read is
+            if ((emulator->typebackup != EEP24C08) && (emulator->typebackup != EEP24C256))
+            {
+                if (!coleco_megalayout_locked) { coleco_megalayout = 1; coleco_megalayout_locked = true; megacart_map_fixed_lastbank(); coleco_megabank = 0xFF; }
+                megacart_bankswitch(Address & coleco_megacart);
             }
         }
     }
 
-    // --- Megacart read-hotspots ---
-    if (emulator->currentMachineType != MACHINEADAM && coleco_megacart)
-    {
-        if (coleco_megacart && Address >= 0xFFC0)
-        {
-            if (emulator->romCartridgeType != ROMCARTRIDGEOPCODE)
-                {
-                if (coleco_mega_layout == 1)
-                    megacart_bankswitch((BYTE)((Address - 0xFFC0) & (coleco_megasize - 1)));
-                else
-                    megacart_bankswitch((BYTE)((Address - 0xFFC0) & (coleco_megasize - 1)));
-                }
-        }
-    }
     // --- EEPROM data-byte ---
     if (emulator->currentMachineType != MACHINEADAM &&
         ((emulator->typebackup==EEP24C08)||(emulator->typebackup==EEP24C256)) &&
@@ -1399,9 +1720,9 @@ void coleco_writeport(int Address, int Data, int * /**tstates*/)
 {
     bool resetadam = 0;
 
-    Address &= 0xFF; // 8-bit poort adres (hou alleen de onderste 8 bits over van de integer)
+    Address &= 0xFF; // 8-bit poort adres
 
-    switch(Address & 0xE0) // poorten in blokken van 32 groeperen. (0x00/0x20/0x40/0x60/0x80/0xA0/0xC0/0xE0)
+    switch(Address & 0xE0)
     {
     case 0x00: // 0x00 - 0x1F: Unused
         break;
@@ -1411,17 +1732,6 @@ void coleco_writeport(int Address, int Data, int * /**tstates*/)
         coleco_port20=Data;
         if (emulator->currentMachineType == MACHINEADAM) coleco_setadammemory(resetadam);
         else if(emulator->SGM) coleco_setupsgm();
-        break;
-
-    case 0x40: // 0x40-0x5F: Printer / SGM Sound / SGM Control
-        if((emulator->currentMachineType == MACHINEADAM)&&(Address==0x40)) Printer(Data);
-        else if ((emulator->currentMachineType == MACHINEADAM)&&Address==0x42) Out42(Data); // <<< NIEUW: EXPANSION RAM PAGE SELECT
-        else if(emulator->SGM)
-        {
-            if(Address==0x53) { coleco_port53 = Data; coleco_setupsgm(); }
-            else if (Address==0x50) ay8910_write(0,Data); // Control data
-            else if (Address==0x51) ay8910_write(1,Data); // Write data
-        }
         break;
 
     case 0x60: // 0x60 - 0x7F: Memory Control
@@ -1435,17 +1745,28 @@ void coleco_writeport(int Address, int Data, int * /**tstates*/)
         break;
     }
 
+    case 0x40: // 0x40-0x5F: Printer / SGM Sound / SGM Control
+        if((emulator->currentMachineType == MACHINEADAM)&&(Address==0x40)) Printer(Data);
+        else if ((emulator->currentMachineType == MACHINEADAM)&&Address==0x42) Out42(Data); // <<< NIEUW: EXPANSION RAM PAGE SELECT
+        else if(emulator->SGM)
+        {
+            if(Address==0x53) { coleco_port53 = Data; coleco_setupsgm(); }
+            else if (Address==0x50) ay8910_write(0,Data); // Control data
+            else if (Address==0x51) ay8910_write(1,Data); // Write data
+        }
+        break;
+
+
     case 0x80: // 0x80 - 0x9F: Controller 1 Write (Mode Select)
         coleco_io_write((uint8_t)Address, (uint8_t)Data);
         break;
-
     case 0xA0: // 0xA0 - 0xBF: VDP Write (Video Display Processor)
         coleco_updatetms=1;
-        if((Address & 0x01)==0) // Even adres
+        if((Address & 0x01)==0) // Even addresses
         { tms9918_writedata(Data); }
-        else // Oneven adres
+        else // Odd addresses
         { tms9918_writectrl(Data);
-            // Als we in C80 modus zitten, moeten we
+            // CRUCIALE FIX: Als we in C80 modus zitten, moeten we
             // soms specifieke register-instellingen forceren die
             // T-DOS verwacht voor een 80-koloms lineaire buffer.
             if (coleco_80col_enabled) {
@@ -1455,7 +1776,6 @@ void coleco_writeport(int Address, int Data, int * /**tstates*/)
             }
         }
         break;
-
     case 0xC0: // 0xC0 - 0xDF: Controller 2 Write (Mode Select)
         coleco_io_write((uint8_t)Address, (uint8_t)Data);
         break;
@@ -1470,14 +1790,6 @@ void coleco_writeport(int Address, int Data, int * /**tstates*/)
 BYTE coleco_readport(int Address, int * /*tstates*/) // Interne leesfunctie poort
 {
     Address &= 0xFF; // 8-bit poort adres
-
-    // ADAM-specifieke poorten moeten in Coleco-modus ALTIJD 0xFF teruggeven.
-    // Dit voorkomt dat de SGM test-ROM "COLECO ADAM" detecteert.
-    if (emulator->currentMachineType != MACHINEADAM) {
-        if ((Address & 0xE0) == 0x20 || (Address & 0xE0) == 0x60) {
-            return 0xFF; // Idle bus voor poorten 0x20-0x3F en 0x60-0x7F
-        }
-    }
 
     switch(Address & 0xE0)
     {
@@ -1626,7 +1938,7 @@ int coleco_contend(int /*Address*/, int /*states*/, int time) { return(time); }
 // Deze functie ontvangt de analoge stickwaarde via de Qt slot.
 void coleco_setSpinner(int player, int analogValue)
 {
-    if (player < 0 || player > 1) return; // enkel player 1 toelaten,
+    if (player < 0 || player > 1) return;
 
     // De ruwe analoge waarde wordt al in ib_analog_x1 gezet door de bridge,
     // maar we kunnen dit ook direct gebruiken voor directe pad-connectie.
@@ -1642,6 +1954,8 @@ void coleco_setSpinner(int player, int analogValue)
 }
 
 //---------------------------------------------------------------------------
+// coleco.cpp
+
 void coleco_paddle(void)
 {
     static int s_pulse_counter = 0;
@@ -1773,14 +2087,6 @@ void Printer(BYTE V) // Dummy Printer functie
 }
 
 //---------------------------------------------------------------------------
-extern "C" {
-int* sn76489_get_regs();
- unsigned char*  ay8910_get_regs();
-void sn76489_restore_reg(int r, uint8_t val);
-void ay8910_set_reg(int reg, uint8_t val);
-}
-
-//---------------------------------------------------------------------------
 BYTE coleco_savestate(char *filename)
 {
     BYTE stateheader[25] = "adamp state\032\1\0\0\0\0\0\0\0\0\0";
@@ -1819,27 +2125,17 @@ BYTE coleco_savestate(char *filename)
     //fwrite(&sn, sizeof(sn), 1, fstatefile);
     //if (emulator->SGM) fwrite(&ay, sizeof(ay), 1, fstatefile);
 
-    // --- SOUND STATE OPSLAAN ---
-    uint8_t snd_ver = 2; // Versie 2 = inclusief registers
+    // Versie zodat we later kunnen uitbreiden
+    uint8_t snd_ver = 1;
     fwrite(&snd_ver, 1, 1, fstatefile);
 
-    int clk = (int)(Clock);
-    int sr  = SampleRate;
-    int sgm = emulator->SGM ? 1 : 0;
+    int clk = (int)(Clock);              // Coleco PSG clock, ~223721 Hz
+    int sr  = SampleRate;                // jouw gekozen sample rate
+    int sgm = 0;                         // SGM uitgeschakeld (geen AY-chip hier)
 
     fwrite(&clk, sizeof(clk), 1, fstatefile);
     fwrite(&sr,  sizeof(sr),  1, fstatefile);
     fwrite(&sgm, sizeof(sgm), 1, fstatefile);
-
-    // VOEG DIT TOE: Schrijf de registers direct na de sgm-vlag
-    // SN-registers (8 bytes)
-    int* sn_regs_ptr = (int*)sn76489_get_regs();
-    for(int i = 0; i < 8; i++) {
-        uint8_t b = (uint8_t)(sn_regs_ptr[i] & 0xFF);
-        fwrite(&b, 1, 1, fstatefile);
-    }
-    // AY-registers (16 bytes)
-    fwrite(ay8910_get_regs(), 1, 16, fstatefile);
 
     // NB: we serialiseren geen interne chipregisters. Bij load
     // initialiseren we schoon via sb_init/sb_reset.
@@ -1853,12 +2149,10 @@ BYTE coleco_savestate(char *filename)
     return(1);
 }
 
-//---------------------------------------------------------------------------
 static inline bool fread_one(FILE* f, void* dst, size_t elemsz) {
     return std::fread(dst, elemsz, 1, f) == 1;
 }
 
-//---------------------------------------------------------------------------
 BYTE coleco_loadstate(char *filename)
 {
     BYTE stateheader[24];
@@ -1922,6 +2216,7 @@ BYTE coleco_loadstate(char *filename)
     }
     // ... timers, etc. ...
 
+
     // Lees CPU state (init eerst!)
     z80_init();
     if (!fread_one(fstatefile, &Z80, sizeof(Z80))) {
@@ -1947,25 +2242,14 @@ BYTE coleco_loadstate(char *filename)
     if (fread(&sr,  sizeof(sr),  1, fstatefile) != 1) { fclose(fstatefile); return 0; }
     if (fread(&sgm, sizeof(sgm), 1, fstatefile) != 1) { fclose(fstatefile); return 0; }
 
-    // Als snd_ver 2 is, lezen we de registers in
-    if (snd_ver >= 2) {
-        uint8_t loaded_sn[8];
-        uint8_t loaded_ay[16];
-        fread(loaded_sn, 1, 8, fstatefile);
-        fread(loaded_ay, 1, 16, fstatefile);
+    // --- Sound (PSG) herstellen ---
+    if (clk <= 0) clk = (emulator->NTSC ? CLOCK_NTSC : CLOCK_PAL);
+    if (sr  <= 0) sr  = SampleRate;
 
-        // Pas de registers toe op de hardware
-        sn76489_init(clk, sr);
-        for(int i = 0; i < 8; i++) sn76489_restore_reg(i, loaded_sn[i]);
-
-        ay8910_init(clk, sr);
-        for(int i = 0; i < 16; i++) ay8910_set_reg(i, loaded_ay[i]);
-    } else {
-        // Fallback voor oude saves: alleen init
-        sn76489_init(Clock, SampleRate);
-        if (sgm) ay8910_init(Clock, SampleRate);
-    }
-    emulator->SGM = sgm;
+    emulator->SGM = sgm ? 1 : 0;
+    // Init onze PSG-bridge met juiste OUT-rate en standaard PSG-clock
+    sn76489_init(Clock, SampleRate);
+    sn76489_reset(Clock, SampleRate);
 
     // Lees Geheugen
     fread(RAM_Memory, 1, MAX_RAM_SIZE*1024, fstatefile);
@@ -1982,13 +2266,17 @@ BYTE coleco_loadstate(char *filename)
     return(1);
 }
 
-//-------------------------------------------------------------------------------------------------------
-extern "C" {
+
 // --- Z80 CPU Callbacks ---
+//
+extern "C" {
 
 // 8-bit geheugen-callback (voor opcodes)
 unsigned int cpu_readmem16(unsigned int address)
 {
+    // MegaCart hotspot BEFORE read (read-hotspots bestaan)
+    coleco_megacart_hotspot(address, 0, false);
+
     return (unsigned int)coleco_readbyte(address);
     // unsigned char value = coleco_readbyte(address);
 
@@ -2013,6 +2301,8 @@ void cpu_writemem16(unsigned int address, unsigned int value)
     //     BreakpointType::BP_WRITE,
     //     (uint16_t)address,
     //     (uint8_t)(value & 0xFF));
+    // MegaCart hotspot BEFORE write (write-hotspots bestaan)
+    coleco_megacart_hotspot(address, value, true);
 
     coleco_writebyte(address, (BYTE)(value & 0xFF));
 }
@@ -2114,7 +2404,7 @@ void cpu_writebyte(unsigned int address, unsigned char value)
     coleco_writebyte(address, (BYTE)value);
 }
 
-void coleco_set_bios_paths(const char* coleco_path, const char* eos_path, const char* writer_path)
+extern "C" void coleco_set_bios_paths(const char* coleco_path, const char* eos_path, const char* writer_path)
 {
     // ... (de implementatie met s_external_* pointers)
     s_external_coleco_bios_path = coleco_path;
@@ -2129,9 +2419,13 @@ int coleco_get_bios_status(int index)
     return g_bios_status_int[index];
 }
 
+} // extern "C"
+
 // Zorg dat deze signatures exact matchen met z80.h
+extern "C" {
 extern unsigned int cpu_readmem16(unsigned int address);
 extern void cpu_writemem16(unsigned int address, unsigned int value);
+}
 
 // Hulpfunctie voor adres normalisatie
 static uint16_t normalize_coleco_address(uint16_t address) {
@@ -2144,8 +2438,30 @@ static uint16_t normalize_coleco_address(uint16_t address) {
 
 // Deze functies doen NU niets anders dan de debugger checken
 // en daarna de originele emulator-functie aanroepen.
-void z80_wrapper_write(unsigned int address, unsigned char value)
+
+extern "C" void z80_wrapper_write(unsigned int address, unsigned char value)
 {
+    static int onceW = 0;
+    if (onceW < 5) {
+        qDebug() << "[WRAP-W]" << Qt::hex << (unsigned)address << (unsigned)value;
+        onceW++;
+    }
+
+    // --- MegaCart hotspot switching (support FFC0 and FF80 variants) ---
+    if (coleco_megacart && emulator->currentMachineType != MACHINEADAM)
+    {
+        // Variant A: "upper 8 bytes" hotspot (FFF8-FFFF)  -> past bij jouw log
+        if (address >= 0xFFF8) {
+            BYTE bank = (BYTE)((address - 0xFFF8) & (coleco_megasize - 1));
+            megacart_bankswitch(bank);
+        }
+        // Variant B: FF80-FF9F (sommige dumps)
+        else if ((address & 0xFFE0) == 0xFF80) {
+            BYTE bank = (BYTE)((address - 0xFF80) & (coleco_megasize - 1));
+            megacart_bankswitch(bank);
+        }
+    }
+
     // 1. Debug Check
     uint16_t checkAddr = normalize_coleco_address(address);
     if (DEBUG_BRIDGE.checkMemAccess(BreakpointType::BP_WRITE, checkAddr, value)) {
@@ -2158,24 +2474,39 @@ void z80_wrapper_write(unsigned int address, unsigned char value)
     cpu_writemem16(address, value);
 }
 
-unsigned char z80_wrapper_read(unsigned int address)
-{
-    // 1. VOER DE NORMALE LEESACTIE UIT (Herstelt het zwarte beeld)
-    // We roepen de emulator functie aan. Dit zorgt dat BIOS ROMs correct worden gelezen.
-    // Dit crasht niet, zolang we het maar 1x doen en niet recursief.
-    unsigned char value = (unsigned char)cpu_readmem16(address);
+ extern "C" unsigned char z80_wrapper_read(unsigned int address)
+ {
+     static int once = 0;
+     if (once < 5) {
+         qDebug() << "[WRAP-R]" << Qt::hex << (unsigned)address;
+         once++;
+     }
 
-    // --- Debug Bridge (standaard) ---
-    uint16_t checkAddr = normalize_coleco_address(address);
-    if (DEBUG_BRIDGE.checkMemAccess(BreakpointType::BP_READ, checkAddr, value)) {
-        if (emulator) emulator->stop = 1;
-        extern int z80_exec;
-        z80_exec = 0;
-    }
-    return value;
-}
+     if (coleco_megacart && emulator->currentMachineType != MACHINEADAM)
+     {
+         // Variant A: "upper 8 bytes" hotspot (FFF8-FFFF)  -> past bij jouw log
+         if (address >= 0xFFF8) {
+             BYTE bank = (BYTE)((address - 0xFFF8) & (coleco_megasize - 1));
+             megacart_bankswitch(bank);
+         }
+         // Variant B: FF80-FF9F (sommige dumps)
+         else if ((address & 0xFFE0) == 0xFF80) {
+             BYTE bank = (BYTE)((address - 0xFF80) & (coleco_megasize - 1));
+             megacart_bankswitch(bank);
+         }
+     }
+     // --- Debug Bridge (standaard) ---
+        unsigned char value = (unsigned char)cpu_readmem16(address);
+        uint16_t checkAddr = normalize_coleco_address(address);
+        if (DEBUG_BRIDGE.checkMemAccess(BreakpointType::BP_READ, checkAddr, value)) {
+            if (emulator) emulator->stop = 1;
+            extern int z80_exec;
+            z80_exec = 0;
+        }
+        return value;
+ }
 
-int coleco_virtual_cpm_diskboot(const char* cpmTapeDdpPath,
+extern "C" int coleco_virtual_cpm_diskboot(const char* cpmTapeDdpPath,
                                            const char* diskDskPath,
                                            int tapeDrive,
                                            int diskDrive)
@@ -2215,6 +2546,3 @@ int coleco_virtual_cpm_diskboot(const char* cpmTapeDdpPath,
     qDebug() << "  diskDrive=" << diskDrive << " disk=" << (diskDskPath ? diskDskPath : "(null)");
     return 0;
 }
-// --- Einde extern C ----------------------------------------------------------------
-}
-

@@ -19,8 +19,9 @@
  * Based on   SN76489 emulation by Maxim in 2001 and 2002
  *  converted from hisoriginal Delphi implementation
 */
-
+#include <stdio.h>
 #include "sn76489.h"
+#include <stdint.h>
 
 sn76496 sn;
 
@@ -224,3 +225,13 @@ void sn76489_init(int clock, int sample_rate)
     sn76489_setgain();
 }
 
+int* sn76489_get_regs(void) {
+    return sn.Register;
+}
+
+void sn76489_restore_reg(int r, uint8_t val) {
+    // Schrijf de waarde direct in het register en update de interne staat
+    sn.Register[r] = val;
+    // Gebruik de bestaande sn76489_write logica om de periode/volume te verwerken
+    sn76489_write(val | 0x80 | (r << 4));
+}

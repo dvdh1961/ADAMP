@@ -25,8 +25,10 @@
 #include "coleco.h"
 #include "screenwidget.h"
 #include <cstdio>
+#include <stdint.h>
+#include "printwindow.h"
 
-#define RAM(A)         (RAM_Memory[A])
+#define RAM(A)  (RAM_Memory[A])
 
 extern byte coleco_port60;
 
@@ -35,6 +37,9 @@ byte HoldingBuf[4096];
 word io_busy = 0;
 word PCBAddr = 0x0000;
 const byte InterleaveTable[8] = { 0, 5, 2, 7, 4, 1, 6, 3 };
+
+int g_prn_line_counter = 0;
+bool g_prn_in_wp = false;
 
 bool m_cpm_enabled;
 bool m_tdos_enabled;
@@ -46,24 +51,6 @@ word savedBUF, savedLEN;
 
 // Game mode flag: true = Adam games (scancodes), false = Writer/BASIC (ASCII)
 static bool g_force_game_mode = false;
-
-/**
- * @brief Stel game mode in voor correcte keypad routing
- * @param enabled true = game mode (scancodes), false = writer mode (ASCII)
- */
-extern "C" void adamnet_set_game_mode(bool enabled) {
-    g_force_game_mode = enabled;
-    qDebug() << "[ADAMNET] Game mode" << (enabled ? "ENABLED" : "DISABLED")
-             << "- Keypad will use " << (enabled ? "scancodes" : "ASCII");
-}
-
-/**
- * @brief Check of we in game mode zijn
- * @return true als game mode actief is
- */
-extern "C" bool adamnet_is_game_mode(void) {
-    return g_force_game_mode;
-}
 
 // Flag to track if F000 area has been cleared after boot
 static bool g_vdp_cleared = false;
@@ -83,34 +70,36 @@ enum AdamKeyboardStatus {
     KBD_DATA_READY = 0x80  // Data is beschikbaar in de buffer
 };
 
-#include <stdint.h>
-
+//--------------------------------------------------------------------------------------
+// Stel game mode in voor correcte keypad routing
+// enabled true = game mode (scancodes), false = writer mode (ASCII)
+extern "C" void adamnet_set_game_mode(bool enabled) {
+    g_force_game_mode = enabled;
+}
+// brief Check of we in game mode zijn
+// @return true als game mode actief is
+extern "C" bool adamnet_is_game_mode(void) { return g_force_game_mode;}
 static int g_block_ascii_fkeys = 0;  // countdown tegen T..Y die nog via PutKBD zouden lekken
-
+//--------------------------------------------------------------------------------------
 #ifdef __cplusplus
 extern "C" {
 void adam_printer_chunk(const uint8_t* data, int len);
 }
 #endif
-
+//--------------------------------------------------------------------------------------
 extern "C" void adamnet_block_ascii_fkeys(int count)
 {
     if (count < 0) count = 0;
     g_block_ascii_fkeys = count;
 }
-
+//--------------------------------------------------------------------------------------
 extern "C" void adamnet_host_prn_write_ascii(const char* s)
 {
     if (!s) return;
 
-    // Simuleer een PRN "write" blok zoals AdamNet dat zou leveren:
-    // We sturen de bytes meteen door via jouw bestaande bridge.
-    // (Het is AdamNet-PRN pad qua flow, alleen zonder SmartWriter als bron.)
     const uint8_t* p = reinterpret_cast<const uint8_t*>(s);
 
-    // Stuur in hapklare blokken zodat de UI soepel blijft
     while (*p) {
-        // snijd tot max ~512 bytes per 'blok' (vergelijkbaar met sector)
         int n = 0;
         const uint8_t* start = p;
         while (p[n] && n < 512) ++n;
@@ -118,21 +107,20 @@ extern "C" void adamnet_host_prn_write_ascii(const char* s)
         p += n;
     }
 }
-
+//--------------------------------------------------------------------------------------
 // --- AdamNet printer sink: UI kan zich hierop abonneren ---
 extern "C" {typedef void (*AdamPrinterSink)(const char* data, int len);
 static AdamPrinterSink g_printer_sink = nullptr;
 void adam_printer_set_sink(AdamPrinterSink sink) { g_printer_sink = sink; }
 }
-
+//--------------------------------------------------------------------------------------
 // Injecteer een ADAM scancode rechtstreeks voor de Writer (EmulTwo-stijl via LastKey)
 extern "C" void adamnet_inject_scancode(uint8_t sc)
 {
     // Stuur de scancode (bv. 0xB4 of 0x34) naar de queue
     adamnet_queue_key(sc);
 }
-
-
+//--------------------------------------------------------------------------------------
 void adamnet_queue_key(uint8_t key_code)
  {
     uint8_t mapped = 0;
@@ -155,36 +143,47 @@ void adamnet_queue_key(uint8_t key_code)
              mapped = mapped ^ 0x80;
         }
         key_code = mapped;
-        //qDebug() << "[AdamNet] ENQUEUE (na remap):" << Qt::hex << key_code;
     }
-        // Bereken de volgende 'head' positie
-        uint8_t next_head = (g_key_buffer_head + 1) % KEY_BUFFER_SIZE;
 
-        // Als de buffer niet vol is...
-        if (next_head != g_key_buffer_tail)
-        {
-            g_key_buffer[g_key_buffer_head] = key_code;
-            g_key_buffer_head = next_head;
-            // 1. Update interne status
-            KBDStatus = (byte)(RSP_STATUS | 0x0C);
-            // 2. STUUR NAAR DE Z80 RAM (Cruciaal voor games!)
-            // Device 0 is het keyboard. Schrijf de status direct in de DCB.
-            SetDCB(0, DCB_CMD_STAT, KBDStatus);
-            // 3. ZET DE I/O VLAG (Voor poort 0xE0 polling)
-            // AN_STAT_DIF (0x01) betekent: "Er zit data in de Host Adapter voor de CPU"
-            PCBTable[0] |= 0x01;
+    // ONDERSCHEP KEYBOARD EVENTS VOOR DE TELLER
+    // We kijken naar 'key_code' (de rauwe scancode voor mapping)
 
-            //qDebug() << "[AdamNet] Toets geactiveerd in PCB & DCB:" << Qt::hex << key_code;
-        }
+    // 1. ENTER check (Scancode 0x0D)
+    if (key_code == 0x0D) {
+        // g_prn_line_counter++;
+        // qDebug() << "[ADAMNET] ENTER gedrukt: Lijn teller nu op" << g_prn_line_counter;
+    }
+
+    // 2. F8 check (RESET via de gemapte code 0x95)
+    // (Zorg dat 'mapped' hierboven al is berekend)
+    if (mapped == 0x95) {
+        g_prn_line_counter = 0;
+        qDebug() << "[ADAMNET] F8 gedrukt: Lijn teller gereset naar 0";
+    }
+
+    // Bereken de volgende 'head' positie
+    uint8_t next_head = (g_key_buffer_head + 1) % KEY_BUFFER_SIZE;
+
+    // Als de buffer niet vol is...
+    if (next_head != g_key_buffer_tail)
+    {
+        g_key_buffer[g_key_buffer_head] = key_code;
+        g_key_buffer_head = next_head;
+        // 1. Update interne status
+        KBDStatus = (byte)(RSP_STATUS | 0x0C);
+        // 2. STUUR NAAR DE Z80 RAM (Cruciaal voor games!)
+        // Device 0 is het keyboard. Schrijf de status direct in de DCB.
+        SetDCB(0, DCB_CMD_STAT, KBDStatus);
+        // 3. ZET DE I/O VLAG (Voor poort 0xE0 polling)
+        // AN_STAT_DIF (0x01) betekent: "Er zit data in de Host Adapter voor de CPU"
+        PCBTable[0] |= 0x01;
+    }
 }
 
-
 // --- Interne Helper Functies ---
-
-/**
- * @brief Haalt een key-event op uit de buffer.
- * @return De key-code, of 0 als de buffer leeg is.
- */
+//--------------------------------------------------------------------------------------
+// @brief Haalt een key-event op uit de buffer.
+// @return De key-code, of 0 als de buffer leeg is.
 uint8_t adamnet_dequeue_key(void)
 {
     // Als de buffer leeg is...
@@ -199,20 +198,16 @@ uint8_t adamnet_dequeue_key(void)
 qDebug() << "[AdamNet] DEQUEUE (naar BIOS):" << Qt::hex << key_code;
     return key_code;
 }
-
-/**
- * @brief Controleert of de key buffer data bevat.
- * @return 1 als niet leeg, 0 als leeg.
- */
+//--------------------------------------------------------------------------------------
+// @brief Controleert of de key buffer data bevat.
+// @return 1 als niet leeg, 0 als leeg.
 int adamnet_is_key_available(void)
 {
     return (g_key_buffer_head != g_key_buffer_tail);
 }
 
-
 // --- AdamNet Hooks (aangeroepen door coleco.cpp) ---
-
-
+//--------------------------------------------------------------------------------------
 /** GetDCB() *************************************************/
 /** Get DCB byte at given offset.                           **/
 /*************************************************************/
@@ -221,17 +216,17 @@ byte GetDCB(byte Dev,byte Offset)
     word A = (PCBAddr+PCB_SIZE+Dev*DCB_SIZE+Offset)&0xFFFF;
     return(RAM_Memory[A]);
 }
-
+//--------------------------------------------------------------------------------------
 word GetDCBBase(byte Dev)
 {
     return(GetDCB(Dev,DCB_BA_LO)+((word)GetDCB(Dev,DCB_BA_HI)<<8));
 }
-
+//--------------------------------------------------------------------------------------
 word GetDCBLen(byte Dev)
 {
     return(GetDCB(Dev,DCB_BUF_LEN_LO)+((word)GetDCB(Dev,DCB_BUF_LEN_HI)<<8));
 }
-
+//--------------------------------------------------------------------------------------
 unsigned int GetDCBSector(byte Dev)
 {
     return(
@@ -241,7 +236,7 @@ unsigned int GetDCBSector(byte Dev)
         + ((unsigned int)GetDCB(Dev,DCB_SEC_NUM_3)<<24)
         );
 }
-
+//--------------------------------------------------------------------------------------
 /** GetPCB() *************************************************/
 /** Get PCB byte at given offset.                           **/
 /*************************************************************/
@@ -250,17 +245,17 @@ byte GetPCB(word Offset)
     word A = (PCBAddr+Offset)&0xFFFF;
     return(RAM_Memory[A]);
 }
-
+//--------------------------------------------------------------------------------------
 word GetPCBBase(void)
 {
     return(GetPCB(PCB_BA_LO)+((word)GetPCB(PCB_BA_HI)<<8));
 }
-
+//--------------------------------------------------------------------------------------
 word GetMaxDCB(void)
 {
     return(GetPCB(PCB_MAX_DCB));
 }
-
+//--------------------------------------------------------------------------------------
 /** SetDCB() *************************************************/
 /** Set DCB byte at given offset.                           **/
 /*************************************************************/
@@ -270,7 +265,7 @@ void SetDCB(byte Dev,byte Offset,byte Value)
 
     RAM_Memory[A] = Value;
 }
-
+//--------------------------------------------------------------------------------------
 /** SetPCB() *************************************************/
 /** Set PCB byte at given offset.                           **/
 /*************************************************************/
@@ -279,7 +274,7 @@ void SetPCB(word Offset,byte Value)
     word A = (PCBAddr+Offset)&0xFFFF;
     RAM_Memory[A] = Value;
 }
-
+//--------------------------------------------------------------------------------------
 /** IsPCB() **************************************************/
 /** Return 1 if given address belongs to PCB, 0 otherwise.  **/
 /*************************************************************/
@@ -298,7 +293,7 @@ int IsPCB(word A)
     /* This address belongs to AdamNet */
     return(1);
 }
-
+//--------------------------------------------------------------------------------------
 /** MovePCB() ************************************************/
 /** Move PCB and related DCBs to a new address.             **/
 /*************************************************************/
@@ -319,13 +314,52 @@ void MovePCB(word NewAddr,byte MaxDCB)
     SetPCB(PCB_BA_HI,   NewAddr>>8);
     SetPCB(PCB_MAX_DCB, MaxDCB);
 
-    for(J=0;J<=MaxDCB;++J)
+    qDebug() << "[PCB] MaxDCB =" << MaxDCB << "at address"
+             << QString("0x%1").arg(NewAddr, 4, 16, QChar('0'));
+
+
+    for(J=0;J<MaxDCB;++J)
     {
         SetDCB(J,DCB_DEV_NUM,0);
         SetDCB(J,DCB_ADD_CODE,J);
     }
-}
 
+    // if (m_cpm_enabled && !m_tdos_enabled)
+    // {
+    //     // Speciale toewijzing voor CP/M
+    //     for(J=0; J<=MaxDCB; ++J)
+    //     {
+    //         SetDCB(J, DCB_DEV_NUM, 0);
+
+    //         // Speciale mapping voor CP/M devices:
+    //         if (J == 0) SetDCB(J, DCB_ADD_CODE, 1);      // Keyboard
+    //         else if (J == 1) SetDCB(J, DCB_ADD_CODE, 2); // Printer
+    //         else if (J == 2) SetDCB(J, DCB_ADD_CODE, 8); // Tape 0
+    //         else if (J == 3) SetDCB(J, DCB_ADD_CODE, 9); // Tape 1
+    //         else SetDCB(J, DCB_ADD_CODE, J);             // Rest: slot = ADD_CODE
+    //     }
+    // }
+
+
+    // CHECK:
+    byte check = GetDCB(J, DCB_ADD_CODE);
+    if (check != J) {
+        qDebug() << "[PCB ERROR] DCB" << J << "has ADD_CODE" << check << "instead of" << J;
+    }
+
+    // // FIX VOOR CP/M DISK DEVICES:
+    // if (m_cpm_enabled) {
+    //     SetDCB(4, DCB_DEV_NUM, 4);  // Disk 0
+    //     SetDCB(5, DCB_DEV_NUM, 5);  // Disk 1
+    //     SetDCB(6, DCB_DEV_NUM, 6);  // Disk 2
+    //     SetDCB(7, DCB_DEV_NUM, 7);  // Disk 3
+    // }
+
+    // Check wat er staat:
+    byte count = RAM_Memory[0xFEC3];
+    qDebug() << "[PCB] Device count at 0xFEC3 =" << count;
+}
+//--------------------------------------------------------------------------------------
 /** ReportDevice() *******************************************/
 /** Reply to STATUS command with device parameters.         **/
 /*************************************************************/
@@ -336,29 +370,12 @@ void ReportDevice(byte Dev,word MsgSize,byte IsBlock)
     SetDCB(Dev,DCB_MAXL_HI,  MsgSize>>8);
     SetDCB(Dev,DCB_DEV_TYPE, IsBlock? 0x01:0x00);
 }
-
-// --- adamnet.cpp ---
-
+//--------------------------------------------------------------------------------------
 /** PutKBD() *************************************************/
 /** Voeg ASCII-toets toe aan de (oude) KBD-buffer.          **/
 /*************************************************************/
 void PutKBD(unsigned int Key)
 {
-//     if (Key & 0x80) {
-//         // release: 0xC1 voor 'A' → basis = 0x41
-//         byte baseKey = (byte)(Key & 0x7F);
-//         if (baseKey == LastKey) LastKey = 0x00;
-//         return;
-//     }
-//     LastKey = (byte)Key;    // press
-// KBDStatus = (byte)(RSP_STATUS | 0x0C);
-
-// We gebruiken de bestaande logica om de "LastKey" status te beheren
-// voor backward compatibility in GetKBD, maar sturen ook naar de queue.
-
-// --- OUDE LASTKEY LOGICA ---
-// Dit deel is puur voor ASCII-toetsen (A-Z, 0-9, enz.).
-
 if (Key & 0x80) {
     // release: 0xC1 voor 'A' → basis = 0x41
     byte baseKey = (byte)(Key & 0x7F);
@@ -371,7 +388,7 @@ if (Key & 0x80) {
 // De KBDStatus moet worden bijgewerkt, maar de queue wordt hier niet gevuld.
 KBDStatus = (byte)(RSP_STATUS | 0x0C);
 }
-
+//--------------------------------------------------------------------------------------
 /** GetKBD() *************************************************/
 /** Haal éérst LastKey, anders uit AdamNet ringbuffer.      **/
 /*************************************************************/
@@ -393,22 +410,31 @@ byte GetKBD()
     if (adamnet_is_key_available())
     {
         byte sc = adamnet_dequeue_key();
-        qDebug() << "SCANCODE:" << Qt::hex << sc;
+       // qDebug() << "SCANCODE:" << Qt::hex << sc;
         return sc;
     }
     if (LastKey != 0) {
-        qDebug() << "ASCII:" << Qt::hex << LastKey;
+        //qDebug() << "ASCII:" << Qt::hex << LastKey;
     }
 
-    //return 0x00;
+    if (LastKey==0x1B) // Escape gedrukt
+        {
+        g_prn_in_wp = true; // Printer in wordprocessor
 
+        PrintWindow* w = PrintWindow::instance();
+            if (w) {
+                    QMetaObject::invokeMethod(w, "updatePrinterMode", Qt::QueuedConnection, Q_ARG(bool, g_prn_in_wp));
+            }
+
+            g_prn_line_counter = 0;
+        }
     // 2. Als die leeg is, check de ASCII LastKey (voor '9', 'A', etc.)
     byte Result = LastKey;
     LastKey = 0x00;
     return(Result);
 
 }
-
+//--------------------------------------------------------------------------------------
 /** UpdateKBD() **********************************************/
 void UpdateKBD(byte Dev,int V)
 {
@@ -451,68 +477,104 @@ void UpdateKBD(byte Dev,int V)
             RAM_Memory[A] = V;
         }
         KBDStatus = RSP_STATUS+(J<N? 0x0C:0x00);
-        //SetDCB(Dev,DCB_CMD_STAT,KBDStatus);
         break;
     }
 }
-
-void UpdatePRN(byte Dev,int V)
+//--------------------------------------------------------------------------------------
+void UpdatePRN(byte Dev, int V)
 {
-
     int N;
     word A;
+    static char g_row_buf[121];
+    static int g_cur_x = 0;
+    static bool g_row_init = false;
+
+    if (!g_row_init) {
+        memset(g_row_buf, ' ', 120);
+        g_row_buf[120] = '\0';
+        g_row_init = true;
+    }
 
     switch(V)
     {
     case CMD_STATUS:
     case CMD_SOFT_RESET:
-        /* Character-based device, single character buffer */
-        ReportDevice(Dev,0x0001,0);
+        // Rapporteer altijd dat het apparaat 'Gezond' is (0x0001)
+        ReportDevice(Dev, 0x0001, 0);
+        // Forceer de status direct op Idle
+        SetDCB(Dev, DCB_CMD_STAT, 0x80);
         break;
+
     case CMD_READ:
         SetDCB(Dev,DCB_CMD_STAT,RSP_ACK+0x0B);
         break;
+
     case CMD_WRITE:
     {
-        SetDCB(Dev,DCB_CMD_STAT,0x00);
+        SetDCB(Dev, DCB_CMD_STAT, 0x00);
         A = GetDCBBase(Dev);
         N = GetDCBLen(Dev);
 
         if (N > 0) {
-            // Kopieer in een tijdelijke buffer en stuur door
-            // (klein en veilig; kan ook in stukken als je wil)
-            static uint8_t s_buf[1024];
-            while (N > 0) {
-                int chunk = N > (int)sizeof(s_buf) ? (int)sizeof(s_buf) : N;
-                for (int j = 0; j < chunk; ++j, A=(A+1)&0xFFFF)
-                    s_buf[j] = RAM_Memory[A];
-                adam_printer_chunk(s_buf, chunk);
-                N -= chunk;
+            for (int j = 0; j < N; ++j, A = (A + 1) & 0xFFFF) {
+                uint8_t c = RAM_Memory[A];
+
+                if (c == 13 || c == 10 || c == 11) {
+                    std::string line(g_row_buf, 120);
+
+                    size_t first = line.find_first_not_of(' ');
+                    size_t last = line.find_last_not_of(' ');
+
+                    if (first != std::string::npos) {
+                        std::string processed = line.substr(first, (last - first + 1));
+
+                        // Gebruik de globale teller voor de spiegel-logica
+                        if (g_prn_line_counter % 2 != 0) {
+                            qDebug() << "[ADAMNET] Lijn teller:" << g_prn_line_counter ;
+                            std::reverse(processed.begin(), processed.end());
+                        }
+                        else
+                            qDebug() << "[ADAMNET] Lijn teller:" << g_prn_line_counter ;
+
+                        adam_printer_chunk((uint8_t*)processed.c_str(), processed.length());
+                        uint8_t nl = '\n';
+                        adam_printer_chunk(&nl, 1);
+
+                        // bij wordprocessor mode
+                        if (g_prn_in_wp)
+                        {
+                            g_prn_line_counter++;
+                        }
+                    }
+
+                    memset(g_row_buf, ' ', 120);
+                    g_cur_x = 0;
+                }
+                else if (c == 8) {
+                    if (g_cur_x > 0) g_cur_x--;
+                }
+                else if (c >= 32) {
+                    if (g_cur_x < 120) {
+                        g_row_buf[g_cur_x] = (char)c;
+                        g_cur_x++;
+                    }
+                }
             }
         }
 
-        // (void)A;
-        // (void)N;
-        // //for(J=0 ; J<N ; ++J, A=(A+1)&0xFFFF)
-        // //Printer(RAM(A));
-        // // 1) Stuur de bytes naar de UI (indien een sink is geïnstalleerd)
-        // if (g_printer_sink && N > 0) {
-        //     g_printer_sink(reinterpret_cast<const char*>(&RAM_Memory[A]), N);
-        //}
 
-        // 2) (optioneel) bestaand gedrag zoals file-capture laten staan
-        // prn_write_bytes(&RAM_Memory[A], N);
-
-        // Klaar
-        SetDCB(Dev, DCB_CMD_STAT, 0x00);  // ACK
+        SetDCB(Dev, DCB_CMD_STAT, RSP_ACK + 0x0B);
     }
-        break;
+    break;
+
     default:
-        SetDCB(Dev,DCB_CMD_STAT,RSP_STATUS);
+        //SetDCB(Dev, DCB_CMD_STAT, RSP_STATUS);
+        // Voor alle andere commando's: zeg gewoon 'OK'
+        SetDCB(Dev, DCB_CMD_STAT, 0x80);
         break;
     }
 }
-
+//--------------------------------------------------------------------------------------
 void AdamFlushCache(void)
 {
     for (word i=0; i<savedLEN; i++)
@@ -522,11 +584,7 @@ void AdamFlushCache(void)
         savedBUF++;
     }
 }
-
-
-
 //--------------------------------------------------------------------------------------
-
 /** ReadPCB() ************************************************/
 /** Read value from a given PCB or DCB address.             **/
 /*************************************************************/
@@ -551,21 +609,14 @@ void ReadPCB(word A)
         if (Dev <= GetMaxDCB())
         {
             if(m_cpm_enabled)
-                UpdateDCB_CPM(Dev, -1); // Deze functie update de status in RAM
+                if (m_tdos_enabled) UpdateDCB_TDOS(Dev, -1);
+                else UpdateDCB_CPM(Dev, -1); // Deze functie update de status in RAM
             else
                 UpdateDCB_EOS(Dev, -1); // Deze functie update de status in RAM
-
-            // Retourneer de zojuist geüpdatete DCB-status
-            //return GetDCB(Dev, DCB_CMD_STAT);
         }
     }
-
-    // Fallback: Als het geen status-read was, retourneer de
-    // onbewerkte byte uit het PCB-geheugen (bv. BA_LO, BA_HI).
-    //return RAM_Memory[PCBAddr + A];
-    //qDebug() << "ReadPCB at" << Qt::hex << A;
 }
-
+//--------------------------------------------------------------------------------------
 /** WritePCB() ***********************************************/
 /** Write value to a given PCB or DCB address.              **/
 /*************************************************************/
@@ -608,13 +659,15 @@ void WritePCB(word A,byte V)
         byte Dev = (A-PCB_SIZE)/DCB_SIZE;
         if(Dev<=GetMaxDCB()) {
             if (m_cpm_enabled)
-                UpdateDCB_CPM(Dev,V);
+                if (m_tdos_enabled) UpdateDCB_TDOS(Dev,V);
+                else UpdateDCB_CPM(Dev,V);
             else
                 UpdateDCB_EOS(Dev,V); }
 
     }
-}
 
+}
+//--------------------------------------------------------------------------------------
 /** ResetPCB() ***********************************************/
 /** Reset PCB and attached hardware.                        **/
 /*************************************************************/
@@ -635,7 +688,7 @@ void ResetPCB(void)
     g_key_buffer_head = 0;
     g_key_buffer_tail = 0;
 }
-
+//--------------------------------------------------------------------------------------
 /** ChangeTape() *********************************************/
 /** Change tape image in a given drive. Closes current tape **/
 /** image if Name=0 was given. Creates a new tape image if  **/
@@ -662,7 +715,7 @@ byte ChangeTape(byte N,const char *FileName)
     P = FormatFDI(&Tapes[N],FMT_DDP);
     return(!!P);
 }
-
+//--------------------------------------------------------------------------------------
 /** ChangeDisk() *********************************************/
 /** Change disk image in a given drive. Closes current disk **/
 /** image if Name=0 was given. Creates a new disk image if  **/
@@ -701,14 +754,11 @@ extern "C" unsigned char adamnet_read_io(int Address)
             // Lees de status uit PCBTable[0] (PCB_CMD_STAT)
             retval = PCBTable[0];
 
-            // DEBUG: Zie of de game de status opvraagt
-            if (retval & 0x01) {
-                //qDebug() << "[DEBUG-IO] Z80 leest STATUS E0: DATA KLAAR (0x01). Retval:" << Qt::hex << retval;
-            }
             if (!m_cpm_enabled)
             {
-            PCBTable[0] &= ~0x01; // Wis Bit 0: Data-In Full
+             PCBTable[0] &= ~0x01; // Wis Bit 0: Data-In Full
             }
         }
         return retval;
 }
+//--------------------------------------------------------------------------------------

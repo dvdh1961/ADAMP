@@ -187,6 +187,10 @@ extern byte io_show_status;
 extern byte KBDStatus, LastKey, DiskID;
 extern word savedBUF, savedLEN;
 
+extern int g_prn_line_counter;
+extern bool g_prn_in_wp ;
+
+
 #define DELAY_IO 10
 
 // Gebruik extern voor de tabellen om 'conflicting declaration' te voorkomen
@@ -221,6 +225,7 @@ byte GetKBD();
 void UpdateKBD(byte Dev,int V);
 void UpdatePRN(byte Dev,int V);
 void AdamFlushCache(void);
+void AdamFlushCache_CPM(void);
 void ReadPCB(word A);
 void WritePCB(word A,byte V);
 void ResetPCB(void);
@@ -234,6 +239,10 @@ void UpdateDCB_EOS(byte Dev, int V);
 void UpdateDSK_CPM(byte N, byte Dev, int V);
 void UpdateTAP_CPM(byte N, byte Dev, int V);
 void UpdateDCB_CPM(byte Dev, int V);
+
+void UpdateDSK_TDOS(byte N, byte Dev, int V);
+void UpdateTAP_TDOS(byte N, byte Dev, int V);
+void UpdateDCB_TDOS(byte Dev, int V);
 
 unsigned char adamnet_read_io(int Address);
 

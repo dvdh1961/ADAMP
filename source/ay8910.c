@@ -18,6 +18,7 @@
  *
 */
 #include "ay8910.h"
+#include <stdint.h>
 
 ay8910 ay;
 
@@ -515,3 +516,10 @@ void ay8910_init(int clock, int sample_rate)
     ay8910_buildmixertable();
 }
 
+unsigned char* ay8910_get_regs(void) {
+    return ay.Regs;
+}
+
+void ay8910_set_reg(int reg, uint8_t val) {
+    _AYWriteReg(reg, val); // Gebruik je interne functie voor hardware-update
+}

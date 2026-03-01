@@ -186,8 +186,10 @@ void debugBridge_checkIOAccess(int type, uint16_t port, uint8_t value, uint16_t 
 int z80_cycle_count = 0;        /* running total of cycles executed */
 int z80_irq_line = 0;
 
-#define cpu_readop(a) cpu_readmem16(a)
-#define cpu_readop_arg(a) cpu_readmem16(a)
+//#define cpu_readop(a) cpu_readmem16(a)
+//#define cpu_readop_arg(a) cpu_readmem16(a)
+#define cpu_readop(a)      ((unsigned int)z80_wrapper_read((unsigned int)(a)))
+#define cpu_readop_arg(a)  ((unsigned int)z80_wrapper_read((unsigned int)(a)))
 
 //#define cpu_readmem16(a)        cpu_readmap[(a) >> 10][(a) & 0x03FF]
 //#define cpu_readop(a)           cpu_readmap[(a) >> 10][(a) & 0x03FF]
