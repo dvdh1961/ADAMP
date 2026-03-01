@@ -59,7 +59,7 @@ Dear Retro Fans,
 
 A brand-new update has arrived — packed with fixes, refinements & shiny new add-ons!
 
-![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/BG_ADAM_0.8.02.26.png)
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/BG_ADAM_0.8.02.png)
   
   - Even greater compatibility with a wide range of ROMs
 
