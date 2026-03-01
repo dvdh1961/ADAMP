@@ -15,12 +15,14 @@ class QDialogButtonBox;
 // Machine types
 enum MachineType {
     MACHINE_COLECO  = 0,
-    MACHINE_ADAMP   = 1,
     MACHINE_ADAM    = 2
 };
 
 struct HardwareConfig {
     MachineType machine = MACHINE_COLECO;
+
+    bool realhardware = false;
+    bool adamPconnect = false;
 
     int  ntsc = 1;          // 1=NTSC , 0=PAL
     int  palette = 0;
@@ -36,9 +38,9 @@ struct HardwareConfig {
     bool c80Enabled = false;   // 80 Columns
 
     // Controllers
-    bool steeringWheel = false;
-    bool rollerCtrl    = false;
-    bool superAction   = false;
+    bool Joys = false;
+    bool AdamNet    = false;
+    bool Cartridge   = false;
 
     QString biosColeco = "Internal";
     QString biosEOS    = "Internal";
@@ -64,6 +66,9 @@ public:
         const QString& disc3Name
         );
 
+signals:
+    void machineChanged(int machineType);
+
 private slots:
     void onMachineChanged();
     void onOk();
@@ -77,6 +82,7 @@ private:
     void loadFromConfig(const HardwareConfig& c);
     HardwareConfig readFromUi() const;
     void updatePaletteSwatches();
+    void checkRealAdamP();
 
     QGroupBox*   m_groupMachine = nullptr;
     QToolButton* m_btnColeco  = nullptr;
@@ -85,9 +91,9 @@ private:
     QButtonGroup* m_machineGroup = nullptr;
 
     QGroupBox*   m_groupCtrl = nullptr;
-    QToolButton* m_btnSteering = nullptr;
-    QToolButton* m_btnRoller   = nullptr;
-    QToolButton* m_btnSuperAction = nullptr;
+    QToolButton* m_btnJoys = nullptr;
+    QToolButton* m_btnAdamnet   = nullptr;
+    QToolButton* m_btnCartridge = nullptr;
     QButtonGroup* m_ctrlGroup = nullptr;
 
     QGroupBox*   m_groupAddHw = nullptr;
@@ -113,6 +119,8 @@ private:
     QLabel* m_lblEmuD5 = nullptr; // D5 (Disc 1)
     QLabel* m_lblEmuD6 = nullptr; // D6 (Disc 2)
     QLabel* m_lblEmuD7 = nullptr; // D7 (Disc 3)
+
+    QLabel* m_lblAdamP = nullptr;
 
     QDialogButtonBox* m_btnBox = nullptr;
 

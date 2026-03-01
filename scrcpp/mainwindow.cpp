@@ -98,12 +98,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_debugWin(nullptr),
     m_cartInfoDialog(nullptr),
     m_hardwareWindow(nullptr),
-    m_adamRomMenu(nullptr),
-    m_colecoRomMenu(nullptr),
     m_openAdamRomAction(nullptr),
-    m_ejectAdamRomAction(nullptr),
-    m_openColecoRomAction(nullptr),
-    m_ejectColecoRomAction(nullptr)
+    m_openColecoRomAction(nullptr)
 
 {
     setUpLogWindow();
@@ -113,7 +109,7 @@ MainWindow::MainWindow(QWidget *parent)
     QCoreApplication::setApplicationName("ADAMP_EMU");
 
     // Version
-    appVersion = "0.7.01.26";
+    appVersion = "0.8.02.26";
 
     setWindowTitle(QString("ADAM+ Emulator - v%1").arg(appVersion));
 
@@ -273,12 +269,13 @@ MainWindow::MainWindow(QWidget *parent)
 
     HardwareConfig initialConfig;
     initialConfig.machine = (m_machineType ? MACHINE_ADAM : MACHINE_COLECO);
+    initialConfig.realhardware = m_realhardware;
     initialConfig.palette = m_paletteIndex;
     initialConfig.sgmEnabled = m_sgmEnabled;
     initialConfig.c80Enabled = m_c80Enabled;
-    initialConfig.steeringWheel = m_ctrlSteering;
-    initialConfig.rollerCtrl = m_ctrlRoller;
-    initialConfig.superAction = m_ctrlSuperAction;
+    initialConfig.Joys = m_ctrlJoys;
+    initialConfig.AdamNet = m_ctrlAdamNet;
+    initialConfig.Cartridge = m_ctrlCartridge;
 
     m_hardwareWindow = new HardwareWindow(initialConfig, this);
 

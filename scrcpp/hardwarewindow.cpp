@@ -104,59 +104,69 @@ void HardwareWindow::buildUi()
     auto *layMac = new QHBoxLayout;
     layMac->addWidget(makeLabeledButton(m_btnColeco,  ":/images/images/machine_coleco.png",  "ColecoVision", true));
     layMac->addWidget(makeLabeledButton(m_btnAdam,    ":/images/images/machine_adam.png",    "ADAM",         true));
-    layMac->addWidget(makeLabeledButton(m_btnAdamP,   ":/images/images/machine_adamp.png",   "ADAMP",        true));
+
+    //layMac->addWidget(makeLabeledButton(m_btnAdamP,   ":/images/images/machine_adamp.png",   "ADAMP",        true));
+    QWidget* adamPWidget =
+        makeLabeledButton(m_btnAdamP,
+                          ":/images/images/machine_adamp.png",
+                          "ADAMP",
+                          true);
+
+    layMac->addWidget(adamPWidget);
+
+    // Zoek de label binnen dat widget en bewaar hem
+    m_lblAdamP = adamPWidget->findChild<QLabel*>();
+    m_btnAdamP->setAutoExclusive(false); // extra zekerheid
     layMac->addStretch(1);
     m_groupMachine->setLayout(layMac);
 
     m_machineGroup = new QButtonGroup(m_groupMachine);
     m_machineGroup->setExclusive(true);
     m_machineGroup->addButton(m_btnColeco, static_cast<int>(MACHINE_COLECO));
-    m_machineGroup->addButton(m_btnAdamP,  static_cast<int>(MACHINE_ADAMP));
     m_machineGroup->addButton(m_btnAdam,   static_cast<int>(MACHINE_ADAM));
-
-    m_btnAdamP->setEnabled(false);
-
 
     connect(m_machineGroup, &QButtonGroup::idClicked,
             this, [this](int){ onMachineChanged(); });
+    connect(m_btnAdamP, &QToolButton::toggled, this, &HardwareWindow::updateAvailability);
+    connect(m_btnAdamP, &QToolButton::clicked, this, &HardwareWindow::updateAvailability);
 
     // === Additional Controller ===
-    m_groupCtrl = new QGroupBox("Additional Controller", this);
-    m_btnSteering    = new QToolButton(m_groupCtrl);
-    m_btnRoller      = new QToolButton(m_groupCtrl);
-    m_btnSuperAction = new QToolButton(m_groupCtrl);
+    m_groupCtrl = new QGroupBox("Real ADAMP hardware", this);
+    m_btnJoys    = new QToolButton(m_groupCtrl);
+    m_btnAdamnet      = new QToolButton(m_groupCtrl);
+    m_btnCartridge = new QToolButton(m_groupCtrl);
 
-    // Steering
-    auto *wrapSteer = makeLabeledButton(m_btnSteering, ":/images/images/ctrl_sterring.png", "Steering Wheel", false);
+    // Real Controllers
+    auto *wrapJoys = makeLabeledButton(m_btnJoys, ":/images/images/real_joys.png", "Controllers", false);
+    // Real Adamnet
+    auto *wrapAdamNet  = makeLabeledButton(m_btnAdamnet, ":/images/images/real_adamnet.png", "AdamNet", false);
+    // Real Cartridge
+    auto *wrapCartridge   = makeLabeledButton(m_btnCartridge, ":/images/images/real_cartridge.png", "Cartridge", false);
 
-    // Roller & SuperAction
-    auto *wrapRoll  = makeLabeledButton(m_btnRoller, ":/images/images/ctrl_roller.png", "Roller Controller", false);
-    auto *wrapAct   = makeLabeledButton(m_btnSuperAction, ":/images/images/ctrl_superaction.png", "Super Action", false);
-
-    m_btnRoller->setAutoExclusive(false);
-    m_btnSuperAction->setAutoExclusive(false);
+    m_btnAdamnet->setAutoExclusive(false);
+    m_btnCartridge->setAutoExclusive(false);
 
     m_ctrlGroup = new QButtonGroup(m_groupCtrl);
-    m_ctrlGroup->addButton(m_btnRoller, 1);
-    m_ctrlGroup->addButton(m_btnSuperAction, 2);
+    m_ctrlGroup->addButton(m_btnAdamnet, 1);
+    m_ctrlGroup->addButton(m_btnCartridge, 2);
     m_ctrlGroup->setExclusive(false);
 
     auto *layCtrl = new QHBoxLayout;
-    layCtrl->addWidget(wrapSteer);
-    layCtrl->addWidget(wrapRoll);
-    layCtrl->addWidget(wrapAct);
+    layCtrl->addWidget(wrapJoys);
+    layCtrl->addWidget(wrapAdamNet);
+    layCtrl->addWidget(wrapCartridge);
     layCtrl->addWidget(makeHSpacer());
     m_groupCtrl->setLayout(layCtrl);
 
-    connect(m_btnSteering, &QToolButton::clicked, this, &HardwareWindow::updateAvailability);
+    connect(m_btnJoys, &QToolButton::clicked, this, &HardwareWindow::updateAvailability);
 
-    connect(m_btnRoller, &QToolButton::toggled, this, [this](bool on){
-        if (on) m_btnSuperAction->setChecked(false); // exclusief als 'on'
+    connect(m_btnAdamnet, &QToolButton::toggled, this, [this](bool on){
+       // if (on) m_btnCartridge->setChecked(false); // exclusief als 'on'
         updateAvailability();
     });
 
-    connect(m_btnSuperAction, &QToolButton::toggled, this, [this](bool on){
-        if (on) m_btnRoller->setChecked(false);      // exclusief als 'on'
+    connect(m_btnCartridge, &QToolButton::toggled, this, [this](bool on){
+        //if (on) m_btnAdamnet->setChecked(false);      // exclusief als 'on'
         updateAvailability();
     });
 
@@ -383,6 +393,8 @@ void HardwareWindow::buildUi()
 
     m_btnSGM->setCheckable(true);
 
+    checkRealAdamP();
+
 }
 
 void HardwareWindow::loadFromConfig(const HardwareConfig& c)
@@ -390,7 +402,9 @@ void HardwareWindow::loadFromConfig(const HardwareConfig& c)
     // Machine
     m_btnColeco ->setChecked(c.machine == MACHINE_COLECO);
     m_btnAdam   ->setChecked(c.machine == MACHINE_ADAM);
-    m_btnAdamP  ->setChecked(c.machine == MACHINE_ADAMP);
+
+    //Realhardware AdamP
+    m_btnAdamP->setChecked(c.realhardware);
 
     // Video
     //m_cboDisplay->setCurrentIndex(qBound(0, c.renderMode, m_cboDisplay->count()-1));
@@ -403,14 +417,11 @@ void HardwareWindow::loadFromConfig(const HardwareConfig& c)
     m_btnSGM->setChecked(HardwareWindow::m_sgmSelectionState);
     m_btn80C->setChecked(c.c80Enabled);
 
-    // Controllers
-    m_btnSteering->setChecked(c.steeringWheel);
-    m_btnRoller->setChecked(c.rollerCtrl);
-    m_btnSuperAction->setChecked(c.superAction);
+    // Real Hardware
+    m_btnJoys->setChecked(c.Joys);
+    m_btnAdamnet->setChecked(c.AdamNet);
+    m_btnCartridge->setChecked(c.Cartridge);
 
-    if (m_btnRoller->isChecked() && m_btnSuperAction->isChecked()) {
-        m_btnSuperAction->setChecked(false);
-    }
     updateAvailability();
 }
 
@@ -420,58 +431,56 @@ HardwareConfig HardwareWindow::readFromUi() const
 
     // Machine
     if      (m_btnAdam->isChecked())   c.machine = MACHINE_ADAM;
-    else if (m_btnAdamP->isChecked())  c.machine = MACHINE_ADAMP;
-    else                               c.machine = MACHINE_COLECO;
+    else                                                         c.machine = MACHINE_COLECO;
+
+    c.realhardware = m_btnAdamP->isChecked();
 
     // Video
-    //c.renderMode = m_cboDisplay->currentIndex();
     c.palette    = m_cboPalette->currentIndex();
 
     // Additional hardware
     c.sgmEnabled  = !m_btnAdam->isChecked() && m_btnSGM->isChecked();
     c.c80Enabled = m_btn80C->isChecked();
 
-    c.steeringWheel = m_btnSteering->isChecked();
-    c.rollerCtrl    = m_btnRoller->isChecked();
-    c.superAction   = m_btnSuperAction->isChecked();
+    // Real hardware
+    c.Joys = m_btnJoys->isChecked();
+    c.AdamNet    = m_btnAdamnet->isChecked();
+    c.Cartridge   = m_btnCartridge->isChecked();
 
     return c;
 }
 
 void HardwareWindow::updateAvailability()
 {
-    if (!m_btnColeco->isChecked() && !m_btnAdamP->isChecked() && !m_btnAdam->isChecked()) {
+    if (!m_btnColeco->isChecked() &&  !m_btnAdam->isChecked()) {
         m_btnColeco->setChecked(true);
     }
 
-    const bool isColeco  = m_btnColeco->isChecked();
-    const bool isAdamP   = m_btnAdamP->isChecked();
     const bool isAdam    = m_btnAdam->isChecked();
 
     if (isAdam) {
 
-        HardwareWindow::m_sgmSelectionState = m_btnSGM->isChecked();
+        m_btnSGM->setChecked(false);
         m_btnSGM->setEnabled(false);
         m_btn80C->setEnabled(true);
 
     } else {
         m_btnSGM->setEnabled(true);
-        m_btnSGM->setChecked(HardwareWindow::m_sgmSelectionState);
         m_btn80C->setEnabled(false);
         m_btn80C->setChecked(HardwareWindow::m_c80SelectionState);
         m_btn80C->setChecked(false);
-        // m_80colEnabled = false;
      }
     m_btnPrinter->setEnabled(true);
 
-    const bool padControllers = isColeco || isAdamP;
-    m_btnSteering->setEnabled(padControllers);
-    m_btnRoller->setEnabled(padControllers);
-    m_btnSuperAction->setEnabled(padControllers);
-    if (!padControllers) {
-        m_btnSteering->setChecked(false);
-        m_btnRoller->setChecked(false);
-        m_btnSuperAction->setChecked(false);
+
+    const bool padHardware =   m_btnAdamP->isChecked();
+    m_btnJoys->setEnabled(padHardware);
+    m_btnAdamnet->setEnabled(padHardware);
+    m_btnCartridge->setEnabled(padHardware);
+    if (!padHardware) {
+        m_btnJoys->setChecked(false);
+        m_btnAdamnet->setChecked(false);
+        m_btnCartridge->setChecked(false);
     }
 
     auto setBorder = [](QToolButton* b){
@@ -483,11 +492,14 @@ void HardwareWindow::updateAvailability()
     };
 
     setBorder(m_btnColeco);
-    setBorder(m_btnAdamP);
     setBorder(m_btnAdam);
-    setBorder(m_btnSteering);
-    setBorder(m_btnRoller);
-    setBorder(m_btnSuperAction);
+
+    setBorder(m_btnAdamP);
+
+    setBorder(m_btnJoys);
+    setBorder(m_btnAdamnet);
+    setBorder(m_btnCartridge);
+
     setBorder(m_btnSGM);
     setBorder(m_btn80C);
     setBorder(m_btnPrinter);
@@ -565,6 +577,16 @@ void HardwareWindow::onMachineChanged()
     if (m_btnSGM->isEnabled()) {
         m_sgmSelectionState = m_btnSGM->isChecked();
     }
+
+    qDebug() << "Machine changed:"
+             << (m_btnAdam->isChecked() ? "ADAM" : "COLECO");
+
+    const int machine = m_btnAdam->isChecked()
+                            ? MACHINE_ADAM
+                            : MACHINE_COLECO;
+
+    emit machineChanged(machine);
+
     updateAvailability();
 }
 
@@ -637,4 +659,22 @@ void HardwareWindow::setLoadedMediaDisplayNames(
     setLabelStatus(m_lblEmuD5, disc1Name, "No disc");
     setLabelStatus(m_lblEmuD6, disc2Name, "No disc");
     setLabelStatus(m_lblEmuD7, disc3Name, "No disc");
+}
+
+void HardwareWindow::checkRealAdamP()
+{
+    HardwareConfig c;
+
+    if (c.adamPconnect)
+    {
+        m_btnAdamP->setEnabled(true);
+        if (m_lblAdamP)
+            m_lblAdamP->setText("ADAMP [connected]");
+    }
+    else
+    {
+      m_btnAdamP->setEnabled(false);
+      if (m_lblAdamP)
+          m_lblAdamP->setText("ADAMP [not connected]");
+    }
 }

@@ -88,6 +88,9 @@ void JoypadWindow::buildUi()
     buttonLayout->addWidget(okButton);
     buttonLayout->addWidget(cancelButton);
 
+    okButton->setCursor(Qt::PointingHandCursor);
+    cancelButton->setCursor(Qt::PointingHandCursor);
+
     connect(okButton, &QPushButton::clicked, this, &JoypadWindow::onAccept);
     connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
 
@@ -99,17 +102,30 @@ void JoypadWindow::buildPlayerPage(PlayerUI& ui, const QString& title)
     ui.page = new QWidget(this);
     auto* vbox = new QVBoxLayout(ui.page);
 
-    auto* topRow = new QHBoxLayout();
-    topRow->addWidget(new QLabel("Controller type:", ui.page));
-    ui.typeCombo = new QComboBox(ui.page);
-    ui.typeCombo->addItems(QStringList{
-        "Coleco standard controller",
-        "Coleco steering wheel",
-        "Coleco roller controller",
-        "Coleco super action controller"
-    });
-    topRow->addWidget(ui.typeCombo, 1);
-    vbox->addLayout(topRow);
+    // Clear (X) icon for the mapping grid
+    const QIcon clearIcon(":/images/images/CAN.png");
+    const QPixmap clearPixmap(":/images/images/CAN.png");
+    if (clearIcon.isNull()) {
+        qWarning() << "JoypadWindow: Could not load CAN.png";
+    }
+    const QString iconButtonStyle =
+        "QPushButton { border: none; background: transparent; }"
+        "QPushButton:pressed { padding-top: "
+        "2px; padding-left: 2px; }";
+    const QSize clearIconSize = clearPixmap.isNull() ? QSize(16, 16) : clearPixmap.size();
+    const QSize clearButtonSize = clearIconSize + QSize(8, 8); // some padding around the icon
+
+    // auto* topRow = new QHBoxLayout();
+    // topRow->addWidget(new QLabel("Controller type:", ui.page));
+    // ui.typeCombo = new QComboBox(ui.page);
+    // ui.typeCombo->addItems(QStringList{
+    //     "Coleco standard controller",
+    //     "Coleco steering wheel",
+    //     "Coleco roller controller",
+    //     "Coleco super action controller"
+    // });
+    // topRow->addWidget(ui.typeCombo, 1);
+    // vbox->addLayout(topRow);
 
     auto* split = new QHBoxLayout();
     vbox->addLayout(split, 1);
@@ -132,6 +148,8 @@ void JoypadWindow::buildPlayerPage(PlayerUI& ui, const QString& title)
 
     auto* rightBox = new QVBoxLayout();
     ui.grid = new QGridLayout();
+    ui.grid->setHorizontalSpacing(0);
+
     rightBox->addLayout(ui.grid);
     split->addLayout(rightBox, 1);
 
@@ -148,8 +166,27 @@ void JoypadWindow::buildPlayerPage(PlayerUI& ui, const QString& title)
     auto makeRow = [&](int row, const QString& label, int colBase){
         auto* name = new QLabel(label + ":", ui.page);
         auto* edit = new QLineEdit(ui.page); edit->setReadOnly(true);
-        auto* cap  = new QPushButton("Capture", ui.page);
-        auto* clr  = new QPushButton("Clear", ui.page);
+        auto* cap  = new QPushButton(ui.page);
+        cap->setIcon(QIcon(":/images/images/OK1.png"));
+        cap->setText("");
+        cap->setToolTip("Capture");
+        cap->setIconSize(clearIconSize);
+        cap->setFixedSize(clearButtonSize);
+        cap->setFlat(true);
+        cap->setStyleSheet(iconButtonStyle);
+        auto* clr  = new QPushButton(ui.page);
+
+        // Replace "Clear" text button with an X icon from resources
+        clr->setIcon(clearIcon);
+        clr->setText("");
+        clr->setToolTip("Clear");
+        clr->setIconSize(clearIconSize);
+        clr->setFixedSize(clearButtonSize);
+        clr->setFlat(true);
+        clr->setStyleSheet(iconButtonStyle);
+
+        cap->setCursor(Qt::PointingHandCursor);
+        clr->setCursor(Qt::PointingHandCursor);
 
         cap->setFocusPolicy(Qt::NoFocus);
         clr->setFocusPolicy(Qt::NoFocus);
@@ -164,6 +201,9 @@ void JoypadWindow::buildPlayerPage(PlayerUI& ui, const QString& title)
         ui.grid->addWidget(edit, row, colBase + 1);
         ui.grid->addWidget(cap,  row, colBase + 2);
         ui.grid->addWidget(clr,  row, colBase + 3);
+
+        cap->setStyleSheet(iconButtonStyle + " QPushButton { margin-top: -6px; }");
+        clr->setStyleSheet(iconButtonStyle + " QPushButton { margin-top: -6px; }");
 
         ui.edits << edit; ui.captureBtns << cap; ui.clearBtns << clr;
         connect(cap, &QPushButton::clicked, this, &JoypadWindow::onCaptureClicked);
@@ -188,7 +228,7 @@ void JoypadWindow::fillFromSettings()
     QSettings s;
     auto clampType = [](int v){ return (v < 0 || v > 3) ? 0 : v; };
 
-    m_p1.typeCombo->setCurrentIndex(clampType(s.value("input/p1/type", 0).toInt()));
+    //m_p1.typeCombo->setCurrentIndex(clampType(s.value("input/p1/type", 0).toInt()));
     for (int i = 0; i <= 17; ++i) {
         int vk = s.value(QString("input/p1/%1").arg(i), 0).toInt();
         m_p1.keys[i] = vk;
@@ -197,7 +237,7 @@ void JoypadWindow::fillFromSettings()
         m_p1.clearBtns[i]->setProperty("player", 0);
     }
 
-    m_p2.typeCombo->setCurrentIndex(clampType(s.value("input/p2/type", 0).toInt()));
+    //m_p2.typeCombo->setCurrentIndex(clampType(s.value("input/p2/type", 0).toInt()));
     for (int i = 0; i <= 17; ++i) {
         int vk = s.value(QString("input/p2/%1").arg(i), 0).toInt();
         m_p2.keys[i] = vk;
@@ -211,7 +251,9 @@ void JoypadWindow::pushToSettings()
 {
     QSettings s;
     auto save=[&](PlayerUI& ui,const QString& base){
-        s.setValue(base+"/type",ui.typeCombo->currentIndex());
+        //s.setValue(base+"/type",ui.typeCombo->currentIndex());
+        s.setValue(base+"/type", 0);
+
         for (int i=0;i<ui.edits.size();++i)
             s.setValue(base+QString("/%1").arg(i),ui.keys[i]);
     };

@@ -268,33 +268,63 @@ void MainWindow::onFpsUpdated(int fps)
 
 void MainWindow::setupUI()
 {
+    // 1. Laad het lettertype uit je resources of lokale map
+    // Pas het pad aan naar waar jouw .ttf staat (bijv. ":/fonts/mijnfont.ttf")
+    int fontId = QFontDatabase::addApplicationFont(":/fonts/fonts/BeautifulPoliceOfficer-rvv8x.ttf");
+
+    QString family;
+    if (fontId != -1) {
+        family = QFontDatabase::applicationFontFamilies(fontId).at(0);
+        qDebug() << "[UI] Custom font geladen:" << family;
+    } else {
+        qDebug() << "[UI] Kon custom font niet laden, fallback naar Roboto";
+        family = "Roboto";
+    }
+
+    QFont menuFont(family, 16);
+    menuFont.setBold(false);
+
+    // Pas het toe op de menubalk zelf
+    menuBar()->setFont(menuFont);
+
+    // De variabele 'family' bevat de naam van je geladen font
+    QString style = QString(
+                        "QMenuBar { "
+                        "  font-family: '%1';"
+                        "  font-size: 16pt;"
+                        "}"
+                        "QMenu { "
+                        "  font-family: '%1';"
+                        "  font-size: 16pt;"
+                        "  background-color: #2e2e2e;" // Optioneel: geef de dropdown een kleur
+                        "  color: white;"
+                        "  border: 1px solid black;"
+                        "}"
+                        "QMenu::item:selected { " // Kleur wanneer je met de muis over een optie gaat
+                        "  background-color: #4a90e2;"
+                        "}"
+                        ).arg(family);
+
+    this->setStyleSheet(style);
+
+    // Optioneel: Pas het toe op alle menu's die worden toegevoegd
+    // (In Qt erven acties en submenu's vaak het font van de parent)
+
     QMenu* fileMenu = menuBar()->addMenu(tr("File"));
 
-    // Coleco cartridge
-    m_colecoRomMenu = new QMenu(tr("COLECO Cartridge"), this);
-    m_openColecoRomAction = new QAction(tr("Load"), this);
-    connect(m_openColecoRomAction, &QAction::triggered, this, &MainWindow::onOpenColecoRom);
-    m_colecoRomMenu->addAction(m_openColecoRomAction);
+    fileMenu->setFont(menuFont); // Specifiek voor het dropdown gedeelte
 
-    m_ejectColecoRomAction = new QAction(tr("Eject"), this);
-    connect(m_ejectColecoRomAction, &QAction::triggered, this, &MainWindow::onEjectColecoRom);
-    m_colecoRomMenu->addAction(m_ejectColecoRomAction);
-    fileMenu->addMenu(m_colecoRomMenu);
+    // Coleco cartridge
+    m_openColecoRomAction = new QAction(tr("Coleco Cartridge"), this);
+    connect(m_openColecoRomAction, &QAction::triggered, this, &MainWindow::onOpenColecoRom);
+    fileMenu->addAction(m_openColecoRomAction);
 
     fileMenu->addSeparator();
 
     // Adam cartridge
-    m_adamRomMenu = new QMenu(tr("Adam Cartridge"), this);
-    m_openAdamRomAction = new QAction(tr("Load"), this);
+    m_openAdamRomAction = new QAction(tr("Adam Cartridge"), this);
     connect(m_openAdamRomAction, &QAction::triggered, this, &MainWindow::onOpenAdamRom);
-    m_adamRomMenu->addAction(m_openAdamRomAction);
-
-    m_ejectAdamRomAction = new QAction(tr("Eject"), this);
-    connect(m_ejectAdamRomAction, &QAction::triggered, this, &MainWindow::onEjectAdamRom);
-    m_adamRomMenu->addAction(m_ejectAdamRomAction);
-    fileMenu->addMenu(m_adamRomMenu);
-
-    m_adamRomMenu->setEnabled(false);
+    fileMenu->addAction(m_openAdamRomAction);
 
     // Tape Menu's
     m_tapeMenuA = new QMenu(tr("Tape D1"), this);
@@ -928,6 +958,8 @@ void MainWindow::loadSettings()
     m_paletteIndex    = settings.value("video/palette", 0).toInt();
     m_machineType     = settings.value("machine/type", 0).toInt();
 
+    m_realhardware     = settings.value("machine/realhardware", false).toBool();
+
     m_scalingMode     = settings.value("video/scalingMode", 1).toInt();
 
     m_scanlinesMode   = static_cast<ScanlinesMode>(readEnum("video/scanlinesMode", ScanlinesOff));
@@ -944,10 +976,12 @@ void MainWindow::loadSettings()
 
     // --- Controller ---
     m_joystickType    = settings.value("controller/joystickType", 0).toInt();
-    m_ctrlSteering    = settings.value("controller/steering",    false).toBool();
-    m_ctrlRoller      = settings.value("controller/roller",      false).toBool();
-    m_ctrlSuperAction = settings.value("controller/superaction", false).toBool();
     m_usePaddleMode   = settings.value("controller/usePaddleMode", false).toBool();
+
+    // Real hardware
+    m_ctrlJoys    = settings.value("rhard/rJoys",    false).toBool();
+    m_ctrlAdamNet      = settings.value("rhard/rAdamnet",      false).toBool();
+    m_ctrlCartridge = settings.value("rhard/rCartridge", false).toBool();
 
     // --- BIOS ---
     m_colecoBiosPath  = settings.value("bios/coleco", "").toString();
@@ -1002,6 +1036,7 @@ void MainWindow::saveSettings()
 
     // Machine / UI
     put("machine/type",   m_machineType);
+    put("machine/realhardware", m_realhardware);
     put("video/palette",  m_paletteIndex);
     put("adambezelpath",  m_adamBezelPath);
     put("cvbezelpath",    m_cvBezelPath);
@@ -1013,10 +1048,12 @@ void MainWindow::saveSettings()
 
     // Controller
     put("controller/joystickType",   m_joystickType);
-    put("controller/steering",       m_ctrlSteering);
-    put("controller/roller",         m_ctrlRoller);
-    put("controller/superaction",    m_ctrlSuperAction);
     put("controller/usePaddleMode",  m_usePaddleMode);
+
+    // Real Hardware
+    put("rhard/rJoys",       m_ctrlJoys);
+    put("rhard/rAdamnet",         m_ctrlAdamNet);
+    put("rhard/rCartridge",    m_ctrlCartridge);
 
     // Video
     put("video/scalingMode",     m_scalingMode);
@@ -1130,14 +1167,15 @@ void MainWindow::onOpenHardware()
     HardwareConfig cur;
 
     cur.machine = (m_machineType ? MACHINE_ADAM : MACHINE_COLECO);
+    cur.realhardware = m_realhardware;
     cur.palette = m_paletteIndex;
 
     cur.sgmEnabled  = m_sgmEnabled;
     cur.c80Enabled = m_c80Enabled;
 
-    cur.steeringWheel = m_ctrlSteering;
-    cur.rollerCtrl    = m_ctrlRoller;
-    cur.superAction   = m_ctrlSuperAction;
+    cur.Joys = m_ctrlJoys;
+    cur.AdamNet    = m_ctrlAdamNet;
+    cur.Cartridge   = m_ctrlCartridge;
 
     const int prevPalette = m_paletteIndex;
 
@@ -1156,18 +1194,28 @@ void MainWindow::onOpenHardware()
     if (dlg.exec() == QDialog::Accepted) {
         HardwareConfig chosen = dlg.config();
 
+        // Bewaar oude machine voor vergelijking
+        const int oldMachine = cur.machine;
+        const int newMachine = chosen.machine;
+
         m_paletteIndex = chosen.palette;
         coleco_setpalette(m_paletteIndex);
         m_sgmEnabled = chosen.sgmEnabled;
+        m_realhardware = chosen.realhardware;
 
         applyHardwareConfig(chosen);
+
+        // ✅ Als machine veranderde: cold boot zoals power knop (writer meteen zichtbaar)
+        if (oldMachine != newMachine) {
+            onPowerBtnClicked();   // gebruik exact dezelfde slot als je Power button
+            // (Als jouw functie anders heet: roep die aan)
+        }
 
         saveSettings();
     } else {
         m_paletteIndex = prevPalette;
         coleco_setpalette(m_paletteIndex);
     }
-
 }
 
 void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
@@ -1178,7 +1226,7 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
     if (oldMachineType != newMachineType) {
         m_machineType = newMachineType;
 
-        if (m_machineType == 1) { // ADAM
+        if (m_machineType > 0) { // ADAM
             QMetaObject::invokeMethod(
                 m_colecoController, "resetAdam",
                 Qt::QueuedConnection
@@ -1190,6 +1238,8 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
                 );
         }
     }
+
+    m_realhardware = cfg.realhardware;
 
     if (m_paletteIndex != cfg.palette) {
         m_paletteIndex = cfg.palette;
@@ -1214,9 +1264,9 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
             );
     }
 
-    m_ctrlSteering    = cfg.steeringWheel;
-    m_ctrlRoller      = cfg.rollerCtrl;
-    m_ctrlSuperAction = cfg.superAction;
+    m_ctrlJoys    = cfg.Joys;
+    m_ctrlAdamNet      = cfg.AdamNet;
+    m_ctrlCartridge = cfg.Cartridge;
 
     if (m_sysLabel) m_sysLabel->setText(m_machineType ? "ADAM" : "COLECO");
 
@@ -1313,7 +1363,7 @@ void MainWindow::showAboutDialog()
 
     textLabel->setText(QString(
                            "Version %1<br>"  // %1 appVersion
-                           "©2025 DannyVdH<br>"
+                           "©2025-26 DannyVdH<br>"
                            "<a href='https://github.com/dvdh1961/ADAMP'>VDH Productions</a><br><br>"
                            "This software is free to use for personal, educational, and non-profit purposes<br>"
                            "Some software components are subject to licensing agreements held by the rightful owners<br>"
@@ -1337,8 +1387,25 @@ void MainWindow::showAboutDialog()
     textLabel->setOpenExternalLinks(true);
     textLabel->setWordWrap(true);
     textLabel->setAlignment(Qt::AlignCenter);
-    QFont font("Roboto", 10);
-    textLabel->setFont(font);
+
+    // 1. Laad het lettertype uit je resources of lokale map
+    // Pas het pad aan naar waar jouw .ttf staat (bijv. ":/fonts/mijnfont.ttf")
+    int fontId = QFontDatabase::addApplicationFont(":/fonts/fonts/luculent.ttf");
+
+    QString family;
+
+    if (fontId != -1) {
+        family = QFontDatabase::applicationFontFamilies(fontId).at(0);
+        qDebug() << "[UI] Custom font geladen:" << family;
+    } else {
+        qDebug() << "[UI] Kon custom font niet laden, fallback naar Roboto";
+        family = "Roboto";
+    }
+
+    QFont monoFont(family, 10);
+    monoFont.setBold(false);
+
+   textLabel->setFont(monoFont);
     layout->addWidget(textLabel);
     layout->addStretch(1);
 
@@ -1355,6 +1422,7 @@ void MainWindow::showAboutDialog()
     okButton->setFixedSize(okPixmap.size());
     okButton->setText("");
     okButton->setFlat(true);
+    okButton->setCursor(Qt::PointingHandCursor);
     okButton->setStyleSheet(
         "QPushButton { border: none; background: transparent; }"
         "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }"
@@ -2133,8 +2201,8 @@ void MainWindow::updateMediaMenuState()
     };
 
     // ROM menus: Coleco vs ADAM
-    setEnabledIf(m_adamRomMenu,   isAdam);
-    setEnabledIf(m_colecoRomMenu, !isAdam);
+    setActionEnabledIf(m_openAdamRomAction,   isAdam);
+    setActionEnabledIf(m_openColecoRomAction, !isAdam);
 
     // Als geen ADAM: alles media uit en klaar
     if (!isAdam) {
@@ -2642,7 +2710,7 @@ void MainWindow::onResetAdamBtnClicked()
         m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png")); // Standaard icoon
     }
 
-    if (m_resetAdamLocked) return;
+   // if (m_resetAdamLocked) return;
 
     if (m_AdamDMedia_insert || m_AdamTMedia_insert) m_resetAdamLocked = true;
     // 1. HARD RESET uitvoeren (dwingt de ADAM-modus af en reset de CPU/I/O)
@@ -2754,7 +2822,7 @@ void MainWindow::onResetCartBtnClicked()
     }
 
 
-    if (m_resetColecoLocked) return;
+    //if (m_resetColecoLocked) return;
     if (m_ColecoMedia_insert) m_resetColecoLocked = true;
 
     // Voer Soft Reset (Cartridge Reset) uit
@@ -2811,9 +2879,9 @@ void MainWindow::switchToAdamMode()
     newCfg.palette = m_paletteIndex;
     newCfg.sgmEnabled = m_sgmEnabled; // Behoud de SGM-status (deze wordt later uitgeschakeld in applyHardwareConfig)
     newCfg.c80Enabled = m_c80Enabled;
-    newCfg.steeringWheel = m_ctrlSteering;
-    newCfg.rollerCtrl = m_ctrlRoller;
-    newCfg.superAction = m_ctrlSuperAction;
+    newCfg.Joys = m_ctrlJoys;
+    newCfg.AdamNet = m_ctrlAdamNet;
+    newCfg.Cartridge = m_ctrlCartridge;
 
     // 2. Roep de controller aan om de ADAM-modus te starten
     QMetaObject::invokeMethod(
@@ -2850,9 +2918,9 @@ void MainWindow::switchToColecoMode()
     newCfg.palette = m_paletteIndex;
     newCfg.sgmEnabled = m_sgmEnabled; // Behoud de SGM-status
     newCfg.c80Enabled = m_c80Enabled;
-    newCfg.steeringWheel = m_ctrlSteering;
-    newCfg.rollerCtrl = m_ctrlRoller;
-    newCfg.superAction = m_ctrlSuperAction;
+    newCfg.Joys = m_ctrlJoys;
+    newCfg.AdamNet = m_ctrlAdamNet;
+    newCfg.Cartridge = m_ctrlCartridge;
 
     // 2. Roep de controller aan om de COLECO-modus te starten
     QMetaObject::invokeMethod(
@@ -2896,9 +2964,9 @@ void MainWindow::onMachineTypeChanged(int newType)
     currentCfg.palette = m_paletteIndex;
     currentCfg.sgmEnabled = m_sgmEnabled;
     currentCfg.c80Enabled = m_c80Enabled;
-    currentCfg.steeringWheel = m_ctrlSteering;
-    currentCfg.rollerCtrl = m_ctrlRoller;
-    currentCfg.superAction = m_ctrlSuperAction;
+    currentCfg.Joys = m_ctrlJoys;
+    currentCfg.AdamNet = m_ctrlAdamNet;
+    currentCfg.Cartridge = m_ctrlCartridge;
 
     applyHardwareConfig(currentCfg);
 }

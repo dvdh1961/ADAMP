@@ -548,7 +548,7 @@ void InputWidget::drawHud(QPainter &p, const QRect &r)
     p.setFont(font); // Herstel oorspronkelijke font
 
 
-    // --- KEYPAD EN BUTTONS (Bestaande Code) ---
+    // --- KEYPAD EN BUTTONS ---
 
     const int rightH     = right.height();
     const int buttonsH = int(20 * m_scale);
@@ -616,7 +616,6 @@ void InputWidget::drawHud(QPainter &p, const QRect &r)
         }
     }
 
-    //p.restore();
 }
 
 void InputWidget::paintEvent(QPaintEvent *e)
@@ -765,10 +764,10 @@ uint8_t InputWidget::getAdamCodeForQtKey(int qtKey) const
 
 void InputWidget::sendAdamKeyEvent(int code, bool make)
 {
-    qDebug() << "    [INPUTWIDGET] sendAdamKeyEvent START";
-    qDebug() << "      code:" << Qt::hex << code;
-    qDebug() << "      make:" << make;
-    qDebug() << "      m_controller:" << (void*)m_controller;
+    // qDebug() << "    [INPUTWIDGET] sendAdamKeyEvent START";
+    // qDebug() << "      code:" << Qt::hex << code;
+    // qDebug() << "      make:" << make;
+    // qDebug() << "      m_controller:" << (void*)m_controller;
 
     if (!m_controller) {
         qDebug() << "      ERROR: m_controller is NULL!";
@@ -779,8 +778,8 @@ void InputWidget::sendAdamKeyEvent(int code, bool make)
     // make=false => unmarked event (code only)
     const int marked = make ? (0x100 | (code & 0xFF)) : (code & 0xFF);
 
-    qDebug() << "      marked code:" << Qt::hex << marked;
-    qDebug() << "      Calling QMetaObject::invokeMethod on" << (void*)m_controller;
+   // qDebug() << "      marked code:" << Qt::hex << marked;
+   // qDebug() << "      Calling QMetaObject::invokeMethod on" << (void*)m_controller;
 
     QMetaObject::invokeMethod(
         m_controller,
@@ -789,8 +788,8 @@ void InputWidget::sendAdamKeyEvent(int code, bool make)
         Q_ARG(int, marked)
         );
 
-    qDebug() << "      invokeMethod returned";
-    qDebug() << "    [INPUTWIDGET] sendAdamKeyEvent END";
+   // qDebug() << "      invokeMethod returned";
+   // qDebug() << "    [INPUTWIDGET] sendAdamKeyEvent END";
 }
 
 void InputWidget::handleAdamKeyPress(QKeyEvent *e)

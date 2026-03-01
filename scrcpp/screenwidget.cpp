@@ -488,169 +488,103 @@ void ScreenWidget::setSmoothScaling(bool enabled)
     m_smoothScaling = enabled;
     update();
 }
+
 void ScreenWidget::paintEvent(QPaintEvent *event)
 {
-    static uint16_t lastBuf = 0;
-    uint16_t buf = CheckTDOS80BufferAddr();
-    if (buf != lastBuf) {
-        qDebug() << "[TDOS80] paintEvent bufAddr=" << QString("0x%1").arg(buf,4,16,QChar('0'))
-        << " (m_80colEnabled was" << m_80colEnabled << ")";
-        lastBuf = buf;
-    }
-
-    // AUTO: als TDOS 80-buffer bestaat => 80-col mode aan
-    auto80 = (buf != 0);
-
     Q_UNUSED(event);
     QPainter p(this);
+
+    // 1. Haal de frame-copy op veilige wijze op
     QImage frameCopy;
     {
         QMutexLocker lock(&m_mutex);
         frameCopy = m_frame;
     }
 
+    // Achtergrondkleur bepalen
     QColor bgColor = m_isFullScreen ? Qt::transparent : m_backgroundColor;
+    p.fillRect(rect(), bgColor);
 
+    // Controleer of er beelddata is
     if (frameCopy.isNull() || frameCopy.width() == 0 || frameCopy.height() == 0) {
-        p.fillRect(rect(), bgColor);
         return;
     }
 
+    // 2. Pas scaling/filters toe
     QImage imageToDraw;
-    bool useSmoothFinalScale;
+    bool useSmoothFinalScale = (m_scalingMode != ModeSharp);
 
-    switch (m_scalingMode)
-    {
-    case ModeEPX:
+    if (m_scalingMode == ModeEPX) {
         applyEPX(frameCopy);
         imageToDraw = m_epxBuffer;
-        useSmoothFinalScale = true;
-        break;
-
-    case ModeSmooth:
+    } else {
         imageToDraw = frameCopy;
-        useSmoothFinalScale = true;
-        break;
-
-    case ModeSharp:
-    default:
-        imageToDraw = frameCopy;
-        useSmoothFinalScale = false;
-        break;
     }
 
-    if (m_scanlinesMode != ScanlinesOff)
-    {
+    // Scanlines/Filters toepassen indien nodig
+    if (m_scanlinesMode != ScanlinesOff) {
         QImage filteredImage = imageToDraw.copy();
-
-        switch (m_scanlinesMode) {
-        case ScanlinesTV:
-            applyTVScanlinesFilter(filteredImage);
-            break;
-        case ScanlinesLCD:
-            applyLCDizeFilter(filteredImage);
-            break;
-        case ScanlinesRaster:
-            applyRasterizeFilter(filteredImage);
-            break;
-        default:
-            break;
-        }
-
+        if (m_scanlinesMode == ScanlinesTV) applyTVScanlinesFilter(filteredImage);
+        else if (m_scanlinesMode == ScanlinesLCD) applyLCDizeFilter(filteredImage);
+        else if (m_scanlinesMode == ScanlinesRaster) applyRasterizeFilter(filteredImage);
         imageToDraw = filteredImage;
     }
 
-    if (m_colorFilterMode != ColorFilterOff)
-    {
+    if (m_colorFilterMode != ColorFilterOff) {
         QImage filteredImage = imageToDraw.copy();
-
-        // Zorg dat we in 32-bit werken
-        if (filteredImage.format() != QImage::Format_RGB32 &&
-            filteredImage.format() != QImage::Format_ARGB32)
-        {
+        if (filteredImage.format() != QImage::Format_RGB32)
             filteredImage = filteredImage.convertToFormat(QImage::Format_RGB32);
-        }
 
-        switch (m_colorFilterMode) {
-        case ColorFilterMonochrome:
-            applyMonochromeFilter(filteredImage);
-            break;
-        case ColorFilterSepia:
-            applySepiaFilter(filteredImage);
-            break;
-        case ColorFilterGreenCRT:
-            applyGreenCRTFilter(filteredImage);
-            break;
-        case ColorFilterAmberCRT:
-            applyAmberCRTFilter(filteredImage);
-            break;
-        case ColorFilterCMY:
-            applyCMYRasterFilter(filteredImage);
-            break;
-        case ColorFilterRGB:
-            applyRGBRasterFilter(filteredImage);
-            break;
-        default:
-            break;
-        }
-
+        if (m_colorFilterMode == ColorFilterMonochrome) applyMonochromeFilter(filteredImage);
+        else if (m_colorFilterMode == ColorFilterSepia) applySepiaFilter(filteredImage);
+        else if (m_colorFilterMode == ColorFilterGreenCRT) applyGreenCRTFilter(filteredImage);
+        else if (m_colorFilterMode == ColorFilterAmberCRT) applyAmberCRTFilter(filteredImage);
+        else if (m_colorFilterMode == ColorFilterCMY) applyCMYRasterFilter(filteredImage);
+        else if (m_colorFilterMode == ColorFilterRGB) applyRGBRasterFilter(filteredImage);
         imageToDraw = filteredImage;
     }
 
-    p.setRenderHint(QPainter::SmoothPixmapTransform, useSmoothFinalScale);
-    p.setRenderHint(QPainter::Antialiasing, false);
+    // 3. Berekening van de Target Rect met padding voor de border
+    const int b = 4; // Border dikte (voldoende ruimte laten voor bovenkant)
+    QRect availableSpace = rect().adjusted(b, b, -b, -b); // Verklein tekengebied
 
-    QSize widgetSize = this->size();
-
-    // Bepaal de doelhoogte (volledige widget-hoogte)
-    int targetHeight = widgetSize.height();
-    int targetWidth = widgetSize.width();
-
-    // Bereken aspect ratio
-    double sourceAspect = (double)imageToDraw.width() / imageToDraw.height();
-    double targetAspect = (double)targetWidth / targetHeight;
+    double sourceAspect = (double)imageToDraw.width() / (double)imageToDraw.height();
+    double targetAspect = (double)availableSpace.width() / (double)availableSpace.height();
 
     QRect targetRect;
-
     if (targetAspect > sourceAspect) {
-        // Widget is breder dan image -> gebruik volledige hoogte
-        int scaledWidth = (int)(targetHeight * sourceAspect);
-        int offsetX = (targetWidth - scaledWidth) / 2;
-        targetRect = QRect(offsetX, 0, scaledWidth, targetHeight);
+        // Widget is breder dan beeld: gebruik volledige beschikbare hoogte
+        int scaledWidth = qRound(availableSpace.height() * sourceAspect);
+        int offsetX = availableSpace.left() + (availableSpace.width() - scaledWidth) / 2;
+        targetRect = QRect(offsetX, availableSpace.top(), scaledWidth, availableSpace.height());
     } else {
-        // Widget is smaller of exact -> gebruik volledige breedte
-        int scaledHeight = (int)(targetWidth / sourceAspect);
-        int offsetY = (targetHeight - scaledHeight) / 2;
-        targetRect = QRect(0, offsetY, targetWidth, scaledHeight);
+        // Widget is smaller dan beeld: gebruik volledige beschikbare breedte
+        int scaledHeight = qRound(availableSpace.width() / sourceAspect);
+        int offsetY = availableSpace.top() + (availableSpace.height() - scaledHeight) / 2;
+        targetRect = QRect(availableSpace.left(), offsetY, availableSpace.width(), scaledHeight);
     }
 
-    // Fill background
-    p.fillRect(rect(), bgColor);
+    // 4. Renderen van het beeld
+    p.setRenderHint(QPainter::SmoothPixmapTransform, useSmoothFinalScale);
 
-    // === Skip TMS rendering in 80-col mode ===
+    // AUTO: als TDOS 80-buffer bestaat => 80-col mode aan
+    uint16_t buf = CheckTDOS80BufferAddr();
+    auto80 = (buf != 0);
+
     if (m_80colEnabled && auto80) {
-        // 80-column mode: only render text
-        p.fillRect(rect(), bgColor);
         render80ColumnText(p, targetRect);
     } else {
-        // Normal mode: render TMS9928A graphics
         p.drawImage(targetRect, imageToDraw);
     }
-    // ---- Black gamescreen border (4px) ----
-    const int b = 3;
-    QRect r = targetRect;
 
-    // boven
-    p.fillRect(QRect(r.left() - b, r.top() - b, r.width() + b, b), Qt::black);
-    // onder
-    p.fillRect(QRect(r.left() - b, r.bottom() - 2, r.width() + b, b), Qt::black);
-    // links
-    p.fillRect(QRect(r.left() - b, r.top(), b, r.height()), Qt::black);
-    // rechts
-    p.fillRect(QRect(r.right() + 1, r.top(), b, r.height()), Qt::black);
+    // 5. Teken het kader (nu precies BUITEN de targetRect)
+    QColor kaderColor(44, 44, 44);
+    // Teken 4 lijnen rondom de targetRect
+    p.fillRect(targetRect.left() - b, targetRect.top() - b, targetRect.width() + (2 * b), b, kaderColor); // Boven
+    p.fillRect(targetRect.left() - b, targetRect.bottom() + 1, targetRect.width() + (2 * b), b, kaderColor); // Onder
+    p.fillRect(targetRect.left() - b, targetRect.top() - b, b, targetRect.height() + (2 * b), kaderColor); // Links
+    p.fillRect(targetRect.right() + 1, targetRect.top() - b, b, targetRect.height() + (2 * b), kaderColor); // Rechts
 }
-
-
 // ============================================================================
 // 80-COLUMN MODE FUNCTIONS
 // ============================================================================

@@ -365,12 +365,8 @@ private:
     QString m_colecoBiosPath;
     QString m_eosBiosPath;
     QString m_writerBiosPath;
-    QMenu *m_adamRomMenu = nullptr;
-    QMenu *m_colecoRomMenu = nullptr;
     QAction *m_openAdamRomAction = nullptr;
-    QAction *m_ejectAdamRomAction = nullptr;
     QAction *m_openColecoRomAction = nullptr;
-    QAction *m_ejectColecoRomAction = nullptr;
     bool m_isAdamRomLoaded = false;
     bool m_isColecoRomLoaded = false;
     QString m_currentARomName;
@@ -384,12 +380,13 @@ private:
     QAction *m_actWriterBiosSource = nullptr;
 
     int m_paletteIndex = 0;
-    int m_machineType = 0; // 0=Coleco/Phoenix, 1=ADAM
+    int m_machineType = 0; // 0=Coleco, 1=ADAM
+    bool m_realhardware = false;
     bool m_sgmEnabled       = false;
     bool m_c80Enabled      = false;
-    bool m_ctrlSteering     = false;
-    bool m_ctrlRoller       = false;
-    bool m_ctrlSuperAction  = false;
+    bool m_ctrlJoys     = false;
+    bool m_ctrlAdamNet       = false;
+    bool m_ctrlCartridge  = false;
     bool m_resetAdamLocked  = false;
     bool m_AdamTMedia_insert = false;
     bool m_AdamDMedia_insert = false;

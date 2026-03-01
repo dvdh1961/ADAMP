@@ -556,6 +556,12 @@ m_disasmTabWidget->setTabIcon(m_disasmTabWidget->indexOf(disasmTab), QIcon(":/im
             m_memAddrHomeButton->setFixedSize(24, 24);
             memControlsLayout->addWidget(m_memAddrHomeButton);
 
+            // --- Copy memory range button ---
+            m_memCopyRangeButton = new QPushButton(tr("Copy range"), this);
+            m_memCopyRangeButton->setFixedHeight(24);
+            memControlsLayout->addSpacing(12);
+            memControlsLayout->addWidget(m_memCopyRangeButton);
+
             memTabLayout->addLayout(memControlsLayout, 0);
 
             // Voeg de Memory Tab toe aan het Tab Widget
@@ -584,6 +590,7 @@ m_disasmTabWidget->setTabIcon(m_disasmTabWidget->indexOf(disasmTab), QIcon(":/im
         connect(m_memAddrPrevButton, &QPushButton::clicked, this, &DebuggerWindow::onMemAddrPrev);
         connect(m_memAddrNextButton, &QPushButton::clicked, this, &DebuggerWindow::onMemAddrNext);
         connect(m_memAddrHomeButton, &QPushButton::clicked, this, &DebuggerWindow::onMemAddrHome);
+        connect(m_memCopyRangeButton,&QPushButton::clicked,this,&DebuggerWindow::onCopyMemoryRange);
     }
 
     // Koppel het dubbelklik signaal aan de nieuwe slot
@@ -2135,3 +2142,130 @@ void DebuggerWindow::onStepOver()
     }
 }
 
+void DebuggerWindow::onCopyMemoryRange()
+{
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Copy memory range to clipboard"));
+    dlg.setModal(true);
+    dlg.setFixedSize(320, 160);
+
+    QVBoxLayout *vl = new QVBoxLayout(&dlg);
+
+    QGridLayout *gl = new QGridLayout();
+    QLabel *lblStart = new QLabel(tr("Start (hex):"), &dlg);
+    QLabel *lblEnd   = new QLabel(tr("End (hex):"), &dlg);
+
+    QLineEdit *edStart = new QLineEdit(&dlg);
+    QLineEdit *edEnd   = new QLineEdit(&dlg);
+
+    edStart->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    edEnd->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+
+    auto *hexVal = new QRegularExpressionValidator(
+        QRegularExpression("[0-9a-fA-F]{1,4}$"), &dlg);
+
+    edStart->setValidator(hexVal);
+    edEnd->setValidator(hexVal);
+
+    edStart->setMaxLength(4);
+    edEnd->setMaxLength(4);
+
+    edStart->setText(QString("%1").arg(m_memDumpStartAddr & 0xFFFF, 4, 16, QChar('0')).toUpper());
+    edEnd->setText(QString("%1").arg((m_memDumpStartAddr + 0x1FF) & 0xFFFF, 4, 16, QChar('0')).toUpper());
+
+    gl->addWidget(lblStart, 0, 0);
+    gl->addWidget(edStart,  0, 1);
+    gl->addWidget(lblEnd,   1, 0);
+    gl->addWidget(edEnd,    1, 1);
+
+    vl->addLayout(gl);
+
+    // OK / Cancel (gebruik jouw bestaande PNG resource namen)
+    QHBoxLayout *hl = new QHBoxLayout();
+    hl->addStretch();
+
+    QPixmap okPix(":/images/images/OK.png");
+    QPixmap cancelPix(":/images/images/CANCEL.png");
+
+    QPushButton *btnOk     = new QPushButton(&dlg);
+    QPushButton *btnCancel = new QPushButton(&dlg);
+
+    // Icon zetten
+    btnOk->setIcon(QIcon(okPix));
+    btnCancel->setIcon(QIcon(cancelPix));
+
+    // Echte PNG grootte gebruiken
+    if (!okPix.isNull())
+    {
+        btnOk->setIconSize(okPix.size());
+        btnOk->setFixedSize(okPix.size());
+    }
+
+    if (!cancelPix.isNull())
+    {
+        btnCancel->setIconSize(cancelPix.size());
+        btnCancel->setFixedSize(cancelPix.size());
+    }
+
+    // Zelfde stijl als je andere image buttons
+    btnOk->setFlat(true);
+    btnCancel->setFlat(true);
+
+    btnOk->setStyleSheet(
+        "QPushButton { border: none; background: transparent; }"
+        "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }"
+        );
+
+    btnCancel->setStyleSheet(btnOk->styleSheet());
+
+    btnOk->setCursor(Qt::PointingHandCursor);
+    btnCancel->setCursor(Qt::PointingHandCursor);
+
+    hl->addWidget(btnOk);
+    hl->addWidget(btnCancel);
+
+    vl->addLayout(hl);
+
+    connect(btnCancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+
+    connect(btnOk, &QPushButton::clicked, &dlg, [&]() {
+
+        bool ok1=false, ok2=false;
+        uint32_t start = edStart->text().toUInt(&ok1, 16);
+        uint32_t end   = edEnd->text().toUInt(&ok2, 16);
+
+        if (!ok1 || !ok2)
+            return;
+
+        // Forceer 16-bit bereik
+        if (start > 0xFFFF || end > 0xFFFF)
+            return;
+
+        if (end < start)
+            std::swap(start, end);
+
+        QString out;
+        const int bytesPerLine = 16;
+
+        for (uint32_t a = start; a <= end; a += bytesPerLine)
+        {
+            out += QString("%1: ").arg(a & 0xFFFFF, 5, 16, QChar('0')).toUpper();
+
+            for (int i=0; i<bytesPerLine; ++i)
+            {
+                uint32_t cur = a + i;
+                if (cur > end) break;
+
+                uint8_t b = readMemoryByte(cur);
+                out += QString("%1 ").arg(b, 2, 16, QChar('0')).toUpper();
+            }
+
+            out += "\n";
+        }
+
+        QGuiApplication::clipboard()->setText(out);
+        dlg.accept();
+    });
+
+    dlg.exec();
+}

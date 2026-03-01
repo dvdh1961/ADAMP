@@ -22,7 +22,7 @@ public:
 
 public slots:
     void appendPrinterBytes(const QByteArray& bytes);
-
+    void  updatePrinterMode(bool isTypemachine);
     void saveAsPdf();
     void saveAsTxt();
     void chooseFont();
@@ -36,6 +36,7 @@ public slots:
 protected:
     void closeEvent(QCloseEvent* ev) override;
     void resizeEvent(QResizeEvent* ev) override;
+    void showEvent(QShowEvent* event) override;
 
     void contextMenuEvent(QContextMenuEvent* ev) override;
 

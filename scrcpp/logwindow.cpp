@@ -16,6 +16,7 @@
 #include <QKeyEvent>
 #include <QMutexLocker>
 #include <QtGlobal>
+#include <QFontDatabase>
 
 //extern char g_an_ring[8192][96];
 //extern volatile unsigned g_an_w;
@@ -60,8 +61,28 @@ LogWidget::LogWidget(QWidget *parent)
     m_tagColors.insert("UI",      QColor("#00aa00"));
 
     m_table = new QTableWidget(this);
-    QFont tableFont("Roboto", 10);     // of 9, 10, 11… wat jij mooi vindt
-    m_table->setFont(tableFont);
+
+    // 1. Laad het lettertype uit je resources of lokale map
+    // Pas het pad aan naar waar jouw .ttf staat (bijv. ":/fonts/mijnfont.ttf")
+    int fontId = QFontDatabase::addApplicationFont(":/fonts/fonts/luculent.ttf");
+
+    QString family;
+    if (fontId != -1) {
+        family = QFontDatabase::applicationFontFamilies(fontId).at(0);
+        qDebug() << "[UI] Custom font geladen:" << family;
+    } else {
+        qDebug() << "[UI] Kon custom font niet laden, fallback naar Roboto";
+        family = "Roboto";
+    }
+
+    QFont menuFont(family, 10);
+    menuFont.setBold(false);
+
+    // Pas het toe op de menubalk zelf
+    m_table->setFont(menuFont);
+
+    //QFont tableFont("Roboto", 10);     // of 9, 10, 11… wat jij mooi vindt
+   // m_table->setFont(tableFont);
     m_table->setColumnCount(1);
     m_table->horizontalHeader()->setVisible(false);
     m_table->verticalHeader()->setVisible(false);

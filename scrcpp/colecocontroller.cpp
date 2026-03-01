@@ -1,4 +1,5 @@
 #include "colecocontroller.h"
+#include "printwindow.h"
 #include <QThread>
 #include <QDebug>
 #include <QFileInfo>
@@ -514,7 +515,6 @@ void ColecoController::AdamCartridge(const QString &romPath)
 
     // Schakel Adam ROMs uit en zet Coleco-modus aan (dit maakt de bank vrij)
     //setMachineType(Machine_Coleco);
-
     // Laad de cartridge data
 
     BYTE retload = coleco_loadcart(path.data());
@@ -537,11 +537,16 @@ void ColecoController::AdamCartridge(const QString &romPath)
         m_currentColecoCartPath.clear();
     }
 
+    g_adamCartridgeMode = true;
+    coleco_reset_and_restart_bios();   // of coleco_reset()
+    resumeEmulation();
+
     emit cartridgeStatusChanged(m_currentColecoCartPath, m_currentAdamCartPath);
 }
 
 void ColecoController::ejectAdamCartridge()
 {
+   g_adamCartridgeMode = false;
     if (!m_currentAdamCartPath.isEmpty()) {
         m_currentAdamCartPath.clear();
         emit cartridgeStatusChanged(m_currentColecoCartPath, m_currentAdamCartPath);
@@ -600,11 +605,28 @@ void ColecoController::resethMachine() // HARD
 
     // Allow next reset press
     AlreadyReset = false;
+
+    // Reset smartwriter  printer
+    g_prn_line_counter = 0;
+    g_prn_in_wp = false;
+    PrintWindow* w = PrintWindow::instance();
+    if (w) {
+        QMetaObject::invokeMethod(w, "updatePrinterMode", Qt::QueuedConnection, Q_ARG(bool, g_prn_in_wp));
+    }
+
 }
 
 void ColecoController::powerOffMachine()
 {
     qDebug() << "[CTRL] power off Machine()";
+
+    // Reset smartwriter  printer
+    g_prn_line_counter = 0;
+    g_prn_in_wp = false;
+    PrintWindow* w = PrintWindow::instance();
+    if (w) {
+        QMetaObject::invokeMethod(w, "updatePrinterMode", Qt::QueuedConnection, Q_ARG(bool, g_prn_in_wp));
+    }
 
     // Stop eventueel lopende CP/M deferred mount
     m_deferredMountFramesRemaining = 0;
@@ -846,21 +868,33 @@ void ColecoController::loadState(const QString& filePath)
         return;
     }
 
-    QByteArray cPath = QFile::encodeName(filePath);
-    qDebug() << "[CTRL] loadState <-" << filePath;
+    // if (m_currentColecoCartPath.isEmpty() && m_currentAdamCartPath.isEmpty()) {
+    //     qWarning() << "[CTRL] loadState ABORTED: No cartridge loaded. Please load a game first.";
+    //     return;
+    // }
 
-    BYTE ok = coleco_loadstate(cPath.data());
-    if (!ok) {
-        qWarning() << "[CTRL] loadState FAILED for" << filePath;
-        return;
+    try {
+        QByteArray cPath = QFile::encodeName(filePath);
+
+        // Voer de core-functie uit
+        BYTE ok = coleco_loadstate(cPath.data());
+
+        if (!ok) {
+            throw std::runtime_error("C-core kon de state niet verwerken (mismatch?)");
+        }
+
+        // Hersynchroniseer hardware na succesvolle load
+//        PsgBridge::init(m_Clock, m_SampleRate);
+ //       PsgBridge::reset(m_Clock, m_SampleRate);
+  //      ay8910_init(m_Clock, m_SampleRate);
+
+        qDebug() << "[CTRL] LoadState succesvol uitgevoerd.";
     }
-
-    // After loadstate sync audio/PSG again
-    PsgBridge::init(m_Clock, m_SampleRate);
-    PsgBridge::reset(m_Clock, m_SampleRate);
-    ay8910_init(m_Clock, m_SampleRate);
-
-    qDebug() << "[CTRL] loadState OK";
+    catch (const std::exception& e) {
+        qCritical() << "[CTRL] CRASH VOORKOMEN in loadState:" << e.what();
+        // Zorg dat de emulator niet in een corrupte staat blijft hangen
+        coleco_reset();
+    }
 }
 
 void ColecoController::resetAdam()

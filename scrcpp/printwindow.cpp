@@ -1,4 +1,5 @@
 #include "printwindow.h"
+#include "adamnet.h"
 
 #include <QTableWidget>
 #include <QHeaderView>
@@ -136,7 +137,7 @@ PrintWindow::PrintWindow(QWidget* parent)
 {
     setWindowTitle("ADAM Printer Output");
     setFixedWidth(550);
-    setFixedHeight(700);
+    setMinimumHeight(700);
 
     // ===== statusbar =====
     m_status   = new QStatusBar(this);
@@ -222,7 +223,7 @@ PrintWindow::PrintWindow(QWidget* parent)
         );
 
     {
-        QPixmap logo(":/images/images/Adam_PrinterBG.png");
+        QPixmap logo(":/images/images/Adam_PrinterBG_TM");
         if (!logo.isNull())
             m_bitmapLabel->setPixmap(logo);
     }
@@ -289,6 +290,32 @@ void PrintWindow::resizeEvent(QResizeEvent* ev)
         m_bitmapLabel->setPixmap(px.scaled(m_bitmapLabel->size(),
                                            Qt::KeepAspectRatio,
                                            Qt::SmoothTransformation));
+    }
+}
+
+void PrintWindow::showEvent(QShowEvent* event) {
+    QMainWindow::showEvent(event);
+
+    // Lees direct de status uit adamnet
+    // Zet de juiste afbeelding
+    updatePrinterMode(g_prn_in_wp);
+}
+
+void PrintWindow::updatePrinterMode(bool isTypemachine)
+{
+    if (!m_bitmapLabel) return;
+
+    QString res = isTypemachine ? ":/images/images/Adam_PrinterBG_WP.png"
+                                : ":/images/images/Adam_PrinterBG_TM.png";
+
+    QPixmap px(res);
+    if (!px.isNull()) {
+        m_bitmapLabel->setPixmap(px.scaled(m_bitmapLabel->size(),
+                                           Qt::KeepAspectRatio,
+                                           Qt::SmoothTransformation));
+        m_bitmapLabel->update(); // Dwing de UI om opnieuw te tekenen
+    } else {
+        qDebug() << "[PRN UI] Fout: Kon afbeelding niet laden:" << res;
     }
 }
 
@@ -433,6 +460,8 @@ void PrintWindow::appendPrinterBytes(const QByteArray& bytes)
         if (raw_c == 0x8D) continue; // hardware wrap negeren
 
         unsigned char b = raw_c & 0x7F;
+
+        qDebug() << "[PRN CHAR]:" << b << "[" << (char)b << "]" ;
 
         if (b == 0x0D || b == 0x0A) {
             int len = m_currentLine.length();

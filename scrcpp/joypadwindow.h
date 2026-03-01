@@ -33,7 +33,7 @@ private slots:
 private:
     struct PlayerUI {
         QWidget* page = nullptr;
-        QComboBox* typeCombo = nullptr;
+        //QComboBox* typeCombo = nullptr;
         QGridLayout* grid = nullptr;
         QVector<QLineEdit*> edits;
         QVector<QPushButton*> captureBtns;

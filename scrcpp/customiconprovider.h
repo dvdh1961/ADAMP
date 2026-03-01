@@ -15,6 +15,7 @@ private:
     QIcon m_romIcon;
     QIcon m_ddpIcon;
     QIcon m_dskIcon;
+    QIcon m_parentIcon;
 };
 
 #endif

@@ -141,6 +141,7 @@ private:
     QPushButton  *m_symSaveButton = nullptr;
 
     QPushButton  *m_symEnableButton = nullptr;
+    QPushButton *m_memCopyRangeButton = nullptr;
 
     ColecoController *m_controller = nullptr;
 
@@ -156,6 +157,7 @@ private:
     void gotoAddress();
     void fillDisassemblyAround(uint16_t addr);
     void setProgramState(ProgramState state);
+    void onCopyMemoryRange();
 
     uint8_t readMemoryByte(uint32_t address);
     void writeMemoryByte(uint32_t address, uint8_t value);

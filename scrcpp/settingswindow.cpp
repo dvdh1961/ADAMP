@@ -4,56 +4,42 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QFileDialog>
-#include <QDialogButtonBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QPixmap>
 #include <QDebug>
+#include <QSettings>
+#include <QCoreApplication>
+#include <QDir>
 
 namespace {
 
-constexpr int PATH_DISPLAY_MAX_CHARS = 30;  // <-- hier bepaal je zelf de zichtbare lengte
-
-QString elideLeft(const QString &text, int maxLen)
-{
-    if (maxLen <= 0)
-        return QString();
-
-    if (text.length() <= maxLen)
-        return text;
-
-    if (maxLen <= 3)
-        return QString(maxLen, '.'); // "..." of ".."
-
-    // Hou de laatste (maxLen - 3) karakters en zet "..." ervoor
-    return "..." + text.right(maxLen - 3);
-}
+constexpr int PATH_DISPLAY_MAX_CHARS = 45;
 
 void setPathText(QLineEdit *edit, const QString &fullPath)
 {
-    if (!edit)
-        return;
+    if (!edit) return;
 
     // Volledige path bewaren in property + tooltip
     edit->setProperty("fullPath", fullPath);
     edit->setToolTip(fullPath);
 
-    // Enkel getrimde versie tonen
-    edit->setText(elideLeft(fullPath, PATH_DISPLAY_MAX_CHARS));
+    if (fullPath.isEmpty()) {
+        edit->setText("");
+    } else if (fullPath.length() <= PATH_DISPLAY_MAX_CHARS) {
+        edit->setText(fullPath);
+    } else {
+        // Gebruik elide aan de linkerkant voor paden
+        edit->setText("..." + fullPath.right(PATH_DISPLAY_MAX_CHARS - 3));
+    }
 }
 
 QString pathFromEdit(const QLineEdit *edit)
 {
-    if (!edit)
-        return QString();
-
+    if (!edit) return QString();
     QVariant v = edit->property("fullPath");
-    if (v.isValid())
-        return v.toString();
-
-    // fallback: als property niet gezet is
-    return edit->text();
+    return v.isValid() ? v.toString() : edit->text();
 }
 
 } // namespace
@@ -63,175 +49,134 @@ SettingsWindow::SettingsWindow(QWidget *parent)
 {
     setWindowTitle(tr("Settings"));
     setWindowFlags(windowFlags() & ~Qt::WindowCloseButtonHint);
-    setMinimumWidth(600);
+    setFixedWidth(750);
+    setFixedHeight(500);
 
-    //QFont Font1("Roboto", 8);
-    //QFont Font2("Roboto", 10);
     QGridLayout *pathsLayout = new QGridLayout;
+    pathsLayout->setSpacing(2);
+    pathsLayout->setContentsMargins(15, 1, 15, 1);
 
-    // --- Rij 1: ROM Path ---
-    QLabel *romLabel = new QLabel(tr("ROM Path:"));
-    m_romPathEdit = new QLineEdit;
-    m_romPathBtn = new QPushButton(tr("Browse..."));
-    pathsLayout->addWidget(romLabel, 0, 0);
-    pathsLayout->addWidget(m_romPathEdit, 0, 1);
-    pathsLayout->addWidget(m_romPathBtn, 0, 2);
+    pathsLayout->setColumnStretch(1, 0);
 
-    // --- Rij 2: Disk Path ---
-    QLabel *diskLabel = new QLabel(tr("Disk Path:"));
-    m_diskPathEdit = new QLineEdit;
-    m_diskPathBtn = new QPushButton(tr("Browse..."));
-    pathsLayout->addWidget(diskLabel, 1, 0);
-    pathsLayout->addWidget(m_diskPathEdit, 1, 1);
-    pathsLayout->addWidget(m_diskPathBtn, 1, 2);
+    // --- AANGEPASTE STYLESHEET: Icoon enkele pixels omhoog ---
+    const QString iconButtonStyle =
+        "QPushButton { "
+        "  border: none; "
+        "  background: transparent; "
+        "  padding-bottom: 4px; " // Dit duwt de icon naar boven
+        "  margin-top: -6px; "    // Haalt de hele knop iets omhoog
+        "}"
+        "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }";
 
-    // --- Rij 3: Tape Path ---
-    QLabel *tapeLabel = new QLabel(tr("Tape Path:"));
-    m_tapePathEdit = new QLineEdit;
-    m_tapePathBtn = new QPushButton(tr("Browse..."));
-    pathsLayout->addWidget(tapeLabel, 2, 0);
-    pathsLayout->addWidget(m_tapePathEdit, 2, 1);
-    pathsLayout->addWidget(m_tapePathBtn, 2, 2);
+    // --- STIJL 2: Voor de footer knoppen (OK, CANCEL) - Neutraal ---
+    const QString footerButtonStyle =
+        "QPushButton { border: none; background: transparent; }"
+        "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }";
 
-    // --- Rij 4: State Path ---
-    QLabel *stateLabel = new QLabel(tr("State Path:"));
-    m_statePathEdit = new QLineEdit;
-    m_statePathBtn = new QPushButton(tr("Browse..."));
-    pathsLayout->addWidget(stateLabel, 3, 0);
-    pathsLayout->addWidget(m_statePathEdit, 3, 1);
-    pathsLayout->addWidget(m_statePathBtn, 3, 2);
+    // Grotere iconen zoals gevraagd
+    const QSize iconSize(60, 32);
+    const QSize btnSize = iconSize + QSize(10, 10);
 
-    // --- Rij 5: Breakpoint Path (NIEUW) ---
-    QLabel *bpLabel = new QLabel(tr("Breakpoints Path:"));
-    m_breakpointPathEdit = new QLineEdit;
-    m_breakpointPathBtn = new QPushButton(tr("Browse..."));
-    pathsLayout->addWidget(bpLabel, 4, 0);
-    pathsLayout->addWidget(m_breakpointPathEdit, 4, 1);
-    pathsLayout->addWidget(m_breakpointPathBtn, 4, 2);
+    // Helper om een knop consistent te initialiseren
+    auto setupBtn = [&](QPushButton* &btn, const QString &iconPath, const QString &tooltip) {
+        btn = new QPushButton;
+        btn->setIcon(QIcon(iconPath));
+        btn->setFixedSize(btnSize);
+        btn->setIconSize(iconSize);
+        btn->setFlat(true);
+        btn->setStyleSheet(iconButtonStyle);
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setToolTip(tooltip);
+    };
 
-    // --- Rij 6: Screenshot Path (NIEUW) ---
-    QLabel *scLabel = new QLabel(tr("Screenshot Path:"));
-    m_screenshotPathEdit = new QLineEdit;
-    m_screenshotPathBtn = new QPushButton(tr("Browse..."));
-    pathsLayout->addWidget(scLabel, 5, 0);
-    pathsLayout->addWidget(m_screenshotPathEdit, 5, 1);
-    pathsLayout->addWidget(m_screenshotPathBtn, 5, 2);
+    // Helper voor de eerste 3 kolommen (Label, Edit, SET)
+    auto addBaseRow = [&](int row, const QString &label, QLineEdit* &edit, QPushButton* &sBtn) {
+        pathsLayout->addWidget(new QLabel(label), row, 0);
+        edit = new QLineEdit;
+        edit->setReadOnly(true);
+        edit->setFixedWidth(350);
+        pathsLayout->addWidget(edit, row, 1);
+        setupBtn(sBtn, ":/images/images/BROWSE.png", tr("Browse Directory"));
+        pathsLayout->addWidget(sBtn, row, 2);
+    };
 
-    // --- Rij 7: Symbols Path (NIEUW) ---
-    QLabel *symLabel = new QLabel(tr("Symbols Path:"));
-    m_symbolPathEdit = new QLineEdit;
-    m_symbolPathBtn = new QPushButton(tr("Browse..."));
-    pathsLayout->addWidget(symLabel, 6, 0);
-    pathsLayout->addWidget(m_symbolPathEdit, 6, 1);
-    pathsLayout->addWidget(m_symbolPathBtn, 6, 2);
+    // --- Rij-types definiëren ---
 
-    // --- Rij 8: ADAM Bezel Path (NIEUW) ---
-    QLabel *adamBezelLabel = new QLabel(tr("ADAM backImage:"));
-    m_adamBezelPathEdit = new QLineEdit;
-    m_adamBezelPathBtn = new QPushButton(tr("Browse..."));
-    pathsLayout->addWidget(adamBezelLabel, 7, 0);
-    pathsLayout->addWidget(m_adamBezelPathEdit, 7, 1);
-    pathsLayout->addWidget(m_adamBezelPathBtn, 7, 2);
+    // Type 1: Rijen 0-6 (Geen actieknop in kolom 4)
+    auto addRowNoAction = [&](int row, const QString &label, QLineEdit* &edit, QPushButton* &sBtn) {
+        addBaseRow(row, label, edit, sBtn);
+    };
 
-    // --- Rij 9: Coleco Bezel Path (NIEUW) ---
-    QLabel *cvBezelLabel = new QLabel(tr("Coleco backImage:"));
-    m_cvBezelPathEdit = new QLineEdit;
-    m_cvBezelPathBtn = new QPushButton(tr("Browse..."));
-    pathsLayout->addWidget(cvBezelLabel, 8, 0);
-    pathsLayout->addWidget(m_cvBezelPathEdit, 8, 1);
-    pathsLayout->addWidget(m_cvBezelPathBtn, 8, 2);
+    // Type 2: Rijen 7-8 (LOAD knop in kolom 4)
+    auto addRowWithLoad = [&](int row, const QString &label, QLineEdit* &edit, QPushButton* &sBtn, QPushButton* &lBtn) {
+        addBaseRow(row, label, edit, sBtn);
+        setupBtn(lBtn, ":/images/images/LOAD.png", tr("Load Image File"));
+        pathsLayout->addWidget(lBtn, row, 3);
+    };
 
-    // --- Rij 8b: load ADAM Bezel Path (NIEUW) ---
-    m_adamBezelLoadBtn = new QPushButton(tr("Load..."));
-    pathsLayout->addWidget(m_adamBezelLoadBtn, 7, 3);
+    // Type 3: Rijen 9-11 (CLR knop in kolom 4)
+    auto addRowWithClr = [&](int row, const QString &label, QLineEdit* &edit, QPushButton* &sBtn, QPushButton* &cBtn) {
+        addBaseRow(row, label, edit, sBtn);
+        setupBtn(cBtn, ":/images/images/DEFAULT.png", tr("Reset to Default"));
+        pathsLayout->addWidget(cBtn, row, 3);
+    };
 
-    // --- Rij 9b: load Coleco Bezel Path (NIEUW) ---
-    m_cvBezelLoadBtn = new QPushButton(tr("Load..."));
-    pathsLayout->addWidget(m_cvBezelLoadBtn, 8, 3);
+    // --- Het Grid opbouwen ---
+    addRowNoAction(0, tr("ROM Path:"),         m_romPathEdit,        m_romPathBtn);
+    addRowNoAction(1, tr("Disk Path:"),        m_diskPathEdit,       m_diskPathBtn);
+    addRowNoAction(2, tr("Tape Path:"),        m_tapePathEdit,       m_tapePathBtn);
+    addRowNoAction(3, tr("State Path:"),       m_statePathEdit,      m_statePathBtn);
+    addRowNoAction(4, tr("Breakpoints Path:"), m_breakpointPathEdit, m_breakpointPathBtn);
+    addRowNoAction(5, tr("Screenshot Path:"),  m_screenshotPathEdit, m_screenshotPathBtn);
+    addRowNoAction(6, tr("Symbols Path:"),     m_symbolPathEdit,     m_symbolPathBtn);
 
-    // *** Rij 10: Coleco BIOS Path ***
-    QLabel *colecoBiosLabel = new QLabel(tr("Coleco BIOS (coleco.rom):"));
-    m_colecoBiosPathEdit = new QLineEdit;
-    m_colecoBiosPathBtn = new QPushButton(tr("Browse..."));
-    m_colecoBiosDefaultBtn = new QPushButton(tr("Default"));
-    pathsLayout->addWidget(colecoBiosLabel, 9, 0);
-    pathsLayout->addWidget(m_colecoBiosPathEdit, 9, 1);
-    pathsLayout->addWidget(m_colecoBiosPathBtn, 9, 2);
-    pathsLayout->addWidget(m_colecoBiosDefaultBtn, 9, 3);
+    // Bezel paden (SET voor dir, LOAD voor file)
+    addRowWithLoad(7, tr("ADAM backImage:"),   m_adamBezelPathEdit,  m_adamBezelPathBtn,  m_adamBezelLoadBtn);
+    addRowWithLoad(8, tr("Coleco backImage:"), m_cvBezelPathEdit,    m_cvBezelPathBtn,    m_cvBezelLoadBtn);
 
-    // *** Rij 11: ADAM EOS Path ***
-    QLabel *eosBiosLabel = new QLabel(tr("ADAM EOS (eos.rom):"));
-    m_eosBiosPathEdit = new QLineEdit;
-    m_eosBiosPathBtn = new QPushButton(tr("Browse..."));
-    m_eosBiosDefaultBtn = new QPushButton(tr("Default"));
-    pathsLayout->addWidget(eosBiosLabel, 10, 0);
-    pathsLayout->addWidget(m_eosBiosPathEdit, 10, 1);
-    pathsLayout->addWidget(m_eosBiosPathBtn, 10, 2);
-    pathsLayout->addWidget(m_eosBiosDefaultBtn, 10, 3);
+    // BIOS paden (SET voor file, CLR voor reset)
+    addRowWithClr(9,  tr("Coleco BIOS (coleco.rom)):"),      m_colecoBiosPathEdit, m_colecoBiosPathBtn, m_colecoBiosDefaultBtn);
+    addRowWithClr(10, tr("ADAM EOS (eos.rom):"),         m_eosBiosPathEdit,    m_eosBiosPathBtn,    m_eosBiosDefaultBtn);
+    addRowWithClr(11, tr("ADAM Writer (writer.rom):"),      m_writerBiosPathEdit, m_writerBiosPathBtn, m_writerBiosDefaultBtn);
 
-    // *** Rij 12: ADAM Writer Path ***
-    QLabel *writerBiosLabel = new QLabel(tr("ADAM Writer (writer.rom):"));
-    m_writerBiosPathEdit = new QLineEdit;
-    m_writerBiosPathBtn = new QPushButton(tr("Browse..."));
-    m_writerBiosDefaultBtn = new QPushButton(tr("Default"));
-    pathsLayout->addWidget(writerBiosLabel, 11, 0);
-    pathsLayout->addWidget(m_writerBiosPathEdit, 11, 1);
-    pathsLayout->addWidget(m_writerBiosPathBtn, 11, 2);
-    pathsLayout->addWidget(m_writerBiosDefaultBtn, 11, 3);
+    // Footer knoppen
+    m_resetAllPathsBtn = new QPushButton(tr("Reset All Paths"));
+    m_resetAllMemoryPathsBtn = new QPushButton(tr("Reset All Sub Paths"));
 
-    m_resetAllPathsBtn = new QPushButton(this);
-    m_resetAllPathsBtn->setText(tr("Reset All Paths to Default"));
-    // --- Knoppen ---
-    m_okButton = new QPushButton(this);
-    m_cancelButton = new QPushButton(this);
+    m_resetAllPathsBtn->setCursor(Qt::PointingHandCursor);
+    m_resetAllMemoryPathsBtn->setCursor(Qt::PointingHandCursor);
 
-    QIcon okIcon(":/images/images/OK.png");
-    QIcon cancelIcon(":/images/images/CANCEL.png");
-    QPixmap okPixmap(":/images/images/OK.png");
-    QPixmap cancelPixmap(":/images/images/CANCEL.png");
+    m_okButton = new QPushButton;
+    m_cancelButton = new QPushButton;
 
-    if (okIcon.isNull()) { qWarning() << "SettingsWindow: Kon OK.png niet laden."; }
-    if (cancelIcon.isNull()) { qWarning() << "SettingsWindow: Kon CANCEL.png niet laden."; }
-
-    QSize okSize = okPixmap.size();
-    QSize cancelSize = cancelPixmap.size();
-
-    m_okButton->setIcon(okIcon);
-    m_okButton->setIconSize(okSize);
-    m_okButton->setFixedSize(okSize);
-    m_okButton->setText("");
+    QPixmap okPix(":/images/images/OK.png");
+    m_okButton->setIcon(QIcon(okPix));
+    m_okButton->setFixedSize(okPix.size());
+    m_okButton->setIconSize(okPix.size());
     m_okButton->setFlat(true);
-    m_okButton->setStyleSheet(
-        "QPushButton { border: none; background: transparent; }"
-        "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }"
-        );
+    m_okButton->setStyleSheet(footerButtonStyle);
+    m_okButton->setCursor(Qt::PointingHandCursor);
 
-    m_cancelButton->setIcon(cancelIcon);
-    m_cancelButton->setIconSize(cancelSize);
-    m_cancelButton->setFixedSize(cancelSize);
-    m_cancelButton->setText("");
+    QPixmap canPix(":/images/images/CANCEL.png");
+    m_cancelButton->setIcon(QIcon(canPix));
+    m_cancelButton->setFixedSize(canPix.size());
+    m_cancelButton->setIconSize(canPix.size());
     m_cancelButton->setFlat(true);
-    m_cancelButton->setStyleSheet(
-        "QPushButton { border: none; background: transparent; }"
-        "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }"
-        );
-    m_buttonBox = new QDialogButtonBox(Qt::Horizontal);
+    m_cancelButton->setStyleSheet(footerButtonStyle);
+    m_cancelButton->setCursor(Qt::PointingHandCursor);
 
     QHBoxLayout *buttonLayout = new QHBoxLayout();
-    buttonLayout->setSpacing(0);
+    buttonLayout->addWidget(m_resetAllPathsBtn);
+    buttonLayout->addWidget(m_resetAllMemoryPathsBtn);
     buttonLayout->addStretch();
     buttonLayout->addWidget(m_okButton);
     buttonLayout->addWidget(m_cancelButton);
 
-    m_buttonBox->addButton(m_resetAllPathsBtn, QDialogButtonBox::ResetRole);
-    m_buttonBox->addButton(m_okButton, QDialogButtonBox::AcceptRole);
-    m_buttonBox->addButton(m_cancelButton, QDialogButtonBox::RejectRole);
-
-    // --- Hoofdlayout ---
+    // Hoofdlayout
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->addLayout(pathsLayout);
-    mainLayout->addSpacing(15);
-    mainLayout->addWidget(m_buttonBox);
+    mainLayout->addSpacing(10);
+    mainLayout->addLayout(buttonLayout);
 
     // --- Connecties ---
     connect(m_romPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseRomPath);
@@ -241,17 +186,23 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     connect(m_breakpointPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseBreakpointPath);
     connect(m_screenshotPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseScreenshotPath);
     connect(m_symbolPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseSymbolsPath);
+
+    // Bezels
     connect(m_adamBezelPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseAdamBezelPath);
     connect(m_cvBezelPathBtn,   &QPushButton::clicked, this, &SettingsWindow::onBrowseCvBezelPath);
     connect(m_adamBezelLoadBtn, &QPushButton::clicked, this, &SettingsWindow::onLoadAdamBezel);
     connect(m_cvBezelLoadBtn,   &QPushButton::clicked, this, &SettingsWindow::onLoadCvBezel);
+
+    // BIOS
     connect(m_colecoBiosPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseColecoBiosPath);
     connect(m_eosBiosPathBtn,    &QPushButton::clicked, this, &SettingsWindow::onBrowseEosBiosPath);
     connect(m_writerBiosPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseWriterBiosPath);
     connect(m_colecoBiosDefaultBtn, &QPushButton::clicked, this, &SettingsWindow::onDefaultColecoBiosPath);
     connect(m_eosBiosDefaultBtn,    &QPushButton::clicked, this, &SettingsWindow::onDefaultEosBiosPath);
     connect(m_writerBiosDefaultBtn, &QPushButton::clicked, this, &SettingsWindow::onDefaultWriterBiosPath);
+
     connect(m_resetAllPathsBtn, &QPushButton::clicked, this, &SettingsWindow::onResetAllPathsToDefault);
+    connect(m_resetAllMemoryPathsBtn, &QPushButton::clicked,this, &SettingsWindow::onResetAllMemoryPaths);
     connect(m_okButton, &QPushButton::clicked, this, &SettingsWindow::accept);
     connect(m_cancelButton, &QPushButton::clicked, this, &SettingsWindow::reject);
 }
@@ -286,7 +237,6 @@ void SettingsWindow::setWriterBiosPath(const QString &path) { setPathText(m_writ
 
 void SettingsWindow::onResetAllPathsToDefault()
 {
-    // Reset alle paden naar leeg (de interne 'Default' waarde)
     setPathText(m_romPathEdit, QString());
     setPathText(m_diskPathEdit, QString());
     setPathText(m_tapePathEdit, QString());
@@ -301,178 +251,102 @@ void SettingsWindow::onResetAllPathsToDefault()
     setPathText(m_writerBiosPathEdit, QString());
 }
 
-// ROM path
+void SettingsWindow::onResetAllMemoryPaths()
+{
+    QString iniPath = QDir(QCoreApplication::applicationDirPath()).filePath("settings.ini");
+    QSettings settings(iniPath, QSettings::IniFormat);
+    settings.remove("CustomFileDialog");
+    settings.sync();
+}
+
 void SettingsWindow::onBrowseRomPath()
 {
-    QString dir = QFileDialog::getExistingDirectory(
-        this,
-        tr("Select ROM Directory"),
-        pathFromEdit(m_romPathEdit)
-        );
-    if (!dir.isEmpty()) {
-        setPathText(m_romPathEdit, dir);
-    }
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select ROM Directory"), pathFromEdit(m_romPathEdit));
+    if (!dir.isEmpty()) setPathText(m_romPathEdit, dir);
 }
 
-// Disk path
 void SettingsWindow::onBrowseDiskPath()
 {
-    QString dir = QFileDialog::getExistingDirectory(
-        this,
-        tr("Select Disk Directory"),
-        pathFromEdit(m_diskPathEdit)
-        );
-    if (!dir.isEmpty()) {
-        setPathText(m_diskPathEdit, dir);
-    }
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select Disk Directory"), pathFromEdit(m_diskPathEdit));
+    if (!dir.isEmpty()) setPathText(m_diskPathEdit, dir);
 }
 
-// Tape path
 void SettingsWindow::onBrowseTapePath()
 {
-    QString dir = QFileDialog::getExistingDirectory(
-        this,
-        tr("Select Tape Directory"),
-        pathFromEdit(m_tapePathEdit)
-        );
-    if (!dir.isEmpty()) {
-        setPathText(m_tapePathEdit, dir);
-    }
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select Tape Directory"), pathFromEdit(m_tapePathEdit));
+    if (!dir.isEmpty()) setPathText(m_tapePathEdit, dir);
 }
 
-// State path
 void SettingsWindow::onBrowseStatePath()
 {
-    QString dir = QFileDialog::getExistingDirectory(
-        this,
-        tr("Select State Directory"),
-        pathFromEdit(m_statePathEdit)
-        );
-    if (!dir.isEmpty()) {
-        setPathText(m_statePathEdit, dir);
-    }
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select State Directory"), pathFromEdit(m_statePathEdit));
+    if (!dir.isEmpty()) setPathText(m_statePathEdit, dir);
 }
 
-// Breakpoint path
 void SettingsWindow::onBrowseBreakpointPath()
 {
-    QString dir = QFileDialog::getExistingDirectory(
-        this,
-        tr("Select Breakpoint Directory"),
-        pathFromEdit(m_breakpointPathEdit)
-        );
-    if (!dir.isEmpty()) {
-        setPathText(m_breakpointPathEdit, dir);
-    }
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select Breakpoint Directory"), pathFromEdit(m_breakpointPathEdit));
+    if (!dir.isEmpty()) setPathText(m_breakpointPathEdit, dir);
 }
 
-// Screenshot path
 void SettingsWindow::onBrowseScreenshotPath()
 {
-    QString dir = QFileDialog::getExistingDirectory(
-        this,
-        tr("Select Screenshot Directory"),
-        pathFromEdit(m_screenshotPathEdit)
-        );
-    if (!dir.isEmpty()) {
-        setPathText(m_screenshotPathEdit, dir);
-    }
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select Screenshot Directory"), pathFromEdit(m_screenshotPathEdit));
+    if (!dir.isEmpty()) setPathText(m_screenshotPathEdit, dir);
 }
 
-// Symbols path
 void SettingsWindow::onBrowseSymbolsPath()
 {
-    QString dir = QFileDialog::getExistingDirectory(
-        this,
-        tr("Select Symbols Directory"),
-        pathFromEdit(m_symbolPathEdit)
-        );
-    if (!dir.isEmpty()) {
-        setPathText(m_symbolPathEdit, dir);
-    }
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select Symbols Directory"), pathFromEdit(m_symbolPathEdit));
+    if (!dir.isEmpty()) setPathText(m_symbolPathEdit, dir);
 }
 
-// ADAM Bezel directory (Browse...)
 void SettingsWindow::onBrowseAdamBezelPath()
 {
-    QString dir = QFileDialog::getExistingDirectory(
-        this,
-        tr("Select ADAM Bezel Directory"),
-        pathFromEdit(m_adamBezelPathEdit)
-        );
-    if (!dir.isEmpty()) {
-        setPathText(m_adamBezelPathEdit, dir);
-    }
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select ADAM Bezel Directory"), pathFromEdit(m_adamBezelPathEdit));
+    if (!dir.isEmpty()) setPathText(m_adamBezelPathEdit, dir);
 }
 
-// Coleco Bezel directory (Browse...)
 void SettingsWindow::onBrowseCvBezelPath()
 {
-    QString dir = QFileDialog::getExistingDirectory(
-        this,
-        tr("Select Coleco Bezel Directory"),
-        pathFromEdit(m_cvBezelPathEdit)
-        );
-    if (!dir.isEmpty()) {
-        setPathText(m_cvBezelPathEdit, dir);
-    }
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select Coleco Bezel Directory"), pathFromEdit(m_cvBezelPathEdit));
+    if (!dir.isEmpty()) setPathText(m_cvBezelPathEdit, dir);
 }
 
-// ADAM Bezel image (Load...)
 void SettingsWindow::onLoadAdamBezel()
 {
-    QString startDir = pathFromEdit(m_adamBezelPathEdit);
-    QString file = QFileDialog::getOpenFileName(
-        this,
-        tr("Select ADAM Bezel Image"),
-        startDir,
-        tr("Image Files (*.png *.jpg *.jpeg *.bmp *.gif);;All Files (*.*)")
-        );
-    if (!file.isEmpty()) {
-        setPathText(m_adamBezelPathEdit, file);
-    }
+    QString file = QFileDialog::getOpenFileName(this, tr("Select ADAM Bezel Image"), pathFromEdit(m_adamBezelPathEdit),
+                                                tr("Image Files (*.png *.jpg *.jpeg *.bmp *.gif);;All Files (*.*)"));
+    if (!file.isEmpty()) setPathText(m_adamBezelPathEdit, file);
 }
 
 void SettingsWindow::onLoadCvBezel()
 {
-    QString startDir = pathFromEdit(m_cvBezelPathEdit);
-    QString file = QFileDialog::getOpenFileName(
-        this,
-        tr("Select Coleco Bezel Image"),
-        startDir,
-        tr("Image Files (*.png *.jpg *.jpeg *.bmp *.gif);;All Files (*.*)")
-        );
-    if (!file.isEmpty()) {
-        setPathText(m_cvBezelPathEdit, file);
-    }
+    QString file = QFileDialog::getOpenFileName(this, tr("Select Coleco Bezel Image"), pathFromEdit(m_cvBezelPathEdit),
+                                                tr("Image Files (*.png *.jpg *.jpeg *.bmp *.gif);;All Files (*.*)"));
+    if (!file.isEmpty()) setPathText(m_cvBezelPathEdit, file);
 }
 
 void SettingsWindow::onBrowseColecoBiosPath()
 {
-    QString file = QFileDialog::getOpenFileName(
-        this, tr("Select ColecoVision BIOS (coleco.rom)"), pathFromEdit(m_colecoBiosPathEdit),
-        tr("ROM Files (coleco.rom *.rom *.bin);;All Files (*.*)")
-        );
+    QString file = QFileDialog::getOpenFileName(this, tr("Select ColecoVision BIOS"), pathFromEdit(m_colecoBiosPathEdit),
+                                                tr("ROM Files (coleco.rom *.rom *.bin);;All Files (*.*)"));
     if (!file.isEmpty()) setPathText(m_colecoBiosPathEdit, file);
-    }
+}
 
 void SettingsWindow::onBrowseEosBiosPath()
 {
-    QString file = QFileDialog::getOpenFileName(
-        this, tr("Select ADAM EOS ROM (eos.rom)"), pathFromEdit(m_eosBiosPathEdit),
-        tr("ROM Files (eos.rom *.rom *.bin);;All Files (*.*)")
-        );
+    QString file = QFileDialog::getOpenFileName(this, tr("Select ADAM EOS ROM"), pathFromEdit(m_eosBiosPathEdit),
+                                                tr("ROM Files (eos.rom *.rom *.bin);;All Files (*.*)"));
     if (!file.isEmpty()) setPathText(m_eosBiosPathEdit, file);
-    }
+}
 
 void SettingsWindow::onBrowseWriterBiosPath()
 {
-    QString file = QFileDialog::getOpenFileName(
-        this, tr("Select ADAM SmartWriter ROM (writer.rom)"), pathFromEdit(m_writerBiosPathEdit),
-        tr("ROM Files (writer.rom *.rom *.bin);;All Files (*.*)")
-        );
+    QString file = QFileDialog::getOpenFileName(this, tr("Select ADAM SmartWriter ROM"), pathFromEdit(m_writerBiosPathEdit),
+                                                tr("ROM Files (writer.rom *.rom *.bin);;All Files (*.*)"));
     if (!file.isEmpty()) setPathText(m_writerBiosPathEdit, file);
-    }
+}
 
 void SettingsWindow::onDefaultColecoBiosPath() { setPathText(m_colecoBiosPathEdit, QString()); }
 void SettingsWindow::onDefaultEosBiosPath()    { setPathText(m_eosBiosPathEdit, QString()); }

@@ -2,10 +2,8 @@
 #define SETTINGSWINDOW_H
 
 #include <QDialog>
-
-class QLineEdit;
-class QPushButton;
-class QDialogButtonBox;
+#include <QLineEdit>
+#include <QPushButton>
 
 class SettingsWindow : public QDialog
 {
@@ -14,19 +12,7 @@ class SettingsWindow : public QDialog
 public:
     explicit SettingsWindow(QWidget *parent = nullptr);
 
-    void setRomPath(const QString &path);
-    void setDiskPath(const QString &path);
-    void setTapePath(const QString &path);
-    void setStatePath(const QString &path);
-    void setBreakpointPath(const QString &path);
-    void setScreenshotPath(const QString &path);
-    void setSymbolPath(const QString& path);
-    void setAdamBezelPath(const QString &path);
-    void setCvBezelPath(const QString &path);
-    void setColecoBiosPath(const QString& path);
-    void setEosBiosPath(const QString& path);
-    void setWriterBiosPath(const QString& path);
-
+    // Getters
     QString romPath() const;
     QString diskPath() const;
     QString tapePath() const;
@@ -39,6 +25,20 @@ public:
     QString colecoBiosPath() const;
     QString eosBiosPath() const;
     QString writerBiosPath() const;
+
+    // Setters
+    void setRomPath(const QString &path);
+    void setDiskPath(const QString &path);
+    void setTapePath(const QString &path);
+    void setStatePath(const QString &path);
+    void setBreakpointPath(const QString &path);
+    void setScreenshotPath(const QString &path);
+    void setSymbolPath(const QString &path);
+    void setAdamBezelPath(const QString &path);
+    void setCvBezelPath(const QString &path);
+    void setColecoBiosPath(const QString &path);
+    void setEosBiosPath(const QString &path);
+    void setWriterBiosPath(const QString &path);
 
 private slots:
     void onBrowseRomPath();
@@ -59,45 +59,34 @@ private slots:
     void onDefaultEosBiosPath();
     void onDefaultWriterBiosPath();
     void onResetAllPathsToDefault();
+    void onResetAllMemoryPaths();
 
 private:
-    void setupUI();
+    // Edits
+    QLineEdit *m_romPathEdit, *m_diskPathEdit, *m_tapePathEdit, *m_statePathEdit;
+    QLineEdit *m_breakpointPathEdit, *m_screenshotPathEdit, *m_symbolPathEdit;
+    QLineEdit *m_adamBezelPathEdit, *m_cvBezelPathEdit;
+    QLineEdit *m_colecoBiosPathEdit, *m_eosBiosPathEdit, *m_writerBiosPathEdit;
 
-    QLineEdit *m_romPathEdit;
-    QPushButton *m_romPathBtn;
-    QLineEdit *m_diskPathEdit;
-    QPushButton *m_diskPathBtn;
-    QLineEdit *m_tapePathEdit;
-    QPushButton *m_tapePathBtn;
-    QLineEdit *m_statePathEdit;
-    QPushButton *m_statePathBtn;
-    QLineEdit *m_breakpointPathEdit;
-    QPushButton *m_breakpointPathBtn;
-    QLineEdit *m_screenshotPathEdit;
-    QPushButton *m_screenshotPathBtn;
-    QLineEdit *m_symbolPathEdit;
-    QPushButton *m_symbolPathBtn;
-    QLineEdit *m_adamBezelPathEdit;
-    QPushButton *m_adamBezelPathBtn;
-    QLineEdit *m_cvBezelPathEdit;
-    QPushButton *m_cvBezelPathBtn;
-    QPushButton *m_adamBezelLoadBtn;
-    QPushButton *m_cvBezelLoadBtn;
-    QDialogButtonBox *m_buttonBox;
+    // SET Knoppen
+    QPushButton *m_romPathBtn, *m_diskPathBtn, *m_tapePathBtn, *m_statePathBtn;
+    QPushButton *m_breakpointPathBtn, *m_screenshotPathBtn, *m_symbolPathBtn;
+    QPushButton *m_adamBezelPathBtn, *m_cvBezelPathBtn;
+    QPushButton *m_colecoBiosPathBtn, *m_eosBiosPathBtn, *m_writerBiosPathBtn;
+
+    // LOAD Knoppen
+    QPushButton *m_adamBezelLoadBtn, *m_cvBezelLoadBtn;
+
+    // CLR Knoppen (Enkel voor de laatste rijen)
+    QPushButton *m_colecoBiosDefaultBtn;
+    QPushButton *m_eosBiosDefaultBtn;
+    QPushButton *m_writerBiosDefaultBtn;
+
+    // Footer
+    QPushButton *m_resetAllPathsBtn;
+    QPushButton *m_resetAllMemoryPathsBtn;
     QPushButton *m_okButton;
     QPushButton *m_cancelButton;
-    QLineEdit *m_colecoBiosPathEdit;
-    QPushButton *m_colecoBiosPathBtn;
-    QPushButton *m_colecoBiosDefaultBtn;
-    QPushButton *m_resetAllPathsBtn;
-
-    QLineEdit *m_eosBiosPathEdit;
-    QPushButton *m_eosBiosPathBtn;
-    QPushButton *m_eosBiosDefaultBtn;
-
-    QLineEdit *m_writerBiosPathEdit;
-    QPushButton *m_writerBiosPathBtn;
-    QPushButton *m_writerBiosDefaultBtn;
 };
 
 #endif

@@ -35,7 +35,27 @@ void CartridgeInfoDialog::setupUi()
     // --- Linkerpaneel ---
     m_memoEdit = new QTextEdit(this);
     m_memoEdit->setReadOnly(true);
-    m_memoEdit->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    //m_memoEdit->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+
+    // 1. Laad het lettertype uit je resources of lokale map
+    // Pas het pad aan naar waar jouw .ttf staat (bijv. ":/fonts/mijnfont.ttf")
+    int fontId = QFontDatabase::addApplicationFont(":/fonts/fonts/luculent.ttf");
+
+    QString family;
+
+    if (fontId != -1) {
+        family = QFontDatabase::applicationFontFamilies(fontId).at(0);
+        qDebug() << "[UI] Custom font loaded:" << family;
+    } else {
+        qDebug() << "[UI] Could not load custom font, fallback to  Roboto";
+        family = "Roboto";
+    }
+
+    QFont monoFont(family, 10);
+    monoFont.setBold(false);
+
+    m_memoEdit->setFont(monoFont);
+
     m_memoEdit->setMinimumWidth(380);
 
     // --- Rechterpaneel (Memory Footprint) ---
@@ -59,8 +79,8 @@ void CartridgeInfoDialog::setupUi()
     QPixmap refreshPixmap(":/images/images/REFRESH.png");
     QPixmap closePixmap(":/images/images/CLOSE.png");
 
-    if (refreshIcon.isNull()) { qWarning() << "CartridgeInfoDialog: Kon REFRESH.png niet laden."; }
-    if (closeIcon.isNull()) { qWarning() << "CartridgeInfoDialog: Kon CLOSE.png niet laden."; }
+    if (refreshIcon.isNull()) { qWarning() << "CartridgeInfoDialog: Could not load REFRESH.png ."; }
+    if (closeIcon.isNull()) { qWarning() << "CartridgeInfoDialog: Could not load CLOSE.png ."; }
 
     QSize refreshSize = refreshPixmap.size();
     QSize closeSize = closePixmap.size();
@@ -86,6 +106,9 @@ void CartridgeInfoDialog::setupUi()
         "QPushButton { border: none; background: transparent; }"
         "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }"
         );
+
+    refreshButton->setCursor(Qt::PointingHandCursor);
+    closeButton->setCursor(Qt::PointingHandCursor);
 
     connect(refreshButton, &QPushButton::clicked, this, &CartridgeInfoDialog::refreshData);
     connect(closeButton, &QPushButton::clicked, this, &QDialog::close);
@@ -133,11 +156,28 @@ void CartridgeInfoDialog::showProfile()
         unsigned char bval;
         QString html;
 
-        const QString monoFont = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+        //const QString monoFont = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+
+        // 1. Laad het lettertype uit je resources of lokale map
+        // Pas het pad aan naar waar jouw .ttf staat (bijv. ":/fonts/mijnfont.ttf")
+        int fontId = QFontDatabase::addApplicationFont(":/fonts/fonts/luculent.ttf");
+
+        QString family;
+
+        if (fontId != -1) {
+            family = QFontDatabase::applicationFontFamilies(fontId).at(0);
+            qDebug() << "[UI] Custom font loaded:" << family;
+        } else {
+            qDebug() << "[UI] Could not load custom font, fallback to Roboto";
+            family = "Roboto";
+        }
+
+        QFont monoFont(family, 12);
+        monoFont.setBold(false);
 
         const QString titleStyle = "style='background-color:#444444; color:#AAAA00; font-weight:bold; padding:2px; margin: 5px 0 0 0;'";
 
-        const QString bodyStyle = QString("style='font-family: \"%1\"; white-space: pre; margin: 0; padding: 0;'").arg(monoFont);
+        const QString bodyStyle = QString("style='font-family: \"%1\"; white-space: pre; margin: 0; padding: 0;'").arg(monoFont.family());
 
         m_memoEdit->clear();
 
@@ -221,8 +261,9 @@ void CartridgeInfoDialog::showProfile()
 
                 QChar c = QChar(bval);
                 charsHtml += (c.isPrint()) ? QString(c).toHtmlEscaped() : QChar('.');
+                charsHtml += " ";
             }
-            html += QString("<p %1>%2</p>").arg(bodyStyle).arg(lineHtml + charsHtml);
+            html += QString("<p %1>%2 </p>").arg(bodyStyle).arg(lineHtml + charsHtml);
         }
 
         html += "</body></html>";
@@ -255,7 +296,7 @@ void CartridgeInfoDialog::showBanks()
     }
 
     if (emulator == nullptr || emulator->romCartridgeType == ROMCARTRIDGENONE) {
-        layout->addWidget(new QLabel(tr("Geen ROM geladen."), this), 0, 0);
+        layout->addWidget(new QLabel(tr("No ROM loaded."), this), 0, 0);
         layout->setRowStretch(1, 1);
         layout->setColumnStretch(1, 1);
         return;

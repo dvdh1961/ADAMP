@@ -49,13 +49,31 @@
         <file>images/adamp_logo_csgm_locked_cartridge_off.png</file>
         <file>images/adamp_logo_dcpm_locked_adam_off.png</file>
         <file>images/adamp_logo_tcpm_locked_adam_off.png</file>
-        <file>images/adamp_logo1.png</file>
         <file>images/hw_c80.png</file>
         <file>images/Hardware.png</file>
+        <file>images/CAN.png</file>
+        <file>images/OK1.png</file>
+        <file>images/Adam_PrinterBG_TM.png</file>
+        <file>images/Adam_PrinterBG_WP.png</file>
+        <file>images/LOAD.png</file>
+        <file>images/BROWSE.png</file>
+        <file>images/DEFAULT.png</file>
+        <file>images/adamp_logo1.png</file>
+        <file>images/UP.png</file>
+        <file>images/DELDIR.png</file>
+        <file>images/NEWDIR.png</file>
+        <file>images/parent.png</file>
+        <file>images/real_adamnet.png</file>
+        <file>images/real_cartridge.png</file>
+        <file>images/real_joys.png</file>
     </qresource>
     <qresource prefix="/sounds">
         <file>sounds/adam_tape.wav</file>
         <file>sounds/adam_disk1.wav</file>
         <file>sounds/adam_disk2.wav</file>
+    </qresource>
+    <qresource prefix="/fonts">
+        <file>fonts/BeautifulPoliceOfficer-rvv8x.ttf</file>
+        <file>fonts/luculent.ttf</file>
     </qresource>
 </RCC>
