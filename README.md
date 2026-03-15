@@ -34,9 +34,7 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 
 ---
 ## Podcast
-![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_PODCAST.png)
-
-
+[![ADAM+ PODCAST](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_PODCAST.png)](https://www.youtube.com/watch?v=VUuLzuzX6zA)
 ---
 
 ## 💾 Downloads
