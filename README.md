@@ -33,9 +33,6 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 "Our ambition remains to deliver the authentic ADAM 1983 experience." <br>
 
 ---
-## Podcast
-[![ADAM+ PODCAST](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_PODCAST.png)](https://www.youtube.com/watch?v=VUuLzuzX6zA)
----
 
 ## 💾 Downloads
 
