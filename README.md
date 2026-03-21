@@ -34,7 +34,7 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 
 ---
 
-## 🎥 ADAM+ WHAT'S THAT ?!?
+## 🎥 ADAM+ WHAT'S THIS ?!?
 
 [![release](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_INTRO.png)](https://youtu.be/JlMo5caZGwo)
 
