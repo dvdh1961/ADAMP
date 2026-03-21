@@ -34,6 +34,12 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 
 ---
 
+## 🎥 ADAM+ WHAT'S THAT ?!?
+
+[![release](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_INTRO.png)](https://youtu.be/JlMo5caZGwo)
+
+---
+
 ## 💾 Downloads
 
 [![release](https://img.shields.io/badge/Latest%20release-windows64-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/0.8.02.26/WINDOWS_ADAMP_0.8.02.26.exe)
