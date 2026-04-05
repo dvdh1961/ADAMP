@@ -314,8 +314,8 @@ void MovePCB(word NewAddr,byte MaxDCB)
     SetPCB(PCB_BA_HI,   NewAddr>>8);
     SetPCB(PCB_MAX_DCB, MaxDCB);
 
-    qDebug() << "[PCB] MaxDCB =" << MaxDCB << "at address"
-             << QString("0x%1").arg(NewAddr, 4, 16, QChar('0'));
+    //qDebug() << "[PCB] MaxDCB =" << MaxDCB << "at address"
+    //         << QString("0x%1").arg(NewAddr, 4, 16, QChar('0'));
 
 
     for(J=0;J<MaxDCB;++J)
@@ -344,7 +344,7 @@ void MovePCB(word NewAddr,byte MaxDCB)
     // CHECK:
     byte check = GetDCB(J, DCB_ADD_CODE);
     if (check != J) {
-        qDebug() << "[PCB ERROR] DCB" << J << "has ADD_CODE" << check << "instead of" << J;
+        //qDebug() << "[PCB ERROR] DCB" << J << "has ADD_CODE" << check << "instead of" << J;
     }
 
     // // FIX VOOR CP/M DISK DEVICES:
@@ -357,7 +357,7 @@ void MovePCB(word NewAddr,byte MaxDCB)
 
     // Check wat er staat:
     byte count = RAM_Memory[0xFEC3];
-    qDebug() << "[PCB] Device count at 0xFEC3 =" << count;
+   // qDebug() << "[PCB] Device count at 0xFEC3 =" << count;
 }
 //--------------------------------------------------------------------------------------
 /** ReportDevice() *******************************************/
