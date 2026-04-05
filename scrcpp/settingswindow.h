@@ -25,6 +25,7 @@ public:
     QString colecoBiosPath() const;
     QString eosBiosPath() const;
     QString writerBiosPath() const;
+    QString adamStartupPath() const;
 
     // Setters
     void setRomPath(const QString &path);
@@ -39,6 +40,7 @@ public:
     void setColecoBiosPath(const QString &path);
     void setEosBiosPath(const QString &path);
     void setWriterBiosPath(const QString &path);
+    void setAdamStartupPath(const QString &path);
 
 private slots:
     void onBrowseRomPath();
@@ -60,6 +62,8 @@ private slots:
     void onDefaultWriterBiosPath();
     void onResetAllPathsToDefault();
     void onResetAllMemoryPaths();
+    void onBrowseAdamStartupPath();
+    void onDefaultAdamStartupPath();
 
 private:
     // Edits
@@ -67,12 +71,14 @@ private:
     QLineEdit *m_breakpointPathEdit, *m_screenshotPathEdit, *m_symbolPathEdit;
     QLineEdit *m_adamBezelPathEdit, *m_cvBezelPathEdit;
     QLineEdit *m_colecoBiosPathEdit, *m_eosBiosPathEdit, *m_writerBiosPathEdit;
+    QLineEdit *m_adamStartupPathEdit;
 
     // SET Knoppen
     QPushButton *m_romPathBtn, *m_diskPathBtn, *m_tapePathBtn, *m_statePathBtn;
     QPushButton *m_breakpointPathBtn, *m_screenshotPathBtn, *m_symbolPathBtn;
     QPushButton *m_adamBezelPathBtn, *m_cvBezelPathBtn;
     QPushButton *m_colecoBiosPathBtn, *m_eosBiosPathBtn, *m_writerBiosPathBtn;
+    QPushButton *m_adamStartupPathBtn;
 
     // LOAD Knoppen
     QPushButton *m_adamBezelLoadBtn, *m_cvBezelLoadBtn;
@@ -81,6 +87,7 @@ private:
     QPushButton *m_colecoBiosDefaultBtn;
     QPushButton *m_eosBiosDefaultBtn;
     QPushButton *m_writerBiosDefaultBtn;
+    QPushButton *m_adamStartupDefaultBtn;
 
     // Footer
     QPushButton *m_resetAllPathsBtn;

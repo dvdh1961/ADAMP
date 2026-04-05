@@ -124,7 +124,6 @@ int main(int argc, char *argv[])
     )");
 
 
-
     LogWidget::installQtHandler();
 
     MainWindow w;

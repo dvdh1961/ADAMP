@@ -12,6 +12,7 @@
 
 #include "simplejoystick.h"
 #include "hardwarewindow.h"
+#include "aim_dialog.h"
 
 class ColecoController;
 class ScreenWidget;
@@ -73,7 +74,6 @@ public slots:
     void onShowSpriteTable();
     void onShowPrinterWindow();
     void onToggleSnap(bool checked);
-    void onMachineTypeChanged(int newType);
     void onToggleResetAdamBlink();
     void onToggleResetCartBlink();
 
@@ -362,10 +362,12 @@ private:
     QString m_symbolsPath;
     QString m_adamBezelPath;
     QString m_cvBezelPath;
+    QString m_adamStartupPath;
+    bool m_isStartupPending = false;
     QString m_colecoBiosPath;
     QString m_eosBiosPath;
     QString m_writerBiosPath;
-    QAction *m_openAdamRomAction = nullptr;
+   QAction *m_openAdamRomAction = nullptr;
     QAction *m_openColecoRomAction = nullptr;
     bool m_isAdamRomLoaded = false;
     bool m_isColecoRomLoaded = false;
@@ -395,6 +397,9 @@ private:
 
     QSoundEffect *m_diskSound = nullptr;
     QSoundEffect *m_tapeSound = nullptr;
+
+    AimDialog  *m_imageManagerDialog = nullptr;
+    QAction *m_actImageManager = nullptr;
 
 };
 

@@ -76,4 +76,12 @@
         <file>fonts/BeautifulPoliceOfficer-rvv8x.ttf</file>
         <file>fonts/luculent.ttf</file>
     </qresource>
+    <qresource prefix="/template">
+        <file>templates/DSK160_D1.DSK</file>
+        <file>templates/DSK160_D2.DSK</file>
+        <file>templates/DSK160_D3.DSK</file>
+        <file>templates/DDP256_D1.DDP</file>
+        <file>templates/DDP256_D2.DDP</file>
+        <file>templates/DDP256_D3.DDP</file>
+    </qresource>
 </RCC>

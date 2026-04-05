@@ -15,7 +15,7 @@ class QDialogButtonBox;
 // Machine types
 enum MachineType {
     MACHINE_COLECO  = 0,
-    MACHINE_ADAM    = 2
+    MACHINE_ADAM    = 1
 };
 
 struct HardwareConfig {

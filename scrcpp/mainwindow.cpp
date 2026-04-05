@@ -109,7 +109,7 @@ MainWindow::MainWindow(QWidget *parent)
     QCoreApplication::setApplicationName("ADAMP_EMU");
 
     // Version
-    appVersion = "0.8.02.26";
+    appVersion = "0.9.04.26";
 
     setWindowTitle(QString("ADAM+ Emulator - v%1").arg(appVersion));
 
@@ -118,6 +118,9 @@ MainWindow::MainWindow(QWidget *parent)
     m_wallpaperLabel->setPixmap(wallpaper);
     m_wallpaperLabel->setScaledContents(true);
     m_wallpaperLabel->hide();
+
+    m_imageManagerDialog = new AimDialog (this);
+    m_imageManagerDialog->hide();
 
     m_screenWidget = new ScreenWidget(this);
 

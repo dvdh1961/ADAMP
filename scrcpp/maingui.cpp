@@ -69,21 +69,6 @@ extern "C" void adamnet_set_game_mode(bool enabled);
 //---------------------------------------------------------------------------------------------
 // STATUSBAR
 //---------------------------------------------------------------------------------------------
-// mainwindow.cpp
-
-static void setLabelPrefixStatus(QLabel* label, bool loaded)
-{
-    if (!label) return;
-
-    // Verwacht "D1: -" of "D1: X" (of alles met "D1:" vooraan)
-    const QString text = label->text();
-    const int idx = text.indexOf(':');
-    if (idx < 0) return;
-
-    const QString prefix = text.left(idx + 1); // "D1:"
-    label->setText(QString("%1 %2").arg(prefix, loaded ? "X" : "-"));
-}
-
 void MainWindow::forceStatusBarMediaFlag(QLabel* label)
 {
     if (!label) return;
@@ -110,13 +95,21 @@ void MainWindow::forceStatusBarMediaFlag(QLabel* label)
 
 void MainWindow::forceStatusBarMediaFlags()
 {
-    QLabel* labels[] = {
-        m_tapeLabelA, m_tapeLabelB, m_tapeLabelC, m_tapeLabelD,
-        m_diskLabelA, m_diskLabelB, m_diskLabelC, m_diskLabelD
+    auto setMediaLabel = [](QLabel* label, const QString& prefix, bool loaded) {
+        if (!label) return;
+        label->setText(QString("%1 %2").arg(prefix, loaded ? "X" : "-"));
+        label->setStyleSheet(loaded ? "color: #00C853;" : "color: #9E9E9E;");
     };
 
-    for (QLabel* l : labels)
-        forceStatusBarMediaFlag(l);
+    setMediaLabel(m_tapeLabelA, "D1:", !m_loadedTapeNames[0].trimmed().isEmpty());
+    setMediaLabel(m_tapeLabelB, "D2:", !m_loadedTapeNames[1].trimmed().isEmpty());
+    setMediaLabel(m_tapeLabelC, "D3:", !m_loadedTapeNames[2].trimmed().isEmpty());
+    setMediaLabel(m_tapeLabelD, "D4:", !m_loadedTapeNames[3].trimmed().isEmpty());
+
+    setMediaLabel(m_diskLabelA, "D5:", !m_loadedDiskNames[0].trimmed().isEmpty());
+    setMediaLabel(m_diskLabelB, "D6:", !m_loadedDiskNames[1].trimmed().isEmpty());
+    setMediaLabel(m_diskLabelC, "D7:", !m_loadedDiskNames[2].trimmed().isEmpty());
+    setMediaLabel(m_diskLabelD, "D8:", !m_loadedDiskNames[3].trimmed().isEmpty());
 }
 
 void MainWindow::setStatusBar()
@@ -466,6 +459,23 @@ void MainWindow::setupUI()
     toolsMenu->addSeparator();
     m_cartInfoAction = new QAction(tr("Cart profile"), this);
     toolsMenu->addAction(m_cartInfoAction);
+
+     m_actImageManager = new QAction(tr("EOS Media Manager"), this);
+     connect(m_actImageManager, &QAction::triggered, this, [this]() {
+        if (!m_imageManagerDialog)
+            return;
+
+        m_imageManagerDialog->setDiskRootPath(m_diskPath);
+        m_imageManagerDialog->setTapeRootPath(m_tapePath);
+
+        m_imageManagerDialog->show();
+        m_imageManagerDialog->raise();
+        m_imageManagerDialog->activateWindow();
+    });
+    toolsMenu->addSeparator();
+    toolsMenu->addAction(m_actImageManager);
+
+
 
     // --- INPUT MENU ---
     QMenu* inputMenu = menuBar()->addMenu(tr("Input"));
@@ -886,6 +896,7 @@ void MainWindow::onOpenSettings()
     m_settingsWindow->setColecoBiosPath(m_colecoBiosPath);
     m_settingsWindow->setEosBiosPath(m_eosBiosPath);
     m_settingsWindow->setWriterBiosPath(m_writerBiosPath);
+    m_settingsWindow->setAdamStartupPath(m_adamStartupPath);
 
     // 2) Toon dialog
     if (m_settingsWindow->exec() != QDialog::Accepted)
@@ -900,6 +911,7 @@ void MainWindow::onOpenSettings()
     m_colecoBiosPath = m_settingsWindow->colecoBiosPath();
     m_eosBiosPath    = m_settingsWindow->eosBiosPath();
     m_writerBiosPath = m_settingsWindow->writerBiosPath();
+    m_adamStartupPath = m_settingsWindow->adamStartupPath();
 
     saveSettings();
 }
@@ -987,6 +999,7 @@ void MainWindow::loadSettings()
     m_colecoBiosPath  = settings.value("bios/coleco", "").toString();
     m_eosBiosPath     = settings.value("bios/eos",    "").toString();
     m_writerBiosPath  = settings.value("bios/writer", "").toString();
+    m_adamStartupPath = settings.value("adam/startup", "").toString();
 
     // --- Window ---
     qDebug() << "[UI] Loaded settings";
@@ -1066,6 +1079,7 @@ void MainWindow::saveSettings()
     put("bios/coleco", m_colecoBiosPath);
     put("bios/eos",    m_eosBiosPath);
     put("bios/writer", m_writerBiosPath);
+    put("adam/startup", m_adamStartupPath);
 
     // Window (zet dit vóór sync)
     put("window/geometry", saveGeometry());
@@ -1166,7 +1180,7 @@ void MainWindow::onOpenHardware()
 {
     HardwareConfig cur;
 
-    cur.machine = (m_machineType ? MACHINE_ADAM : MACHINE_COLECO);
+    cur.machine = (m_machineType ? MACHINE_ADAM : MACHINE_COLECO); // 1:0
     cur.realhardware = m_realhardware;
     cur.palette = m_paletteIndex;
 
@@ -1200,16 +1214,18 @@ void MainWindow::onOpenHardware()
 
         m_paletteIndex = chosen.palette;
         coleco_setpalette(m_paletteIndex);
-        m_sgmEnabled = chosen.sgmEnabled;
+        //m_sgmEnabled = chosen.sgmEnabled;
         m_realhardware = chosen.realhardware;
 
-        applyHardwareConfig(chosen);
-
-        // ✅ Als machine veranderde: cold boot zoals power knop (writer meteen zichtbaar)
         if (oldMachine != newMachine) {
-            onPowerBtnClicked();   // gebruik exact dezelfde slot als je Power button
-            // (Als jouw functie anders heet: roep die aan)
+            if (newMachine == MACHINE_ADAM) {
+                switchToAdamMode();
+            } else {
+                switchToColecoMode();
+            }
         }
+
+        applyHardwareConfig(chosen);
 
         saveSettings();
     } else {
@@ -1218,77 +1234,6 @@ void MainWindow::onOpenHardware()
     }
 }
 
-void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
-{
-    const int oldMachineType = m_machineType;
-    const int newMachineType = (cfg.machine == MACHINE_ADAM ? 1 : 0);
-
-    if (oldMachineType != newMachineType) {
-        m_machineType = newMachineType;
-
-        if (m_machineType > 0) { // ADAM
-            QMetaObject::invokeMethod(
-                m_colecoController, "resetAdam",
-                Qt::QueuedConnection
-                );
-        } else { // COLECO
-            QMetaObject::invokeMethod(
-                m_colecoController, "resetColeco",
-                Qt::QueuedConnection
-                );
-        }
-    }
-
-    m_realhardware = cfg.realhardware;
-
-    if (m_paletteIndex != cfg.palette) {
-        m_paletteIndex = cfg.palette;
-        if (m_colecoController) {
-            QMetaObject::invokeMethod(
-                m_colecoController,
-                [this]() { coleco_setpalette(m_paletteIndex); },
-                Qt::QueuedConnection
-                );
-        }
-    }
-
-    const bool desiredSgm = (m_machineType == 0) ? cfg.sgmEnabled : false;
-    m_c80Enabled = cfg.c80Enabled;
-
-    if (desiredSgm != m_sgmEnabled || oldMachineType != newMachineType) {
-        m_sgmEnabled = desiredSgm;
-
-        QMetaObject::invokeMethod(
-            m_colecoController, "setSGMEnabled",
-            Qt::QueuedConnection, Q_ARG(bool, m_sgmEnabled)
-            );
-    }
-
-    m_ctrlJoys    = cfg.Joys;
-    m_ctrlAdamNet      = cfg.AdamNet;
-    m_ctrlCartridge = cfg.Cartridge;
-
-    if (m_sysLabel) m_sysLabel->setText(m_machineType ? "ADAM" : "COLECO");
-
-    updateMediaStatusLabels();
-    updateHardwareWindowMediaDisplay();
-
-    updateFullScreenWallpaper();
-
-    bool isAdam = (m_machineType == 1);
-    if (m_adamInputMenu) m_adamInputMenu->setEnabled(isAdam);
-
-
-         // Apply 80-column mode setting
-     coleco_80col_enabled = cfg.c80Enabled ? 1 : 0;
-    if (m_screenWidget) {
-        m_screenWidget->set80ColumnMode(cfg.c80Enabled);
-    }
-
-    updateMediaMenuState();
-
-    saveSettings();
-}
 
 void MainWindow::updateHardwareWindowMediaDisplay()
 {
@@ -1629,6 +1574,15 @@ void MainWindow::setupEmulatorThread()
             this, &MainWindow::onEmuPausedChanged,
             Qt::QueuedConnection);
 
+    auto isMediaImage = [](const QString& path) -> bool {
+        const QString ext = QFileInfo(path).suffix().toLower();
+        return ext == "dsk" || ext == "img" || ext == "ddp";
+    };
+
+    if (isMediaImage(m_writerBiosPath)) {
+        qWarning() << "[UI][BIOSPATH] Invalid writer BIOS path (media image detected):" << m_writerBiosPath;
+        m_writerBiosPath.clear();
+    }
 
     connect(m_emulatorThread, &QThread::started, m_colecoController, [this]() {
         m_colecoController->startWithBios(m_colecoBiosPath, m_eosBiosPath, m_writerBiosPath);
@@ -1923,7 +1877,6 @@ void MainWindow::onBiosAFramesDone()
 {
     if (m_machineType != 1) return;
     m_isAdamRomLoaded = true;
-
     updateMediaMenuState();
     updateMediaStatusLabels();
     updateHardwareWindowMediaDisplay();
@@ -2164,7 +2117,8 @@ void MainWindow::onTapeStatusChanged(int drive, const QString& fileName)
 
 void MainWindow::updateMediaStatusLabels()
 {
-    const bool isAdam = (m_machineType == 1);
+    const bool isAdam = (m_machineType == MACHINE_ADAM);
+
     const bool showDisk = isAdam;
     const bool showTape = isAdam;
 
@@ -2191,7 +2145,7 @@ void MainWindow::updateMediaStatusLabels()
 
 void MainWindow::updateMediaMenuState()
 {
-    const bool isAdam = (m_machineType == 1);
+    const bool isAdam = (m_machineType == MACHINE_ADAM);
 
     auto setEnabledIf = [](QWidget* w, bool en) {
         if (w) w->setEnabled(en);
@@ -2695,12 +2649,12 @@ void MainWindow::onResetAdamBtnClicked()
     if (!m_resetAdamBtn) return;
 
     if (m_resetColecoLocked) {
-    m_resetColecoLocked  = false;
-    m_ColecoMedia_insert = false;
-    m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png"));
-    // 2. Cartridge ROM loskoppelen
-    QMetaObject::invokeMethod(m_colecoController, "ejectColecoCartridge",
-                              Qt::QueuedConnection);
+        m_resetColecoLocked  = false;
+        m_ColecoMedia_insert = false;
+        m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png"));
+        // 2. Cartridge ROM loskoppelen
+        QMetaObject::invokeMethod(m_colecoController, "ejectColecoCartridge",
+                                  Qt::QueuedConnection);
     }
 
     // Eerst de knipperfunctie stoppen en de iconen resetten (NIEUW)
@@ -2710,7 +2664,7 @@ void MainWindow::onResetAdamBtnClicked()
         m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png")); // Standaard icoon
     }
 
-   // if (m_resetAdamLocked) return;
+    // if (m_resetAdamLocked) return;
 
     if (m_AdamDMedia_insert || m_AdamTMedia_insert) m_resetAdamLocked = true;
     // 1. HARD RESET uitvoeren (dwingt de ADAM-modus af en reset de CPU/I/O)
@@ -2783,20 +2737,20 @@ void MainWindow::onResetAdamBtnClicked()
 
             if(m_cpm_status == false){
 
-            if (m_AdamTMedia_insert)
-                m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_t_locked_adam_off.png"));
-            else if (m_AdamDMedia_insert)
-                m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_d_locked_adam_off.png"));
-            else
-                m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
+                if (m_AdamTMedia_insert)
+                    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_t_locked_adam_off.png"));
+                else if (m_AdamDMedia_insert)
+                    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_d_locked_adam_off.png"));
+                else
+                    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
             }
             else{
-            if (m_AdamTMedia_insert)
-                m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_tcpm_locked_adam_off.png"));
-            else if (m_AdamDMedia_insert)
-                m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_dcpm_locked_adam_off.png"));
-            else
-                m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
+                if (m_AdamTMedia_insert)
+                    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_tcpm_locked_adam_off.png"));
+                else if (m_AdamDMedia_insert)
+                    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_dcpm_locked_adam_off.png"));
+                else
+                    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
             }
         }
     });
@@ -2877,31 +2831,25 @@ void MainWindow::switchToAdamMode()
     // Laad de actuele hardwaresetting van MainWindow in de tijdelijke config
     newCfg.machine = MACHINE_ADAM;
     newCfg.palette = m_paletteIndex;
-    newCfg.sgmEnabled = m_sgmEnabled; // Behoud de SGM-status (deze wordt later uitgeschakeld in applyHardwareConfig)
+    newCfg.sgmEnabled = m_sgmEnabled;
     newCfg.c80Enabled = m_c80Enabled;
     newCfg.Joys = m_ctrlJoys;
     newCfg.AdamNet = m_ctrlAdamNet;
     newCfg.Cartridge = m_ctrlCartridge;
+    applyHardwareConfig(newCfg);
 
-    // 2. Roep de controller aan om de ADAM-modus te starten
-    QMetaObject::invokeMethod(
-        m_colecoController,
-        "resetAdam", // Roept ColecoController::setMachineType(ADAM) aan en reset.
-        Qt::QueuedConnection
-        );
+    // If I come from COLECO to ADAM then I must do a hard reset
     if (emutype==false) powerOff();
      emutype=true;
 
-    // 3. Update de UI en interne status van MainWindow met de nieuwe config.
-    // Dit zal m_machineType op 1 zetten, de statusbalk en de bezels updaten.
-    applyHardwareConfig(newCfg);
-
-     if (m_inputWidget) {
+    if (m_inputWidget) {
          m_inputWidget->setMachineType(1);
          //m_inputWidget->setAdamGameMode(false);  // Standaard keyboard mode
          qDebug() << "[MAINWINDOW] EXTRA: Forced InputWidget to ADAM mode";
      }
 
+     updateMediaMenuState();
+     updateMediaStatusLabels();
 }
 
 void MainWindow::switchToColecoMode()
@@ -2910,26 +2858,19 @@ void MainWindow::switchToColecoMode()
 
     emutype=false;
 
+    onReleaseAll();
+
     if (m_c80Enabled) m_c80Enabled = false;
 
     // 1. Maak een NIEUWE configuratie op basis van de HUIDIGE configuratie
     HardwareConfig newCfg;
     newCfg.machine = MACHINE_COLECO;
     newCfg.palette = m_paletteIndex;
-    newCfg.sgmEnabled = m_sgmEnabled; // Behoud de SGM-status
+    newCfg.sgmEnabled = m_sgmEnabled;
     newCfg.c80Enabled = m_c80Enabled;
     newCfg.Joys = m_ctrlJoys;
     newCfg.AdamNet = m_ctrlAdamNet;
     newCfg.Cartridge = m_ctrlCartridge;
-
-    // 2. Roep de controller aan om de COLECO-modus te starten
-    QMetaObject::invokeMethod(
-        m_colecoController,
-        "resetColeco", // Roept ColecoController::setMachineType(COLECO) aan en reset.
-        Qt::QueuedConnection
-        );
-
-    // 3. Update de UI en interne status van MainWindow met de nieuwe config.
     applyHardwareConfig(newCfg);
 
     if (m_inputWidget) {
@@ -2944,31 +2885,77 @@ void MainWindow::switchToColecoMode()
         Qt::QueuedConnection,
         Q_ARG(bool, m_sgmEnabled) // Gebruik de actuele, in applyHardwareConfig ingestelde status
         );
+
+    updateMediaMenuState();
+    updateMediaStatusLabels();
 }
 
-void MainWindow::onMachineTypeChanged(int newType)
+void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
 {
-    // MACHINE_ADAM (2) -> 1, MACHINE_COLECO (0) -> 0
-    m_machineType = newType;
-
-    if (m_inputWidget) {
-        m_inputWidget->setMachineType(newType);
+    if  (cfg.machine == MACHINE_ADAM)
+    {
+            QMetaObject::invokeMethod(
+                m_colecoController, "resetAdam",
+                Qt::QueuedConnection
+                );
+   }
+    if  (cfg.machine == MACHINE_COLECO)
+    {
+            // COLECO
+            QMetaObject::invokeMethod(
+                m_colecoController, "resetColeco",
+                Qt::QueuedConnection
+                );
     }
 
+    m_machineType = cfg.machine;
+    m_realhardware = cfg.realhardware;
 
-    qDebug() << "[UI] Machine type updated to" << (newType ? "ADAM" : "COLECO") << "via signal.";
+    if (m_paletteIndex != cfg.palette) {
+        m_paletteIndex = cfg.palette;
+        if (m_colecoController) {
+            QMetaObject::invokeMethod(
+                m_colecoController,
+                [this]() { coleco_setpalette(m_paletteIndex); },
+                Qt::QueuedConnection
+                );
+        }
+    }
 
-    HardwareConfig currentCfg;
+    //const bool desiredSgm = (cfg.machine == MACHINE_ADAM) ? cfg.sgmEnabled : false;
+    const bool desiredSgm = cfg.sgmEnabled;
+    m_c80Enabled = cfg.c80Enabled;
 
-    currentCfg.machine = static_cast<MachineType>(newType);;
-    currentCfg.palette = m_paletteIndex;
-    currentCfg.sgmEnabled = m_sgmEnabled;
-    currentCfg.c80Enabled = m_c80Enabled;
-    currentCfg.Joys = m_ctrlJoys;
-    currentCfg.AdamNet = m_ctrlAdamNet;
-    currentCfg.Cartridge = m_ctrlCartridge;
+    if (desiredSgm != m_sgmEnabled) {
+        m_sgmEnabled = desiredSgm;
 
-    applyHardwareConfig(currentCfg);
+        QMetaObject::invokeMethod(
+            m_colecoController, "setSGMEnabled",
+            Qt::QueuedConnection, Q_ARG(bool, m_sgmEnabled)
+            );
+    }
+
+    m_ctrlJoys    = cfg.Joys;
+    m_ctrlAdamNet      = cfg.AdamNet;
+    m_ctrlCartridge = cfg.Cartridge;
+
+    if (m_sysLabel) m_sysLabel->setText(cfg.machine == MACHINE_COLECO ? "COLECO" : "ADAM");
+
+    bool isAdam = (cfg.machine == MACHINE_ADAM);
+    if (m_adamInputMenu) m_adamInputMenu->setEnabled(isAdam);
+
+    // Apply 80-column mode setting
+    coleco_80col_enabled = cfg.c80Enabled ? 1 : 0;
+    if (m_screenWidget) {
+        m_screenWidget->set80ColumnMode(cfg.c80Enabled);
+    }
+
+    updateMediaStatusLabels();
+    updateHardwareWindowMediaDisplay();
+    updateMediaMenuState();
+    updateFullScreenWallpaper();
+
+    saveSettings();
 }
 
 void MainWindow::onPowerBtnClicked()
@@ -3019,6 +3006,17 @@ void MainWindow::onReleaseAll()
 
     // ADAM Cartridge
     onEjectAdamRom();
+
+    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
+    m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png"));
+
+    m_resetAdamLocked  = false;
+    m_AdamDMedia_insert = false;
+    m_AdamTMedia_insert = false;
+    forceStatusBarMediaFlags();
+    m_ColecoMedia_insert = false;
+    m_resetColecoLocked = false;
+
 
     // Tapes (D1-D4)
     for (int drive = 0; drive < 4; ++drive) {

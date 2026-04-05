@@ -139,6 +139,8 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     addRowWithClr(10, tr("ADAM EOS (eos.rom):"),         m_eosBiosPathEdit,    m_eosBiosPathBtn,    m_eosBiosDefaultBtn);
     addRowWithClr(11, tr("ADAM Writer (writer.rom):"),      m_writerBiosPathEdit, m_writerBiosPathBtn, m_writerBiosDefaultBtn);
 
+    addRowWithClr(12, tr("Adam Startup DSK/DDP Image:"), m_adamStartupPathEdit, m_adamStartupPathBtn,  m_adamStartupDefaultBtn);
+
     // Footer knoppen
     m_resetAllPathsBtn = new QPushButton(tr("Reset All Paths"));
     m_resetAllMemoryPathsBtn = new QPushButton(tr("Reset All Sub Paths"));
@@ -201,6 +203,10 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     connect(m_eosBiosDefaultBtn,    &QPushButton::clicked, this, &SettingsWindow::onDefaultEosBiosPath);
     connect(m_writerBiosDefaultBtn, &QPushButton::clicked, this, &SettingsWindow::onDefaultWriterBiosPath);
 
+    // STARTUP ADAM
+    connect(m_adamStartupPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseAdamStartupPath);
+    connect(m_adamStartupDefaultBtn, &QPushButton::clicked, this, &SettingsWindow::onDefaultAdamStartupPath);
+
     connect(m_resetAllPathsBtn, &QPushButton::clicked, this, &SettingsWindow::onResetAllPathsToDefault);
     connect(m_resetAllMemoryPathsBtn, &QPushButton::clicked,this, &SettingsWindow::onResetAllMemoryPaths);
     connect(m_okButton, &QPushButton::clicked, this, &SettingsWindow::accept);
@@ -220,6 +226,7 @@ QString SettingsWindow::cvBezelPath() const     { return pathFromEdit(m_cvBezelP
 QString SettingsWindow::colecoBiosPath() const  { return pathFromEdit(m_colecoBiosPathEdit); }
 QString SettingsWindow::eosBiosPath() const     { return pathFromEdit(m_eosBiosPathEdit); }
 QString SettingsWindow::writerBiosPath() const  { return pathFromEdit(m_writerBiosPathEdit); }
+QString SettingsWindow::adamStartupPath() const  { return pathFromEdit(m_adamStartupPathEdit); }
 
 // --- Setters ---
 void SettingsWindow::setRomPath(const QString &path)          { setPathText(m_romPathEdit, path); }
@@ -234,6 +241,7 @@ void SettingsWindow::setCvBezelPath(const QString &path)      { setPathText(m_cv
 void SettingsWindow::setColecoBiosPath(const QString &path) { setPathText(m_colecoBiosPathEdit, path); }
 void SettingsWindow::setEosBiosPath(const QString &path)    { setPathText(m_eosBiosPathEdit, path); }
 void SettingsWindow::setWriterBiosPath(const QString &path) { setPathText(m_writerBiosPathEdit, path); }
+void SettingsWindow::setAdamStartupPath(const QString &path)    { setPathText(m_adamStartupPathEdit, path); }
 
 void SettingsWindow::onResetAllPathsToDefault()
 {
@@ -249,6 +257,7 @@ void SettingsWindow::onResetAllPathsToDefault()
     setPathText(m_colecoBiosPathEdit, QString());
     setPathText(m_eosBiosPathEdit, QString());
     setPathText(m_writerBiosPathEdit, QString());
+    setPathText(m_adamStartupPathEdit, QString());
 }
 
 void SettingsWindow::onResetAllMemoryPaths()
@@ -348,6 +357,14 @@ void SettingsWindow::onBrowseWriterBiosPath()
     if (!file.isEmpty()) setPathText(m_writerBiosPathEdit, file);
 }
 
+void SettingsWindow::onBrowseAdamStartupPath()
+{
+    QString file = QFileDialog::getOpenFileName(this, tr("Select ADAM Startup DSK/DDP Image"), pathFromEdit(m_adamStartupPathEdit),
+                                                tr("ADAM Images (*.dsk *.ddp);;All Files (*.*)"));
+    if (!file.isEmpty()) setPathText(m_adamStartupPathEdit, file);
+}
+
 void SettingsWindow::onDefaultColecoBiosPath() { setPathText(m_colecoBiosPathEdit, QString()); }
 void SettingsWindow::onDefaultEosBiosPath()    { setPathText(m_eosBiosPathEdit, QString()); }
 void SettingsWindow::onDefaultWriterBiosPath() { setPathText(m_writerBiosPathEdit, QString()); }
+void SettingsWindow::onDefaultAdamStartupPath() { setPathText(m_adamStartupPathEdit, QString()); }

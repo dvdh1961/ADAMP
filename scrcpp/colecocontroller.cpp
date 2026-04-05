@@ -915,10 +915,9 @@ void ColecoController::doHardReset()
 
 void ColecoController::setMachineType(ColecoController::MachineType machineType)
  {
-     const int isAdam = (machineType == 1) ? 1 : 0; // 0=COLECO 1=ADAM
+     const int isAdam = machineType ; // 0=COLECO 1=ADAM
      coleco_set_machine_type(isAdam);
-     qDebug() << "[CTRL] Machine switched to "
-              << (isAdam ? "ADAM" : "COLECO");
+     qDebug() << "[CTRL] Machine switched to "<< (isAdam ? "ADAM" : "COLECO");
 
      // Audio sync
      PsgBridge::init(m_Clock, m_SampleRate);
