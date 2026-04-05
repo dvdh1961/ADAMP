@@ -59,6 +59,35 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 
 ## 🚀 Versions
 
+Version 0.9.04.26 x86_64 Windows & Linux
+
+**Dear Retro Fans,**
+
+A special shout-out to the coders among you…
+
+We are proud to unveil a powerful new addition to our emulator:
+
+**The EOS Media Manager**
+
+Dive deep into your media like never before:
+• Create, modify, copy, and edit your files
+• Build brand-new media from scratch
+• Open your files in a Hex/ASCII editor and tweak every byte to perfection
+
+All these tools are now at your fingertips — just like in the golden days of computing, when every bit mattered.
+
+But we’re not stopping here…
+
+In the next release, we will bring even more power to your setup with a fully integrated **CP/M and T-DOS Media Manager**.
+
+Stay tuned, keep coding… and keep the retro spirit alive.
+
+**— The ADAM+ Team**
+
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/MEDIAMANAGER.png)
+
+---
+
 Version 0.8.02.26 x86_64 Windows & Linux
 
 Dear Retro Fans,
