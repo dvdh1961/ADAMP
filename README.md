@@ -57,6 +57,22 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/dvdh1961)](https://github.com/sponsors/dvdh1961)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://www.paypal.com/donate?business=dannyvdh@pandora.be)
 
+## 💔 From the heart,
+
+Sometimes I find myself wondering whether it still makes sense to continue working on this project. 
+I put a lot of passion into it, and I genuinely believed it would bring value to the community.
+That said, I can’t ignore the concern I feel about the limited positive feedback I’ve been receiving. 
+It seems that many people struggle with the fact that I use LLMs. For me, they are simply a tool—to help 
+express myself more clearly in English and to move forward more efficiently.
+What’s often overlooked is that building an emulator requires far more than just relying on an LLM. 
+That alone won’t get you anywhere. 
+I’ve invested months of work into this, and in reality, the project itself has been years in the making.
+
+Apologies for the more personal and less upbeat message, but I felt it was something I needed to share.
+
+— Danny
+
+
 ## 🚀 Versions
 
 Version 0.9.04.26 x86_64 Windows & Linux
