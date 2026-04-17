@@ -73,6 +73,15 @@ Apologies for the more personal and less upbeat message, but I felt it was somet
 — Danny
 
 
+## 🎮 HARDWARE
+
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_HARDWARE.gif)
+
+The hardware PCBs are finished, and hardware testing can begin.
+Programming of our MCUs and integration of our emulator are now underway.
+From the moment we have a fully working hardware system, everything will be published on our GitHub.
+
+
 ## 🚀 Versions
 
 Version 0.9.04.26 x86_64 Windows & Linux
