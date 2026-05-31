@@ -86,31 +86,32 @@ From the moment we have a fully working hardware system, everything will be publ
 
 Version 1.0.05.26 x86_64 Windows & Linux
 
-To the Adam/Coleco community,
+A new version of ADAM+ is now available.
 
-Again we are proud to unveil a powerful new additions to our emulator:
+This release adds some long-requested functionality, improves usability, and lays important groundwork for future development.
 
-• CP/M tape & disk support
+Highlights of version 1.0.05.26:
 
-• Choice between TMS and F18A
+-CP/M tape and disk support
+-Choice between TMS and F18A video hardware simulation
+-80-column CP/M and T-DOS support when using F18A
+-80-column copy & paste support
+-Various GUI improvements
+-Z80 CPU Space is now writable in the debugger
+-Completely redesigned Settings window with tabbed navigation
+-Option to start directly into your personal favorite application instead of Writer
+-Fixes for Coleco ROM playback issues
+-Major internal source code reorganization
+-Initial groundwork for future plug-in support
 
-• 80-column CP/M & T-DOS support using F18A
+This release is a mix of visible improvements and under-the-hood work that will help us move faster in future versions. 
+The addition of CP/M media support and enhanced F18A functionality are particularly exciting milestones, 
+while the source reorganization and plug-in preparation open the door for future expansion.
 
-• 80-column copy & paste
+As always, feedback, bug reports, and feature suggestions are welcome. 
+If you give the new version a try, let us know what works, what doesn't, and what you'd like to see next.
 
-• Various GUI improvements
-
-• Z80 CPU Space in the debugger is now writable
-
-• Settings window redesigned with tab
-
-• Option to start a personal favorite instead of Writer
-
-• Coleco ROM playback bug fixes
-
-• Major source-structure reorganization
-
-• Preparation for plug-ins
+Happy retro computing!
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/HW_adamp.png)
 
