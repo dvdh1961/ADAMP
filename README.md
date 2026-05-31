@@ -86,7 +86,6 @@ From the moment we have a fully working hardware system, everything will be publ
 
 Version 1.0.05.26 x86_64 Windows & Linux
 
-A new version of ADAM+ is now available.
 
 This release adds some long-requested functionality, improves usability, and lays important groundwork for future development.
 
