@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <QScreen>
 #include <QtGlobal>
+#include <QColor>
 
 // Constants
 static const int BYTES_PER_LINE = 16;
@@ -131,10 +132,11 @@ void MemoryEditDialog::retrieveData(uint8_t *data16)
 {
     bool ok;
     for (int i = 0; i < MAX_BYTES; ++i) {
-        QTableWidgetItem *item = m_byteTable->item(0, i);
+        // Row 0 is the read-only position header (0..F).
+        // Row 1 contains the editable byte values.
+        QTableWidgetItem *item = m_byteTable->item(1, i);
         if (item) {
-            // Gebruik de display rol om de opgeslagen waarde te krijgen
-            QString text = item->text();
+            QString text = item->text().trimmed().toUpper();
             uint value = text.toUInt(&ok, 16);
             if (ok) {
                 data16[i] = static_cast<uint8_t>(value);
@@ -170,18 +172,18 @@ void MemoryEditDialog::onPasteClicked()
     if (hexStringToBytes(clipboardText, data16)) {
         for (int i = 0; i < MAX_BYTES; ++i) {
             QString hexValue = QString("%1").arg(data16[i], 2, 16, QChar('0')).toUpper();
-            QTableWidgetItem *item = m_byteTable->item(0, i);
+            QTableWidgetItem *item = m_byteTable->item(1, i);
 
             if (!item) {
                 item = new QTableWidgetItem();
-                m_byteTable->setItem(0, i, item);
+                m_byteTable->setItem(1, i, item);
             }
 
             item->setText(hexValue);
             item->setTextAlignment(Qt::AlignCenter);
         }
 
-        m_byteTable->setCurrentCell(0, 0);
+        m_byteTable->setCurrentCell(1, 0);
     } else {
         QMessageBox::warning(this, tr("Invalid Content!"),
                              tr("The clipboard content is not a valid memory row (16 bytes). Ensure the data consists of 16 groups of 2 hexadecimal characters separated by spaces."));
@@ -192,7 +194,8 @@ void MemoryEditDialog::setupUi()
 {
     setWindowTitle(tr("Edit data"));
 
-    setFixedSize(550, 150);
+    // Wider dialog so all 16 byte fields fit cleanly.
+    setFixedSize(760, 185);
 
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     QGridLayout *dataLayout = new QGridLayout();
@@ -205,24 +208,39 @@ void MemoryEditDialog::setupUi()
 
     // Geheugentabel
     QLabel *dataLabel = new QLabel(tr("16 Bytes (HEX):"), this);
-    m_byteTable = new QTableWidget(1, MAX_BYTES, this);
+    m_byteTable = new QTableWidget(2, MAX_BYTES, this);
     m_byteTable->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_byteTable->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_byteTable->setFixedSize(450, 30);
+    m_byteTable->setFixedSize(650, 58);
 
     // Configureer de tabel
     m_byteTable->horizontalHeader()->hide();
     m_byteTable->verticalHeader()->hide();
     m_byteTable->setShowGrid(true);
     m_byteTable->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_byteTable->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::SelectedClicked | QAbstractItemView::AnyKeyPressed);
+    m_byteTable->setSelectionBehavior(QAbstractItemView::SelectItems);
+    m_byteTable->setEditTriggers(QAbstractItemView::DoubleClicked |
+                                 QAbstractItemView::SelectedClicked |
+                                 QAbstractItemView::AnyKeyPressed);
 
-    int columnWidth = 25;
+    const int columnWidth = 38;
     for (int i = 0; i < MAX_BYTES; ++i) {
         m_byteTable->setColumnWidth(i, columnWidth);
     }
 
+    m_byteTable->setRowHeight(0, 22);
+    m_byteTable->setRowHeight(1, 28);
     m_byteTable->setItemDelegate(new HexItemDelegate(m_byteTable));
+
+    // Read-only position header row: 0..F in green.
+    for (int i = 0; i < MAX_BYTES; ++i) {
+        QTableWidgetItem *posItem = new QTableWidgetItem(QString("%1").arg(i, 1, 16).toUpper());
+        posItem->setTextAlignment(Qt::AlignCenter);
+        posItem->setForeground(QColor("#00FF66"));
+        posItem->setBackground(QColor("#202020"));
+        posItem->setFlags(Qt::ItemIsEnabled); // readonly, not selectable/editable
+        m_byteTable->setItem(0, i, posItem);
+    }
 
     // Layout opbouw
     dataLayout->addWidget(m_addressLabel, 0, 0);
@@ -312,10 +330,10 @@ void MemoryEditDialog::loadData(const uint8_t *data16)
 
         item->setTextAlignment(Qt::AlignCenter);
 
-        m_byteTable->setItem(0, i, item);
+        m_byteTable->setItem(1, i, item);
     }
 
-    m_byteTable->setCurrentCell(0, 0);
+    m_byteTable->setCurrentCell(1, 0);
     m_okButton->setEnabled(true);
 }
 

@@ -30,7 +30,7 @@ int main(int argc, char *argv[])
         QFont appFont(family,10);
         a.setFont(appFont);
 
-        qDebug() << "Succesvol geladen familie:" << family;
+        //qDebug() << "Succesvol geladen familie:" << family;
     } else {
         qDebug() << "Font kon niet worden geladen uit resources!";
     }

@@ -12,7 +12,7 @@
 #include "spritewindow.h"
 #include "settingswindow.h"
 #include "hardwarewindow.h"
-#include "coleco.h"
+#include "cv.h"
 #include "joypadwindow.h"
 #include "printwindow.h"
 #include "simplejoystick.h"

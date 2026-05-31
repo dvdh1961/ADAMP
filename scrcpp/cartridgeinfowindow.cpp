@@ -1,5 +1,5 @@
 #include "cartridgeinfowindow.h"
-#include "coleco.h"
+#include "cv.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>

@@ -44,7 +44,6 @@ public:
     Q_ENUM(MachineType)
     bool AlreadyReset = false;
     bool m_sgm_enabled = false;
-    bool m_switchingMachineType = false;
 
 private:
     std::atomic_bool m_running {false};
@@ -67,7 +66,6 @@ public slots:
     void AdamCartridge(const QString &romPath);
     void ejectAdamCartridge();
     void ColecoCartridge(const QString &romPath);
-    void resetDkaLoadedCartridge();
     void ejectColecoCartridge();
     void resetMachine();
     void resethMachine();
@@ -91,11 +89,10 @@ public slots:
     void setMachineType(MachineType machineType);
     void resetAdam();
     void resetColeco();
-    void coldStartAdam();
     void loadBiosRoms(const QString& colecoPath, const QString& eosPath, const QString& writerPath);
     void updateBiosStatus();
-    void prepareForNewCRomAndPauseOnBios(bool doReset = true);
-    void prepareForNewARomAndPauseOnBios(bool doReset = true);
+    void prepareForNewCRomAndPauseOnBios();
+    void prepareForNewARomAndPauseOnBios();
     void startWithBios(const QString& colecoPath,
                        const QString& eosPath,
                        const QString& writerPath);
@@ -103,7 +100,6 @@ public slots:
 
 public slots:
     void setDTsoundEnabled(bool enabled);
-    void bootPreparedColecoCartridge(const QString &romPath);
 
 signals:
     void frameReady(const QImage &frame);
@@ -153,7 +149,6 @@ private:
     bool m_preserveMediaOnStop = false;
 
     bool m_pendingCpmBootstrap = false;
-    bool m_cartridgeBootInProgress = false;
 
     void onResetPressed();
     enum class BootPlan {

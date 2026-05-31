@@ -4,6 +4,7 @@
 #include <QDialog>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QComboBox>
 
 class SettingsWindow : public QDialog
 {
@@ -26,6 +27,7 @@ public:
     QString eosBiosPath() const;
     QString writerBiosPath() const;
     QString adamStartupPath() const;
+    int adamBootMode() const;
 
     // Setters
     void setRomPath(const QString &path);
@@ -41,6 +43,7 @@ public:
     void setEosBiosPath(const QString &path);
     void setWriterBiosPath(const QString &path);
     void setAdamStartupPath(const QString &path);
+    void setAdamBootMode(int mode);
 
 private slots:
     void onBrowseRomPath();
@@ -72,6 +75,7 @@ private:
     QLineEdit *m_adamBezelPathEdit, *m_cvBezelPathEdit;
     QLineEdit *m_colecoBiosPathEdit, *m_eosBiosPathEdit, *m_writerBiosPathEdit;
     QLineEdit *m_adamStartupPathEdit;
+    QComboBox *m_adamBootModeCombo = nullptr;
 
     // SET Knoppen
     QPushButton *m_romPathBtn, *m_diskPathBtn, *m_tapePathBtn, *m_statePathBtn;

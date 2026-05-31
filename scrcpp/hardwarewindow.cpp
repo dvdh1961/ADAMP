@@ -1,7 +1,7 @@
 #include "hardwarewindow.h"
 #include "printwindow.h"
 
-#include "coleco.h"
+#include "cv.h"
 
 #include <QApplication>
 #include <QGroupBox>
@@ -178,7 +178,7 @@ void HardwareWindow::buildUi()
 
     auto *layHw = new QHBoxLayout;
     layHw->addWidget(makeLabeledButton(m_btnSGM,  ":/images/images/hw_sgm.png",  "Opcode SGM",       false));
-    layHw->addWidget(makeLabeledButton(m_btn80C, ":/images/images/hw_c80.png", "C80 T-DOS", false));
+    layHw->addWidget(makeLabeledButton(m_btn80C, ":/images/images/hw_c80.png", "80 Terminal", false));
 
     auto *wrapPrinter = makeLabeledButton(m_btnPrinter, ":/images/images/hw_printer.png", "Printer Output", false);
     layHw->addWidget(wrapPrinter);
@@ -195,13 +195,24 @@ void HardwareWindow::buildUi()
     // === Video ===
     m_groupVideo = new QGroupBox("Video", this);
     auto *lblPal  = new QLabel("Palette", m_groupVideo);
+    auto *lblVdp  = new QLabel("VDP", m_groupVideo);
 
     m_cboPalette = new QComboBox(m_groupVideo);
     m_cboPalette->addItems({"Coleco", "TMS9918", "MSX", "Grayscale"});
 
+    m_cboVdp = new QComboBox(m_groupVideo);
+    m_cboVdp->addItem("TMS9928A / TMS9918A", VDP_TMS);
+    m_cboVdp->addItem("F18A", VDP_F18A);
+
+    //m_chkF18a80SelfTest = new QCheckBox("F18A 80-column self-test", m_groupVideo);
+   // m_chkF18a80SelfTest->setToolTip("Shows the internal F18A 80-column diagnostic screen. Only useful when VDP is F18A.");
+
     auto *layVidTop = new QGridLayout;
     layVidTop->addWidget(lblPal,       0, 0);
     layVidTop->addWidget(m_cboPalette, 0, 1);
+    layVidTop->addWidget(lblVdp,       1, 0);
+    layVidTop->addWidget(m_cboVdp,     1, 1);
+    //layVidTop->addWidget(m_chkF18a80SelfTest, 2, 0, 1, 2);
 
     // 16 kleur-swatch
     auto *palLayout = new QGridLayout();
@@ -237,10 +248,20 @@ void HardwareWindow::buildUi()
     connect(m_cboPalette, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &HardwareWindow::onPaletteChanged);
 
+    connect(m_cboVdp, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int){
+                const bool isF18A = (m_cboVdp->currentData().toInt() == VDP_F18A);
+                //m_chkF18a80SelfTest->setEnabled(isF18A);
+                //if (!isF18A)
+                   // m_chkF18a80SelfTest->setChecked(false);
+
+                updateAvailability();
+            });
+
     updatePaletteSwatches();
 
     // === Emulation ===
-    m_groupEmu = new QGroupBox("Hardware", this);
+    m_groupEmu = new QGroupBox("Loaded Media", this);
 
     // Image
     QLabel* imgEmu = new QLabel(m_groupEmu);
@@ -261,7 +282,7 @@ void HardwareWindow::buildUi()
     layEmuGrid->setColumnStretch(1, 7); // Beschrijving Label (Brede kolom)
 
     // --- Headers (Rij 0) ---
-    QLabel *lblHwCol = new QLabel("Code", m_groupEmu);
+    QLabel *lblHwCol = new QLabel("Dev", m_groupEmu);
     QLabel *lblDescCol = new QLabel("Program/Game Description", m_groupEmu);
 
     // Stijl voor de linker header (Kolom 0): top, bottom, right, left border
@@ -308,22 +329,22 @@ void HardwareWindow::buildUi()
 
     // Rijen toevoegen en labels initialiseren met default waarden
     m_lblEmuCC = createEmuLabel("No coleco cartridge");
-    addTableRow(1, "CC", m_lblEmuCC);
+    addTableRow(1, "CV ROM", m_lblEmuCC);
 
     m_lblEmuCA = createEmuLabel("No adam cartridge");
-    addTableRow(2, "CA", m_lblEmuCA);
+    addTableRow(2, "AD ROM", m_lblEmuCA);
 
     m_lblEmuD1 = createEmuLabel("No tape");
-    addTableRow(3, "D1", m_lblEmuD1);
+    addTableRow(3, "TAPE D1", m_lblEmuD1);
 
     m_lblEmuD2 = createEmuLabel("No tape");
-    addTableRow(4, "D2", m_lblEmuD2);
+    addTableRow(4, "TAPE D2", m_lblEmuD2);
 
     m_lblEmuD5 = createEmuLabel("No disc");
-    addTableRow(5, "D5", m_lblEmuD5);
+    addTableRow(5, "DISK D5", m_lblEmuD5);
 
     m_lblEmuD6 = createEmuLabel("No disc");
-    addTableRow(6, "D6", m_lblEmuD6);
+    addTableRow(6, "DISK D6", m_lblEmuD6);
 
     // Emu Layout (combineert image, widgets en grid)
     auto *layEmu = new QVBoxLayout;
@@ -410,12 +431,27 @@ void HardwareWindow::loadFromConfig(const HardwareConfig& c)
     //m_cboDisplay->setCurrentIndex(qBound(0, c.renderMode, m_cboDisplay->count()-1));
     m_cboPalette->setCurrentIndex(qBound(0, c.palette,    m_cboPalette->count()-1));
 
+    const int vdpIdx = m_cboVdp->findData(c.vdpType == VDP_F18A ? VDP_F18A : VDP_TMS);
+    m_cboVdp->setCurrentIndex(vdpIdx >= 0 ? vdpIdx : 0);
+   // m_chkF18a80SelfTest->setChecked(c.f18a80SelfTest && c.vdpType == VDP_F18A);
+   // m_chkF18a80SelfTest->setEnabled(c.vdpType == VDP_F18A);
+
     if (!m_loading) { // Zorg dat dit alleen gebeurt bij het openen van de dialoog
         HardwareWindow::m_sgmSelectionState = c.sgmEnabled;
     }
     // Additional hardware
     m_btnSGM->setChecked(HardwareWindow::m_sgmSelectionState);
-    m_btn80C->setChecked(c.c80Enabled);
+
+    /* Keep the Hardware window in sync with the live emulator state.
+     * 80 Terminal is only selectable when F18A is selected.
+     * When CP/M80 is switched back to 40C from the ScreenWidget popup,
+     * coleco_80col_enabled is cleared immediately. The saved HardwareConfig
+     * can still contain c80Enabled=true, so do not blindly show the button ON.
+     */
+    const bool isF18A = (c.vdpType == VDP_F18A);
+    const bool liveC80Enabled = (isF18A && c.c80Enabled && (coleco_80col_enabled != 0));
+    HardwareWindow::m_c80SelectionState = liveC80Enabled;
+    m_btn80C->setChecked(liveC80Enabled);
 
     // Real Hardware
     m_btnJoys->setChecked(c.Joys);
@@ -436,11 +472,15 @@ HardwareConfig HardwareWindow::readFromUi() const
     c.realhardware = m_btnAdamP->isChecked();
 
     // Video
-    c.palette    = m_cboPalette->currentIndex();
+    c.palette = m_cboPalette->currentIndex();
+    c.vdpType = m_cboVdp ? m_cboVdp->currentData().toInt() : VDP_TMS;
+    if (c.vdpType != VDP_F18A)
+        c.vdpType = VDP_TMS;
+   // c.f18a80SelfTest = (c.vdpType == VDP_F18A) && m_chkF18a80SelfTest && m_chkF18a80SelfTest->isChecked();
 
     // Additional hardware
     c.sgmEnabled  = !m_btnAdam->isChecked() && m_btnSGM->isChecked();
-    c.c80Enabled = m_btn80C->isChecked();
+    c.c80Enabled = (c.vdpType == VDP_F18A) && m_btn80C->isChecked();
 
     // Real hardware
     c.Joys = m_btnJoys->isChecked();
@@ -456,20 +496,25 @@ void HardwareWindow::updateAvailability()
         m_btnColeco->setChecked(true);
     }
 
-    const bool isAdam    = m_btnAdam->isChecked();
+    const bool isAdam = m_btnAdam->isChecked();
+    const bool isF18A = (m_cboVdp && m_cboVdp->currentData().toInt() == VDP_F18A);
+    const bool c80Available = isAdam && isF18A;
 
     if (isAdam) {
 
         m_btnSGM->setChecked(false);
         m_btnSGM->setEnabled(false);
-        m_btn80C->setEnabled(true);
 
     } else {
         m_btnSGM->setEnabled(true);
-        m_btn80C->setEnabled(false);
-        m_btn80C->setChecked(HardwareWindow::m_c80SelectionState);
+    }
+
+    m_btn80C->setEnabled(c80Available);
+    if (!c80Available) {
         m_btn80C->setChecked(false);
-     }
+        HardwareWindow::m_c80SelectionState = false;
+    }
+
     m_btnPrinter->setEnabled(true);
 
 
@@ -507,6 +552,14 @@ void HardwareWindow::updateAvailability()
 
 void HardwareWindow::onToggleC80(bool checked)
 {
+    const bool isF18A = (m_cboVdp && m_cboVdp->currentData().toInt() == VDP_F18A);
+    if (!isF18A) {
+        m_c80SelectionState = false;
+        if (m_btn80C)
+            m_btn80C->setChecked(false);
+        return;
+    }
+
     m_c80SelectionState = checked;
 }
 

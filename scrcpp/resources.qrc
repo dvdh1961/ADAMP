@@ -66,6 +66,16 @@
         <file>images/real_adamnet.png</file>
         <file>images/real_cartridge.png</file>
         <file>images/real_joys.png</file>
+        <file>images/ADAMP_SPLASH.png</file>
+        <file>images/adam_cpm_logo.png</file>
+        <file>images/cpm_smartkeys.png</file>
+        <file>images/adam_tdos_logo.png</file>
+        <file>images/TAB_MEDIA.png</file>
+        <file>images/TAB_DEBUG.png</file>
+        <file>images/TAB_BIOS.png</file>
+        <file>images/TAB_GENERAL.png</file>
+        <file>images/TAB_STATES.png</file>
+        <file>images/TAB_PLUG-INS.png</file>
     </qresource>
     <qresource prefix="/sounds">
         <file>sounds/adam_tape.wav</file>

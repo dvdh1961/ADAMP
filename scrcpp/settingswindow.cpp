@@ -12,6 +12,9 @@
 #include <QSettings>
 #include <QCoreApplication>
 #include <QDir>
+#include <QTabWidget>
+#include <QSizePolicy>
+#include <QComboBox>
 
 namespace {
 
@@ -49,22 +52,17 @@ SettingsWindow::SettingsWindow(QWidget *parent)
 {
     setWindowTitle(tr("Settings"));
     setWindowFlags(windowFlags() & ~Qt::WindowCloseButtonHint);
-    setFixedWidth(750);
-    setFixedHeight(500);
+    setFixedWidth(780);
+    setFixedHeight(450);
 
-    QGridLayout *pathsLayout = new QGridLayout;
-    pathsLayout->setSpacing(2);
-    pathsLayout->setContentsMargins(15, 1, 15, 1);
-
-    pathsLayout->setColumnStretch(1, 0);
-
-    // --- AANGEPASTE STYLESHEET: Icoon enkele pixels omhoog ---
+    // Icoonknoppen niet kunstmatig omhoog/omlaag duwen:
+    // de QGridLayout centreert ze verticaal op dezelfde baseline als de QLineEdit.
     const QString iconButtonStyle =
         "QPushButton { "
         "  border: none; "
         "  background: transparent; "
-        "  padding-bottom: 4px; " // Dit duwt de icon naar boven
-        "  margin-top: -6px; "    // Haalt de hele knop iets omhoog
+        "  padding: 0px; "
+        "  margin: 0px; "
         "}"
         "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }";
 
@@ -77,7 +75,6 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     const QSize iconSize(60, 32);
     const QSize btnSize = iconSize + QSize(10, 10);
 
-    // Helper om een knop consistent te initialiseren
     auto setupBtn = [&](QPushButton* &btn, const QString &iconPath, const QString &tooltip) {
         btn = new QPushButton;
         btn->setIcon(QIcon(iconPath));
@@ -89,57 +86,158 @@ SettingsWindow::SettingsWindow(QWidget *parent)
         btn->setToolTip(tooltip);
     };
 
-    // Helper voor de eerste 3 kolommen (Label, Edit, SET)
-    auto addBaseRow = [&](int row, const QString &label, QLineEdit* &edit, QPushButton* &sBtn) {
-        pathsLayout->addWidget(new QLabel(label), row, 0);
+    constexpr int labelColumnWidth = 190;
+    constexpr int editColumnWidth  = 350;
+
+    auto createTabLayout = []() {
+        QGridLayout *layout = new QGridLayout;
+        layout->setHorizontalSpacing(8);
+        layout->setVerticalSpacing(8);
+        // Data links laten starten: exact 10 px marge vanaf de tab-inhoud.
+        layout->setContentsMargins(10, 18, 10, 18);
+
+        // Vaste grid-kolommen in elke tab:
+        // 0 = label, 1 = path/edit, 2 = browse, 3 = load/default, 4 = spacer.
+        layout->setColumnMinimumWidth(0, 190);
+        layout->setColumnMinimumWidth(1, 350);
+        layout->setColumnMinimumWidth(2, 70);
+        layout->setColumnMinimumWidth(3, 70);
+        layout->setColumnStretch(0, 0);
+        layout->setColumnStretch(1, 0);
+        layout->setColumnStretch(2, 0);
+        layout->setColumnStretch(3, 0);
+        layout->setColumnStretch(4, 1);
+        layout->setRowStretch(99, 1);
+        return layout;
+    };
+
+    auto addBaseRow = [&](QGridLayout *layout, int row, const QString &label,
+                          QLineEdit* &edit, QPushButton* &sBtn,
+                          const QString &browseToolTip = QString()) {
+        QLabel *lbl = new QLabel(label);
+        lbl->setFixedWidth(labelColumnWidth);
+        lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        layout->addWidget(lbl, row, 0, Qt::AlignVCenter);
+
         edit = new QLineEdit;
         edit->setReadOnly(true);
-        edit->setFixedWidth(350);
-        pathsLayout->addWidget(edit, row, 1);
-        setupBtn(sBtn, ":/images/images/BROWSE.png", tr("Browse Directory"));
-        pathsLayout->addWidget(sBtn, row, 2);
+        edit->setFixedWidth(editColumnWidth);
+        edit->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        layout->addWidget(edit, row, 1, Qt::AlignVCenter);
+
+        setupBtn(sBtn, ":/images/images/BROWSE.png",
+                 browseToolTip.isEmpty() ? tr("Browse Directory") : browseToolTip);
+        layout->addWidget(sBtn, row, 2, Qt::AlignVCenter | Qt::AlignHCenter);
     };
 
-    // --- Rij-types definiëren ---
-
-    // Type 1: Rijen 0-6 (Geen actieknop in kolom 4)
-    auto addRowNoAction = [&](int row, const QString &label, QLineEdit* &edit, QPushButton* &sBtn) {
-        addBaseRow(row, label, edit, sBtn);
+    auto addRowNoAction = [&](QGridLayout *layout, int row, const QString &label,
+                              QLineEdit* &edit, QPushButton* &sBtn,
+                              const QString &browseToolTip = QString()) {
+        addBaseRow(layout, row, label, edit, sBtn, browseToolTip);
     };
 
-    // Type 2: Rijen 7-8 (LOAD knop in kolom 4)
-    auto addRowWithLoad = [&](int row, const QString &label, QLineEdit* &edit, QPushButton* &sBtn, QPushButton* &lBtn) {
-        addBaseRow(row, label, edit, sBtn);
+    auto addRowWithLoad = [&](QGridLayout *layout, int row, const QString &label,
+                              QLineEdit* &edit, QPushButton* &sBtn, QPushButton* &lBtn,
+                              const QString &browseToolTip = QString()) {
+        addBaseRow(layout, row, label, edit, sBtn, browseToolTip);
         setupBtn(lBtn, ":/images/images/LOAD.png", tr("Load Image File"));
-        pathsLayout->addWidget(lBtn, row, 3);
+        layout->addWidget(lBtn, row, 3, Qt::AlignVCenter | Qt::AlignHCenter);
     };
 
-    // Type 3: Rijen 9-11 (CLR knop in kolom 4)
-    auto addRowWithClr = [&](int row, const QString &label, QLineEdit* &edit, QPushButton* &sBtn, QPushButton* &cBtn) {
-        addBaseRow(row, label, edit, sBtn);
+    auto addRowWithClr = [&](QGridLayout *layout, int row, const QString &label,
+                             QLineEdit* &edit, QPushButton* &sBtn, QPushButton* &cBtn,
+                             const QString &browseToolTip = QString()) {
+        addBaseRow(layout, row, label, edit, sBtn, browseToolTip);
         setupBtn(cBtn, ":/images/images/DEFAULT.png", tr("Reset to Default"));
-        pathsLayout->addWidget(cBtn, row, 3);
+        layout->addWidget(cBtn, row, 3, Qt::AlignVCenter | Qt::AlignHCenter);
     };
 
-    // --- Het Grid opbouwen ---
-    addRowNoAction(0, tr("ROM Path:"),         m_romPathEdit,        m_romPathBtn);
-    addRowNoAction(1, tr("Disk Path:"),        m_diskPathEdit,       m_diskPathBtn);
-    addRowNoAction(2, tr("Tape Path:"),        m_tapePathEdit,       m_tapePathBtn);
-    addRowNoAction(3, tr("State Path:"),       m_statePathEdit,      m_statePathBtn);
-    addRowNoAction(4, tr("Breakpoints Path:"), m_breakpointPathEdit, m_breakpointPathBtn);
-    addRowNoAction(5, tr("Screenshot Path:"),  m_screenshotPathEdit, m_screenshotPathBtn);
-    addRowNoAction(6, tr("Symbols Path:"),     m_symbolPathEdit,     m_symbolPathBtn);
 
-    // Bezel paden (SET voor dir, LOAD voor file)
-    addRowWithLoad(7, tr("ADAM backImage:"),   m_adamBezelPathEdit,  m_adamBezelPathBtn,  m_adamBezelLoadBtn);
-    addRowWithLoad(8, tr("Coleco backImage:"), m_cvBezelPathEdit,    m_cvBezelPathBtn,    m_cvBezelLoadBtn);
+    auto addComboRow = [&](QGridLayout *layout, int row, const QString &label,
+                           QComboBox* &combo) {
+        QLabel *lbl = new QLabel(label);
+        lbl->setFixedWidth(labelColumnWidth);
+        lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        layout->addWidget(lbl, row, 0, Qt::AlignVCenter);
 
-    // BIOS paden (SET voor file, CLR voor reset)
-    addRowWithClr(9,  tr("Coleco BIOS (coleco.rom)):"),      m_colecoBiosPathEdit, m_colecoBiosPathBtn, m_colecoBiosDefaultBtn);
-    addRowWithClr(10, tr("ADAM EOS (eos.rom):"),         m_eosBiosPathEdit,    m_eosBiosPathBtn,    m_eosBiosDefaultBtn);
-    addRowWithClr(11, tr("ADAM Writer (writer.rom):"),      m_writerBiosPathEdit, m_writerBiosPathBtn, m_writerBiosDefaultBtn);
+        combo = new QComboBox;
+        combo->setFixedWidth(editColumnWidth);
+        combo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        combo->addItem(tr("Writer"), 0);
+        combo->addItem(tr("Startup DSK/DDP"), 1);
+        //combo->addItem(tr("BASIC DSK/DDP"), 2);
+        combo->setToolTip(tr("ADAM boot preset"));
+        layout->addWidget(combo, row, 1, Qt::AlignVCenter);
+    };
 
-    addRowWithClr(12, tr("Adam Startup DSK/DDP Image:"), m_adamStartupPathEdit, m_adamStartupPathBtn,  m_adamStartupDefaultBtn);
+
+    auto addTabBottomIcon = [&](QGridLayout *layout, const QString &tabName) {
+        QLabel *iconLabel = new QLabel;
+        iconLabel->setFixedSize(128, 128);
+        iconLabel->setAlignment(Qt::AlignLeft | Qt::AlignBottom);
+
+        const QString iconPath = QString(":/images/images/TAB_%1.png").arg(tabName);
+        QPixmap pix(iconPath);
+        if (!pix.isNull()) {
+            iconLabel->setPixmap(pix.scaled(128, 128, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        }
+        iconLabel->setToolTip(tabName);
+
+        // Rij 99 is stretch in createTabLayout(); daardoor blijft dit icoon netjes linksonder.
+        layout->addWidget(iconLabel, 100, 0, 1, 1, Qt::AlignLeft | Qt::AlignBottom);
+    };
+
+    QTabWidget *tabs = new QTabWidget(this);
+
+    QWidget *mediaTab = new QWidget(tabs);
+    QGridLayout *mediaLayout = createTabLayout();
+    mediaTab->setLayout(mediaLayout);
+    addRowNoAction(mediaLayout, 0, tr("ROM Path:"),  m_romPathEdit,  m_romPathBtn);
+    addRowNoAction(mediaLayout, 1, tr("Disk Path:"), m_diskPathEdit, m_diskPathBtn);
+    addRowNoAction(mediaLayout, 2, tr("Tape Path:"), m_tapePathEdit, m_tapePathBtn);
+    addTabBottomIcon(mediaLayout, "MEDIA");
+    tabs->addTab(mediaTab, tr("MEDIA"));
+
+    QWidget *debugTab = new QWidget(tabs);
+    QGridLayout *debugLayout = createTabLayout();
+    debugTab->setLayout(debugLayout);
+    addRowNoAction(debugLayout, 0, tr("Breakpoints Path:"), m_breakpointPathEdit, m_breakpointPathBtn);
+    addRowNoAction(debugLayout, 1, tr("Symbols Path:"),     m_symbolPathEdit,     m_symbolPathBtn);
+    addRowNoAction(debugLayout, 2, tr("Screenshot Path:"),  m_screenshotPathEdit, m_screenshotPathBtn);
+    addTabBottomIcon(debugLayout, "DEBUG");
+    tabs->addTab(debugTab, tr("DEBUG"));
+
+    QWidget *biosTab = new QWidget(tabs);
+    QGridLayout *biosLayout = createTabLayout();
+    biosTab->setLayout(biosLayout);
+    addRowWithClr(biosLayout, 0, tr("Coleco BIOS (coleco.rom):"), m_colecoBiosPathEdit, m_colecoBiosPathBtn, m_colecoBiosDefaultBtn, tr("Browse BIOS File"));
+    addRowWithClr(biosLayout, 1, tr("ADAM EOS (eos.rom):"),       m_eosBiosPathEdit,    m_eosBiosPathBtn,    m_eosBiosDefaultBtn,    tr("Browse BIOS File"));
+    addRowWithClr(biosLayout, 2, tr("ADAM Writer (writer.rom):"), m_writerBiosPathEdit, m_writerBiosPathBtn, m_writerBiosDefaultBtn, tr("Browse BIOS File"));
+    addTabBottomIcon(biosLayout, "BIOS");
+    tabs->addTab(biosTab, tr("BIOS"));
+
+    QWidget *generalTab = new QWidget(tabs);
+    QGridLayout *generalLayout = createTabLayout();
+    generalTab->setLayout(generalLayout);
+    addRowWithClr(generalLayout, 0, tr("ADAM Startup DSK/DDP Image:"), m_adamStartupPathEdit, m_adamStartupPathBtn, m_adamStartupDefaultBtn, tr("Browse ADAM Startup Image"));
+    addComboRow(generalLayout, 1, tr("Boot Mode:"), m_adamBootModeCombo);
+    addRowWithLoad(generalLayout, 2, tr("ADAM backImage:"),           m_adamBezelPathEdit,  m_adamBezelPathBtn,  m_adamBezelLoadBtn);
+    addRowWithLoad(generalLayout, 3, tr("Coleco backImage:"),         m_cvBezelPathEdit,    m_cvBezelPathBtn,    m_cvBezelLoadBtn);
+    addTabBottomIcon(generalLayout, "GENERAL");
+    tabs->addTab(generalTab, tr("GENERAL"));
+
+    QWidget *statesTab = new QWidget(tabs);
+    QGridLayout *statesLayout = createTabLayout();
+    statesTab->setLayout(statesLayout);
+    addRowNoAction(statesLayout, 0, tr("State Path:"), m_statePathEdit, m_statePathBtn);
+    addTabBottomIcon(statesLayout, "STATES");
+    tabs->addTab(statesTab, tr("STATES"));
+
+    QWidget *pluginsTab = new QWidget(tabs);
+    QGridLayout *pluginsLayout = createTabLayout();
+    pluginsTab->setLayout(pluginsLayout);
+    addTabBottomIcon(pluginsLayout, "PLUG-INS");
+    tabs->addTab(pluginsTab, tr("PLUG-INS"));
 
     // Footer knoppen
     m_resetAllPathsBtn = new QPushButton(tr("Reset All Paths"));
@@ -174,9 +272,9 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     buttonLayout->addWidget(m_okButton);
     buttonLayout->addWidget(m_cancelButton);
 
-    // Hoofdlayout
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
-    mainLayout->addLayout(pathsLayout);
+    mainLayout->setContentsMargins(10, 10, 10, 10);
+    mainLayout->addWidget(tabs);
     mainLayout->addSpacing(10);
     mainLayout->addLayout(buttonLayout);
 
@@ -227,6 +325,10 @@ QString SettingsWindow::colecoBiosPath() const  { return pathFromEdit(m_colecoBi
 QString SettingsWindow::eosBiosPath() const     { return pathFromEdit(m_eosBiosPathEdit); }
 QString SettingsWindow::writerBiosPath() const  { return pathFromEdit(m_writerBiosPathEdit); }
 QString SettingsWindow::adamStartupPath() const  { return pathFromEdit(m_adamStartupPathEdit); }
+int SettingsWindow::adamBootMode() const
+{
+    return m_adamBootModeCombo ? m_adamBootModeCombo->currentData().toInt() : 0;
+}
 
 // --- Setters ---
 void SettingsWindow::setRomPath(const QString &path)          { setPathText(m_romPathEdit, path); }
@@ -242,6 +344,12 @@ void SettingsWindow::setColecoBiosPath(const QString &path) { setPathText(m_cole
 void SettingsWindow::setEosBiosPath(const QString &path)    { setPathText(m_eosBiosPathEdit, path); }
 void SettingsWindow::setWriterBiosPath(const QString &path) { setPathText(m_writerBiosPathEdit, path); }
 void SettingsWindow::setAdamStartupPath(const QString &path)    { setPathText(m_adamStartupPathEdit, path); }
+void SettingsWindow::setAdamBootMode(int mode)
+{
+    if (!m_adamBootModeCombo) return;
+    const int index = m_adamBootModeCombo->findData(mode);
+    m_adamBootModeCombo->setCurrentIndex(index >= 0 ? index : 0);
+}
 
 void SettingsWindow::onResetAllPathsToDefault()
 {
@@ -258,6 +366,7 @@ void SettingsWindow::onResetAllPathsToDefault()
     setPathText(m_eosBiosPathEdit, QString());
     setPathText(m_writerBiosPathEdit, QString());
     setPathText(m_adamStartupPathEdit, QString());
+    setAdamBootMode(0);
 }
 
 void SettingsWindow::onResetAllMemoryPaths()

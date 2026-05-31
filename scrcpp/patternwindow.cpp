@@ -20,7 +20,7 @@
 #include <QPainter>
 #include <QImage>
 
-#include "coleco.h"
+#include "cv.h"
 
 extern "C" {
 #include "emu.h"

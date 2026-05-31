@@ -1,5 +1,5 @@
 #include "printwindow.h"
-#include "adamnet.h"
+#include "adnet.h"
 
 #include <QTableWidget>
 #include <QHeaderView>

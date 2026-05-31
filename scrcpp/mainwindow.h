@@ -49,6 +49,12 @@ enum ColorFilterMode {
     ColorFilterRGB
 };
 
+enum AdamBootMode {
+    AdamBootWriter = 0,
+    AdamBootStartupImage = 1,
+    AdamBootBasicImage = 2
+};
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -62,6 +68,8 @@ public:
     void setDebugger(DebuggerWindow *debugger);
     bool emutype = 0;
     bool m_cpm_status = 0;
+    void showSplash();
+    void centerSplash();
 
 public slots:
     void powerOff();
@@ -168,6 +176,8 @@ private:
     void updateHardwareWindowMediaDisplay();
     void handleFatalBiosError(const QString& errorMessage);
     void loadExternalBiosRoms();
+    void mountAdamStartupImageIfNeeded();
+    void stopResetCartBlinkAndSetFinalIcon();
 
 private:
     // emulator thread en controller
@@ -288,6 +298,8 @@ private:
     QLabel *m_sepLabelMedia2c     = nullptr;
     QLabel *m_sepLabelMedia2d     = nullptr;
     QLabel* m_wallpaperLabel      = nullptr;
+    QFrame *m_bottomBlackBar   = nullptr;
+    QLabel *m_splashLabel            = nullptr;
     QMenu *m_diskMenuA            = nullptr;
     QMenu *m_diskMenuB            = nullptr;
     QMenu *m_diskMenuC            = nullptr;
@@ -363,6 +375,7 @@ private:
     QString m_adamBezelPath;
     QString m_cvBezelPath;
     QString m_adamStartupPath;
+    int m_adamBootMode = AdamBootWriter;
     bool m_isStartupPending = false;
     QString m_colecoBiosPath;
     QString m_eosBiosPath;
@@ -382,6 +395,8 @@ private:
     QAction *m_actWriterBiosSource = nullptr;
 
     int m_paletteIndex = 0;
+    int m_vdpType = 0; // 0=TMS, 1=F18A
+    bool m_f18a80SelfTest = false;
     int m_machineType = 0; // 0=Coleco, 1=ADAM
     bool m_realhardware = false;
     bool m_sgmEnabled       = false;
@@ -394,13 +409,17 @@ private:
     bool m_AdamDMedia_insert = false;
     bool m_resetColecoLocked = false;
     bool m_ColecoMedia_insert = false;
+    bool m_pendingColecoBoot = false;
+    QString m_pendingColecoRomPath;
+    bool m_skipNextAdamFullResetFromColeco = false;
 
     QSoundEffect *m_diskSound = nullptr;
     QSoundEffect *m_tapeSound = nullptr;
 
     AimDialog  *m_imageManagerDialog = nullptr;
     QAction *m_actImageManager = nullptr;
-
+    bool m_settingsLoaded = false;
+    bool m_allowSaveSettings = false;
 };
 
 #endif // MAINWINDOW_H

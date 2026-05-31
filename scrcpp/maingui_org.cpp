@@ -67,15 +67,6 @@
 extern "C" void adamnet_set_game_mode(bool enabled);
 
 
-static bool isDka2018RomName(const QString& name)
-{
-    const QString n = name.toLower();
-    return n.contains("donkey kong arcade") ||
-           n.contains("dka") ||
-           n.contains("45345709");
-}
-
-
 // Verkort statusbar tekst met drie puntjes afhankelijk van de beschikbare breedte.
 static QString statusBarElideText3Dots(const QString& text, const QFont& font, int maxWidth)
 {
@@ -964,7 +955,6 @@ void MainWindow::onOpenSettings()
     m_settingsWindow->setEosBiosPath(m_eosBiosPath);
     m_settingsWindow->setWriterBiosPath(m_writerBiosPath);
     m_settingsWindow->setAdamStartupPath(m_adamStartupPath);
-    m_settingsWindow->setAdamBootMode(m_adamBootMode);
 
     // 2) Toon dialog
     if (m_settingsWindow->exec() != QDialog::Accepted)
@@ -980,7 +970,6 @@ void MainWindow::onOpenSettings()
     m_eosBiosPath    = m_settingsWindow->eosBiosPath();
     m_writerBiosPath = m_settingsWindow->writerBiosPath();
     m_adamStartupPath = m_settingsWindow->adamStartupPath();
-    m_adamBootMode = m_settingsWindow->adamBootMode();
 
     saveSettings();
 }
@@ -1086,9 +1075,6 @@ void MainWindow::loadSettings()
     m_eosBiosPath     = settings.value("bios/eos",    "").toString();
     m_writerBiosPath  = settings.value("bios/writer", "").toString();
     m_adamStartupPath = settings.value("adam/startup", "").toString();
-    m_adamBootMode = settings.value("adam/bootMode", AdamBootWriter).toInt();
-    if (m_adamBootMode < AdamBootWriter || m_adamBootMode > AdamBootBasicImage)
-        m_adamBootMode = AdamBootWriter;
 
     // --- Window ---
     qDebug() << "[UI] Loaded settings";
@@ -1178,7 +1164,6 @@ void MainWindow::saveSettings()
     put("bios/eos",    m_eosBiosPath);
     put("bios/writer", m_writerBiosPath);
     put("adam/startup", m_adamStartupPath);
-    put("adam/bootMode", m_adamBootMode);
 
     // Window (zet dit vóór sync)
     put("window/geometry", saveGeometry());
@@ -1909,37 +1894,24 @@ void MainWindow::onStartActionTriggered()
 
 void MainWindow::onBiosCFramesDone()
 {
-    if (m_machineType != 0)
-        return;
+    if (m_machineType != 0) return;
 
     m_isColecoRomLoaded = true;
 
-    /*
-     * Alleen knipperen wanneer er echt een nieuwe pending cartridge wacht.
-     * Na Reset Cartridge is m_pendingColecoBoot false en mag de knop NIET
-     * opnieuw beginnen pinken.
-     */
-    if (m_pendingColecoBoot && !m_pendingColecoRomPath.isEmpty())
-    {
-        if (m_resetCartBlinkTimer && !m_resetCartBlinkTimer->isActive()) {
-            onToggleResetCartBlink();
-            m_resetCartBlinkTimer->start(300);
-        }
-    }
-    else
-    {
-        stopResetCartBlinkAndSetFinalIcon();
+    // Start de Cartridge Reset knop te knipperen (NIEUW)
+    if (m_resetCartBlinkTimer && !m_resetCartBlinkTimer->isActive()) {
+        onToggleResetCartBlink(); // Zet direct de eerste blink-status
+        m_resetCartBlinkTimer->start(300); // Start knipperen (300ms interval)
     }
 
     updateMediaMenuState();
     updateMediaStatusLabels();
-    updateHardwareWindowMediaDisplay();
 }
 
 void MainWindow::onOpenColecoRom()
 {
-    if (m_machineType != 0)
-        return;
+    // Hier doe je wat “na het wachten” moet gebeuren, bv ROM laden:
+    if (m_machineType != 0) return;
 
     QString absoluteRomPath = QDir::cleanPath(m_romPath);
 
@@ -1953,42 +1925,23 @@ void MainWindow::onOpenColecoRom()
         QFileDialog::Options()
         );
 
-    if (filePath.isEmpty())
-        return;
+    if (filePath.isEmpty()) return;
 
-    QFileInfo fi(filePath);
-    CustomFileDialog::s_lastOpenDir = fi.absolutePath();
-
-    // Alleen pending zetten. GEEN ROM laden.
-    m_pendingColecoRomPath = filePath;
-    m_pendingColecoBoot = true;
-
-    m_currentRomName = fi.fileName();
-    m_currentARomName.clear();
-
-    m_isColecoRomLoaded = true;
-    m_isAdamRomLoaded = false;
+    QFileInfo fileInfo(filePath);
     m_ColecoMedia_insert = true;
-    m_resetColecoLocked = false;
 
-    updateRomLabelForStatusBar(
-        statusBar(),
-        m_sepLabel4,
-        m_romLabel,
-        "Pending cart: " + m_currentRomName
-        );
+    CustomFileDialog::s_lastOpenDir = fileInfo.absolutePath();
 
-    updateMediaMenuState();
-    updateMediaStatusLabels();
-    updateHardwareWindowMediaDisplay();
+    m_currentARomName = fileInfo.fileName();
 
-    if (m_resetCartBlinkTimer && !m_resetCartBlinkTimer->isActive()) {
-        onToggleResetCartBlink();
-        m_resetCartBlinkTimer->start(300);
-    }
+    QMetaObject::invokeMethod(m_colecoController, "ColecoCartridge",
+                              Qt::QueuedConnection,
+                              Q_ARG(QString, filePath));
 
-    qDebug() << "[UI] Coleco ROM armed only, waiting for Reset Cartridge:"
-             << m_pendingColecoRomPath;
+    QMetaObject::invokeMethod(m_colecoController,
+                              "prepareForNewCRomAndPauseOnBios",
+                              Qt::QueuedConnection);
+
 }
 
 void MainWindow::onEjectColecoRom()
@@ -2868,301 +2821,185 @@ void MainWindow::powerOff()
 
 void MainWindow::onResetAdamBtnClicked()
 {
-    if (!m_resetAdamBtn)
-        return;
+    if (!m_resetAdamBtn) return;
 
-    // Als er nog een pending Coleco cartridge klaarstond, annuleren.
-    m_pendingColecoBoot = false;
-    m_pendingColecoRomPath.clear();
-
-    // Stop cartridge blink als die nog actief is.
-    if (m_resetCartBlinkTimer && m_resetCartBlinkTimer->isActive()) {
-        m_resetCartBlinkTimer->stop();
-    }
-
-    if (m_resetCartBtn) {
-        m_resetCartBtn->setChecked(false);
-        m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png"));
-    }
-
-    // Als Coleco cartridge gelocked was, loskoppelen bij ADAM reset.
-    if (m_resetColecoLocked || m_ColecoMedia_insert) {
+    if (m_resetColecoLocked) {
         m_resetColecoLocked  = false;
         m_ColecoMedia_insert = false;
-
-        QMetaObject::invokeMethod(
-            m_colecoController,
-            "ejectColecoCartridge",
-            Qt::QueuedConnection
-            );
+        m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png"));
+        // 2. Cartridge ROM loskoppelen
+        QMetaObject::invokeMethod(m_colecoController, "ejectColecoCartridge",
+                                  Qt::QueuedConnection);
     }
 
-    // Stop ADAM blink.
+    // Eerst de knipperfunctie stoppen en de iconen resetten (NIEUW)
     if (m_resetAdamBlinkTimer && m_resetAdamBlinkTimer->isActive()) {
         m_resetAdamBlinkTimer->stop();
+        m_resetAdamBtn->setChecked(false); // Zorg ervoor dat de knop 'uit' is
+        m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png")); // Standaard icoon
     }
 
-    m_resetAdamBtn->setChecked(false);
-    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
+    // if (m_resetAdamLocked) return;
 
-    // Als er ADAM media aanwezig is, ADAM reset lock actief zetten.
-    if (m_AdamDMedia_insert || m_AdamTMedia_insert || !m_currentARomName.isEmpty())
-        m_resetAdamLocked = true;
-
-    // Naar ADAM mode.
+    if (m_AdamDMedia_insert || m_AdamTMedia_insert) m_resetAdamLocked = true;
+    // 1. HARD RESET uitvoeren (dwingt de ADAM-modus af en reset de CPU/I/O)
     switchToAdamMode();
 
-    // ADAM cartridge opnieuw mappen indien aanwezig.
+    // 2. STATUS HERBEVESTIGEN (ADAM ROM)
     if (!m_currentARomName.isEmpty())
     {
-        QString absolutePath = QDir::cleanPath(
-            CustomFileDialog::s_lastOpenDir + QDir::separator() + m_currentARomName
-            );
+        // Absolute pad logica: ga ervan uit dat m_romPath of CustomFileDialog::s_lastOpenDir de basis is
+        QString absolutePath = QDir::cleanPath(CustomFileDialog::s_lastOpenDir + QDir::separator() + m_currentARomName);
 
         QMetaObject::invokeMethod(
             m_colecoController,
             "AdamCartridge",
             Qt::QueuedConnection,
-            Q_ARG(QString, absolutePath)
+            Q_ARG(QString, absolutePath) // Dwingt de kern de ROM opnieuw te mappen
             );
     }
 
-    // Tapes D1-D4 opnieuw koppelen.
+    // 3. STATUS HERBEVESTIGEN (TAPES)
     for (int drive = 0; drive < 4; ++drive)
     {
         if (!m_loadedTapeNames[drive].isEmpty())
         {
-            QString absolutePath = QDir::cleanPath(
-                CustomFileDialog::s_lastOpenDir + QDir::separator() + m_loadedTapeNames[drive]
-                );
+            // We moeten het absolute pad reconstrueren om de load functie aan te roepen
+            // We gebruiken CustomFileDialog::s_lastOpenDir als basispad voor de media
+            QString absolutePath = QDir::cleanPath(CustomFileDialog::s_lastOpenDir + QDir::separator() + m_loadedTapeNames[drive]);
 
             QMetaObject::invokeMethod(
                 m_colecoController,
                 "loadTape",
                 Qt::QueuedConnection,
                 Q_ARG(int, drive),
-                Q_ARG(QString, absolutePath)
+                Q_ARG(QString, absolutePath) // Herlaadt de tape (koppelt de FDI structuur opnieuw)
                 );
-
             m_cpm_status = m_cpm_enabled;
         }
     }
 
-    // Disks D5-D8 opnieuw koppelen.
+    // 4. STATUS HERBEVESTIGEN (DISKS)
     for (int drive = 0; drive < 4; ++drive)
     {
         if (!m_loadedDiskNames[drive].isEmpty())
         {
-            QString absolutePath = QDir::cleanPath(
-                CustomFileDialog::s_lastOpenDir + QDir::separator() + m_loadedDiskNames[drive]
-                );
+            QString absolutePath = QDir::cleanPath(CustomFileDialog::s_lastOpenDir + QDir::separator() + m_loadedDiskNames[drive]);
 
             QMetaObject::invokeMethod(
                 m_colecoController,
                 "loadDisk",
                 Qt::QueuedConnection,
                 Q_ARG(int, drive),
-                Q_ARG(QString, absolutePath)
+                Q_ARG(QString, absolutePath) // Herlaadt de disk (koppelt de FDI structuur opnieuw)
                 );
-
             m_cpm_status = m_cpm_enabled;
         }
     }
 
-    mountAdamStartupImageIfNeeded();
-
+    // 5. GUI Updaten (bevestigt de opgeslagen namen)
     updateMediaMenuState();
     updateMediaStatusLabels();
     updateHardwareWindowMediaDisplay();
 
-    // Korte visuele feedback.
+    // Visuele feedback: kortstondig de ON-afbeelding tonen
     m_resetAdamBtn->setChecked(true);
     m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_on.png"));
 
     QTimer::singleShot(250, this, [this]() {
-        if (!m_resetAdamBtn)
-            return;
+        if (m_resetAdamBtn) {
+            m_resetAdamBtn->setChecked(false);
 
-        m_resetAdamBtn->setChecked(false);
+            if(m_cpm_status == false){
 
-        if (m_cpm_enabled)
-        {
-            if (m_AdamTMedia_insert)
-                m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_tcpm_locked_adam_off.png"));
-            else if (m_AdamDMedia_insert)
-                m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_dcpm_locked_adam_off.png"));
-            else
-                m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
-        }
-        else
-        {
-            if (m_AdamTMedia_insert)
-                m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_t_locked_adam_off.png"));
-            else if (m_AdamDMedia_insert)
-                m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_d_locked_adam_off.png"));
-            else if (!m_currentARomName.isEmpty())
-                m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_ca_locked_adam_off.png"));
-            else
-                m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
+                if (m_AdamTMedia_insert)
+                    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_t_locked_adam_off.png"));
+                else if (m_AdamDMedia_insert)
+                    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_d_locked_adam_off.png"));
+                else
+                    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
+            }
+            else{
+                if (m_AdamTMedia_insert)
+                    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_tcpm_locked_adam_off.png"));
+                else if (m_AdamDMedia_insert)
+                    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_dcpm_locked_adam_off.png"));
+                else
+                    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
+            }
         }
     });
 }
 
 void MainWindow::onResetCartBtnClicked()
 {
-    if (!m_resetCartBtn)
-        return;
+    if (!m_resetCartBtn) return;
 
-    if (m_resetAdamLocked)
-    {
-        m_resetAdamLocked = false;
-        m_AdamDMedia_insert = false;
-        m_AdamTMedia_insert = false;
-
-        if (m_hardwareWindow)
-            m_hardwareWindow->updateAvailability();
-
-        forceStatusBarMediaFlags();
-
-        if (m_resetAdamBtn)
-            m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
+    if (m_resetAdamLocked) {
+    m_resetAdamLocked  = false;
+    m_AdamDMedia_insert = false;
+    m_AdamTMedia_insert = false;
+    m_hardwareWindow->updateAvailability();
+    forceStatusBarMediaFlags();
+    m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
     }
 
-    stopResetCartBlinkAndSetFinalIcon();
-
-    // ------------------------------------------------------------
-    // Geen pending ROM: gewone reset van reeds geladen cartridge.
-    // ------------------------------------------------------------
-    if (!m_pendingColecoBoot || m_pendingColecoRomPath.isEmpty())
-    {
-        qDebug() << "[UI] Cartridge reset without pending ROM";
-
-        if (m_ColecoMedia_insert)
-            m_resetColecoLocked = true;
-
-        switchToColecoMode();
-        onSgmStatusChanged(m_sgmEnabled);
-
-        const QString absolutePath = !m_currentRomName.isEmpty()
-                                         ? QDir::cleanPath(CustomFileDialog::s_lastOpenDir + QDir::separator() + m_currentRomName)
-                                         : QString();
-
-        QMetaObject::invokeMethod(
-            m_colecoController,
-            [ctrl = m_colecoController, absolutePath]() {
-                if (!absolutePath.isEmpty())
-                    ctrl->ColecoCartridge(absolutePath);
-
-                ctrl->resetMachine();
-            },
-            Qt::QueuedConnection
-            );
-
-        updateMediaMenuState();
-        updateMediaStatusLabels();
-        updateHardwareWindowMediaDisplay();
-
-        m_resetCartBtn->setChecked(true);
-        m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_on.png"));
-
-        QTimer::singleShot(250, this, [this]() {
-            stopResetCartBlinkAndSetFinalIcon();
-        });
-
-        return;
+    if (m_resetCartBlinkTimer && m_resetCartBlinkTimer->isActive()) {
+        m_resetCartBlinkTimer->stop();
+        m_resetCartBtn->setChecked(false); // Zorg ervoor dat de knop 'uit' is
+        m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png")); // Standaard icoon
     }
 
-    // ------------------------------------------------------------
-    // Pending ROM: pas NU laden/starten.
-    // ------------------------------------------------------------
-    const QString romPath = m_pendingColecoRomPath;
-    const bool isDka = isDka2018RomName(romPath);
 
-    qDebug() << "[UI] Confirmed pending Coleco ROM boot:"
-             << romPath
-             << "DKA=" << isDka;
+    //if (m_resetColecoLocked) return;
+    if (m_ColecoMedia_insert) m_resetColecoLocked = true;
 
-    m_pendingColecoBoot = false;
-    m_pendingColecoRomPath.clear();
-
-    m_resetColecoLocked = true;
-    m_ColecoMedia_insert = true;
-
-    /*
-     * BELANGRIJK:
-     * Geen losse QMetaObject-calls meer zoals:
-     *   ColecoCartridge()
-     *   prepareForNewCRomAndPauseOnBios()
-     *
-     * Alles gebeurt hieronder in één queued lambda in de controller-thread.
-     * Daardoor kan er geen reset vóór/na de ROM-load tussen glippen.
-     */
+    // Voer Soft Reset (Cartridge Reset) uit
+    switchToColecoMode();
+    //onReset();
     onSgmStatusChanged(m_sgmEnabled);
 
-    QMetaObject::invokeMethod(
-        m_colecoController,
-        [ctrl = m_colecoController, romPath, isDka]() {
-            qDebug() << "[CTRL] Atomic pending Coleco cartridge boot:"
-                     << romPath
-                     << "DKA=" << isDka;
+    if (!m_currentRomName.isEmpty())
+    {
+        // Vorm het absolute pad (we gaan ervan uit dat de ROM in m_romPath of CustomFileDialog::s_lastOpenDir staat)
+        QString absolutePath = QDir::cleanPath(CustomFileDialog::s_lastOpenDir + QDir::separator() + m_currentRomName);
 
-            // One central cartridge boot path: load ROM, one reset, run.
-            // No DKA-specific reset exception.
-            ctrl->bootPreparedColecoCartridge(romPath);
-        },
-        Qt::QueuedConnection
-        );
+        // Zelfs als het absolute pad niet 100% klopt, is de naam belangrijk voor de controller logica
+        // We roepen de ColecoCartridge functie aan met de opgeslagen naam.
+        QMetaObject::invokeMethod(
+            m_colecoController,
+            "ColecoCartridge",
+            Qt::QueuedConnection,
+            Q_ARG(QString, absolutePath) // Dit dwingt de kern de ROM opnieuw te mappen
+            );
 
-    updateRomLabelForStatusBar(statusBar(), m_sepLabel4, m_romLabel, m_currentRomName);
+        // Let op: We moeten hier de naam handhaven en NIET wissen.
+    }
+
     updateMediaMenuState();
     updateMediaStatusLabels();
     updateHardwareWindowMediaDisplay();
 
+    // Visuele feedback blijft hetzelfde
     m_resetCartBtn->setChecked(true);
     m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_on.png"));
 
     QTimer::singleShot(250, this, [this]() {
-        stopResetCartBlinkAndSetFinalIcon();
+        if (m_resetCartBtn) {
+            m_resetCartBtn->setChecked(false);
+            if (m_ColecoMedia_insert && !m_sgmEnabled)
+                m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_c_locked_cartridge_off.png"));
+            else if (m_ColecoMedia_insert && m_sgmEnabled)
+                m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_csgm_locked_cartridge_off.png"));
+            else
+                m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png"));
+        }
     });
-}
-
-void MainWindow::stopResetCartBlinkAndSetFinalIcon()
-{
-    if (m_resetCartBlinkTimer) {
-        m_resetCartBlinkTimer->stop();
-    }
-
-    if (!m_resetCartBtn)
-        return;
-
-    m_resetCartBtn->setChecked(false);
-
-    if (m_ColecoMedia_insert && !m_sgmEnabled) {
-        m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_c_locked_cartridge_off.png"));
-    }
-    else if (m_ColecoMedia_insert && m_sgmEnabled) {
-        m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_csgm_locked_cartridge_off.png"));
-    }
-    else {
-        m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png"));
-    }
 }
 
 void MainWindow::switchToAdamMode()
 {
     if (!m_colecoController) return;
-
-
-    coleco_hide_current_vdp_sprites();
-
-    QTimer::singleShot(300, this, []() {
-        coleco_hide_current_vdp_sprites();
-    });
-
-    QTimer::singleShot(1500, this, []() {
-    });
-
-
     // 1. Maak een NIEUWE configuratie op basis van de HUIDIGE configuratie
     HardwareConfig newCfg;
 
@@ -3177,7 +3014,7 @@ void MainWindow::switchToAdamMode()
     newCfg.AdamNet = m_ctrlAdamNet;
     newCfg.Cartridge = m_ctrlCartridge;
 
-   applyHardwareConfig(newCfg);
+    applyHardwareConfig(newCfg);
 
     // Alleen een echte powerOff doen als er GEEN ADAM media klaarstaat.
     // Anders wissen we bij de eerste reset m_cpm_enabled / m_tdos_enabled
@@ -3187,15 +3024,12 @@ void MainWindow::switchToAdamMode()
         m_AdamTMedia_insert ||
         !m_currentARomName.isEmpty();
 
-    if (emutype == false  && !hasAdamMedia)  {
-       //powerOff();
-        coleco_initialise();
-        coleco_reset_and_restart_bios();
+    if (emutype == false && !hasAdamMedia)  {
+         powerOff();
     }
 
     emutype = true;
 
-   // Keyboard input
     if (m_inputWidget) {
          m_inputWidget->setMachineType(1);
          //m_inputWidget->setAdamGameMode(false);  // Standaard keyboard mode
@@ -3204,7 +3038,6 @@ void MainWindow::switchToAdamMode()
 
      updateMediaMenuState();
      updateMediaStatusLabels();
-
 }
 
 void MainWindow::switchToColecoMode()
@@ -3449,72 +3282,6 @@ void MainWindow::onBiosStatusUpdated(int colecoExt, int eosExt, int writerExt)
     m_actColecoBiosSource->setText(colecoExt ? "Coleco: External" : "Coleco: Internal");
     m_actEosBiosSource->setText(   eosExt    ? "EOS: External"    : "EOS: Internal");
     m_actWriterBiosSource->setText(writerExt ? "Writer: External" : "Writer: Internal");
-}
-
-void MainWindow::mountAdamStartupImageIfNeeded()
-{
-    if (!m_colecoController)
-        return;
-
-    if (m_adamBootMode == AdamBootWriter)
-        return;
-
-    const QString startupPath = m_adamStartupPath.trimmed();
-    if (startupPath.isEmpty())
-        return;
-
-    // Niet over bestaande ADAM media heen gaan. Writer blijft dan netjes Writer,
-    // en geladen D1/D5 media blijven de baas. Geen ADAM-chaos-lasagne.
-    if (m_AdamTMedia_insert || m_AdamDMedia_insert ||
-        !m_loadedTapeNames[0].isEmpty() || !m_loadedDiskNames[0].isEmpty())
-        return;
-
-    QFileInfo info(startupPath);
-    if (!info.exists()) {
-        qWarning() << "[ADAM][BOOT] Startup image not found:" << startupPath;
-        return;
-    }
-
-    const QString ext = info.suffix().toLower();
-    CustomFileDialog::s_lastOpenDir = info.absolutePath();
-
-    if (ext == "ddp") {
-        m_loadedTapeNames[0] = info.fileName();
-        m_AdamTMedia_insert = true;
-        m_resetAdamLocked = true;
-
-        QMetaObject::invokeMethod(
-            m_colecoController,
-            "loadTape",
-            Qt::QueuedConnection,
-            Q_ARG(int, 0),
-            Q_ARG(QString, info.absoluteFilePath())
-            );
-
-        qDebug() << "[ADAM][BOOT]"
-                 << (m_adamBootMode == AdamBootBasicImage ? "BASIC DDP" : "Startup DDP")
-                 << "mounted on D1:" << info.absoluteFilePath();
-    }
-    else if (ext == "dsk" || ext == "img") {
-        m_loadedDiskNames[0] = info.fileName();
-        m_AdamDMedia_insert = true;
-        m_resetAdamLocked = true;
-
-        QMetaObject::invokeMethod(
-            m_colecoController,
-            "loadDisk",
-            Qt::QueuedConnection,
-            Q_ARG(int, 0),
-            Q_ARG(QString, info.absoluteFilePath())
-            );
-
-        qDebug() << "[ADAM][BOOT]"
-                 << (m_adamBootMode == AdamBootBasicImage ? "BASIC DSK" : "Startup DSK")
-                 << "mounted on D5:" << info.absoluteFilePath();
-    }
-    else {
-        qWarning() << "[ADAM][BOOT] Unsupported startup image type:" << startupPath;
-    }
 }
 
 void MainWindow::loadExternalBiosRoms()

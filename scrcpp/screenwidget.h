@@ -5,6 +5,11 @@
 #include <QImage>
 #include <QPainter>
 #include <QMutex>
+#include <QPoint>
+#include <QRect>
+#include <QString>
+#include <QMouseEvent>
+#include <QEvent>
 #include "mainwindow.h"
 
 extern bool m_80colEnabled;
@@ -49,6 +54,10 @@ public slots:
 
 protected:
     void paintEvent(QPaintEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
 
 private:
     QImage m_frame;
@@ -82,6 +91,34 @@ private:
     void read80ColumnVRAM(char textBuffer[24][80], unsigned char colorBuffer[24][80]);
     void setText(QPainter& painter, const QRect& targetRect, int charwidth, int charHeight, unsigned char globalBgIdx);
     static const QColor TMS_COLORS[16];
+    void sync80ColumnVRAMToF18A();
+
+    // CP/M80 right-click popup, paste, clear screen and text selection
+    void showCpm80ContextMenu(const QPoint& pos);
+    void showCpm80ColorDialog();
+    void copyCpm80TextToClipboard();
+    void pasteClipboardTextToEmulator();
+
+    // F18A TERM80 clipboard / mouse-selection helpers
+    void copyTerm80TextToClipboard();
+    void pasteClipboardTextToTerm80();
+    void feedTerm80PasteNextChar();
+    bool term80CellFromMousePos(const QPoint& pos, int& col, int& row) const;
+    QString term80SelectedText() const;
+
+    bool cpm80CellFromMousePos(const QPoint& pos, int& col, int& row) const;
+    bool cpm80HasSelection() const;
+    void cpm80ClearSelection();
+    QString cpm80SelectedText() const;
+
+    QRect  m_last80TargetRect;
+    bool   m_cpm80Selecting = false;
+    bool   m_cpm80SelectionActive = false;
+    QPoint m_cpm80SelectionAnchor;   // x=col, y=CP/M row 0..22
+    QPoint m_cpm80SelectionCurrent;  // x=col, y=CP/M row 0..22
+
+    // TERM80 paste queue: PutKBD() moet teken-per-teken gevoed worden.
+    QString m_term80PasteQueue;
 };
 
 #endif

@@ -15,6 +15,7 @@
 #include "joypadwindow.h"
 #include "printwindow.h"
 #include "simplejoystick.h"
+#include "f18a_term80_tdos.h"
 
 // Qt includes
 #include <QMenuBar>
@@ -109,7 +110,7 @@ MainWindow::MainWindow(QWidget *parent)
     QCoreApplication::setApplicationName("ADAMP_EMU");
 
     // Version
-    appVersion = "0.9.04.26";
+    appVersion = "1.0.05.26";
 
     setWindowTitle(QString("ADAM+ Emulator - v%1").arg(appVersion));
 
@@ -119,10 +120,38 @@ MainWindow::MainWindow(QWidget *parent)
     m_wallpaperLabel->setScaledContents(true);
     m_wallpaperLabel->hide();
 
+    // Zwarte balk onderaan op de background
+    m_bottomBlackBar = new QFrame(this);
+    m_bottomBlackBar->setStyleSheet("background-color: black;");
+    m_bottomBlackBar->setFixedHeight(40);   // vaste hoogte
+    //m_bottomBlackBar->hide();
+
+    m_splashLabel = new QLabel(this);
+    QPixmap splash(":/images/images/ADAMP_SPLASH.png");
+
+    if (!splash.isNull())
+    {
+        QPixmap halfSplash = splash.scaled(
+            splash.width() / 1.7,
+            splash.height() / 1.7,
+            Qt::KeepAspectRatio,
+            Qt::SmoothTransformation
+            );
+
+        m_splashLabel->setPixmap(halfSplash);
+    }
+
+    m_splashLabel->setScaledContents(false);
+    m_splashLabel->setAttribute(Qt::WA_TranslucentBackground);
+    m_splashLabel->setStyleSheet("background: transparent;");
+    m_splashLabel->adjustSize();
+    //m_splashLabel->hide();
+
     m_imageManagerDialog = new AimDialog (this);
     m_imageManagerDialog->hide();
 
     m_screenWidget = new ScreenWidget(this);
+    showSplash();
 
     m_logoContainer = new QWidget(this);
     m_logoContainer->setAttribute(Qt::WA_TranslucentBackground);
@@ -270,10 +299,21 @@ MainWindow::MainWindow(QWidget *parent)
         m_sysLabel->setText(m_machineType ? "ADAM" : "COLECO");
     }
 
+    m_c80Enabled = false;
+    coleco_80col_enabled = 0;
+
+    if (m_screenWidget) {
+        m_screenWidget->set80ColumnMode(false);
+    }
+
+   // cpm80_disable();
+    cpm80_reset();
+
     HardwareConfig initialConfig;
     initialConfig.machine = (m_machineType ? MACHINE_ADAM : MACHINE_COLECO);
     initialConfig.realhardware = m_realhardware;
     initialConfig.palette = m_paletteIndex;
+    initialConfig.vdpType = m_vdpType;
     initialConfig.sgmEnabled = m_sgmEnabled;
     initialConfig.c80Enabled = m_c80Enabled;
     initialConfig.Joys = m_ctrlJoys;
@@ -386,6 +426,10 @@ MainWindow::MainWindow(QWidget *parent)
             },
             Qt::QueuedConnection);
 
+    m_allowSaveSettings = true;
+
+    qDebug() << "[SETTINGS] saving enabled after startup";
+
 }
 
 MainWindow::~MainWindow()
@@ -396,3 +440,29 @@ MainWindow::~MainWindow()
     }
 }
 
+void MainWindow::showSplash()
+{
+    // Startup: eerst gamescreen 2 seconden verbergen
+    m_screenWidget->hide();
+
+    QTimer::singleShot(3000, this, [this]() {
+        if (m_screenWidget) {
+            m_screenWidget->show();
+            m_screenWidget->raise();
+            m_screenWidget->setFocus(Qt::OtherFocusReason);
+        }
+    });
+}
+
+void MainWindow::centerSplash()
+{
+    if (!m_splashLabel)
+        return;
+
+    m_splashLabel->adjustSize();
+
+    const int x = (width()  - m_splashLabel->width())  / 2;
+    const int y = (height() - m_splashLabel->height()) / 2;
+
+    m_splashLabel->move(x, y);
+}

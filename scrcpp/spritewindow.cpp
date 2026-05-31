@@ -16,7 +16,7 @@
 #include <QCloseEvent>
 
 // Emulator core includes
-#include "coleco.h"
+#include "cv.h"
 
 extern "C" {
 #include "emu.h"

@@ -1,7 +1,7 @@
 #include "debuggerwindow.h"
 #include "colecocontroller.h"
 #include "disasm_bridge.h"
-#include "coleco.h"
+#include "cv.h"
 #include "z80.h"
 #include "gotoaddressdialog.h"
 #include "tms9928a.h" // Noodzakelijk voor tms.VR[i] access
@@ -1747,38 +1747,52 @@ if (paused) {
 
 void DebuggerWindow::writeMemoryByte(uint32_t address, uint8_t data)
 {
-    uint32_t addr = address & 0xFFFF; // Zorg voor 16-bits adresbereik
+    uint32_t addr = address & 0xFFFF;
 
-    switch (m_currentMemSourceIndex) {
-    case 0: // Z80 Mapped Memory: FORCE WRITE
-        if (addr < 0x2000) {
-            // 0x0000 - 0x1FFF (BIOS) - Werkt nu
-            BIOS_Memory[addr] = data;
-        } else if (addr < 0x6000) {
-            // 0x2000 - 0x5FFF (Cartridge ROM)
-            // Gebruik hier de functie die u heeft laten werken voor 0x1700
-            // Als Cartridge ROM een andere array is, moet u die hier patchen.
-            // Voor nu laten we coleco_writebyte staan als fallback voor bankswitching
-            coleco_writebyte(addr, data);
-        } else if (addr < 0x8000) {
-            // 0x6000 - 0x7FFF (Standaard RAM) - Werkt al
-            RAM_Memory[addr - 0x6000] = data; // Directe patch, geef de offset aan
-        } else {
-            // *** OPLOSSING VOOR $C040 (0x8000 - 0xFFFF) ***
-            // Dit is het uitgebreide RAM-bereik (ADAM RAM).
-            // We patchen hier de fysieke RAM array direct.
-            // Dit negeert I/O registers en bankswitching.
-            // De index is hier waarschijnlijk de Z80-adres zelf:
-            RAM_Memory[addr] = data;
+    switch (m_currentMemSourceIndex)
+    {
+    case 0: // Z80 CPU Space: FORCE WRITE naar exact wat de CPU nu ziet
+    {
+        const int page = (addr >> 13) & 0x07;
+        const int offs = addr & 0x1FFF;
+
+        if (MemoryMap[page])
+        {
+            *(MemoryMap[page] + offs) = data;
+
+            qDebug().noquote() << QString("[DBG FORCE WRITE] Z80 addr=%1 page=%2 offs=%3 data=%4 phys=%5")
+                                      .arg(addr, 4, 16, QChar('0'))
+                                      .arg(page)
+                                      .arg(offs, 4, 16, QChar('0'))
+                                      .arg(data, 2, 16, QChar('0'))
+                                      .arg((quintptr)(MemoryMap[page]), 0, 16);
         }
+
+        break;
+    }
+
+    case 1: // TMS VDP VRAM
+        VDP_Memory[addr & 0x3FFF] = data;
         break;
 
-    case 1: VDP_Memory[addr & 0x3FFF] = data; break;
-    case 2: RAM_Memory[addr & 0x1FFFF] = data; break;
-    case 3: RAM_Memory[addr & 0x7FFF] = data; break;
-    case 4: SRAM_Memory[addr & 0x7FFF] = data; break;
-    case 5: RAM_Memory[0xE000 + (addr & 0x07FF)] = data; break;
-    default: break;
+    case 2: // Main RAM raw
+        RAM_Memory[address & 0x1FFFF] = data;
+        break;
+
+    case 3: // SGM RAM raw
+        RAM_Memory[address & 0x7FFF] = data;
+        break;
+
+    case 4: // EEPROM
+        SRAM_Memory[address & 0x7FFF] = data;
+        break;
+
+    case 5: // SRAM
+        RAM_Memory[0xE000 + (address & 0x07FF)] = data;
+        break;
+
+    default:
+        break;
     }
 }
 

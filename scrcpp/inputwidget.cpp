@@ -1,5 +1,5 @@
 #include "inputwidget.h"
-#include "keypad.h"
+#include "cvkpad.h"
 #include "colecocontroller.h"
 #include <QPainter>
 #include <QFont>

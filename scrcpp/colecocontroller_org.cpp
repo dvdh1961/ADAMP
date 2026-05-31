@@ -20,12 +20,12 @@ extern "C" {
 #include "tms9928a.h"
 #include "video_bridge.h"
 #include "adnet.h"
-#include "snd_ay8910.h"
+#include "ay8910.h"
 #include "z80.h"
 #include "f18a.h"
 #include "f18a_term80.h"
 #include "f18a_term80_cpm.h"
-#include "f18a_term80_tdos.h"
+#include "f18a_tdos80.h"
 }
 
 #include <stdint.h>
@@ -166,10 +166,6 @@ void ColecoController::setVideoStandard(bool isNTSC)
 {
     m_isNTSC = isNTSC;
 
-    // BELANGRIJK: core-vlag ook zetten
-    if (emulator)
-        emulator->NTSC = isNTSC;
-
     if (m_isNTSC) {
         // NTSC Timings
         m_Clock = 3579545;
@@ -204,16 +200,24 @@ void ColecoController::startEmulation()
     m_frameACounter = 0;
     m_realFrames = 0;
 
+    if (emulator->currentMachineType != MACHINEADAM)
+    {
+       coleco_initialise();
+    }
+    else
+    {
     if (!m_coreInitialized)
     {
         qDebug() << "[CTRL] Core init (cold start).";
-        coleco_initialise();
+        coleco_initialise();  // mag alleen bij echte cold start
         m_coreInitialized = true;
     }
     else
     {
         qDebug() << "[CTRL] Core restart (no initialise).";
-        coleco_reset_and_restart_bios();  // wist ROM_Memory niet
+       coleco_reset_and_restart_bios();  // wist ROM_Memory niet
+    }
+
     }
 
     PsgBridge::init(m_Clock, m_SampleRate);
@@ -526,39 +530,38 @@ void ColecoController::loadRom(const QString &romPath)
 
 void ColecoController::AdamCartridge(const QString &romPath)
 {
+    //qDebug() << "[CTRL] load Adam Rom:" << romPath;
     m_realFrames = 0;
 
     QByteArray path = QFile::encodeName(romPath);
+
+    // Schakel Adam ROMs uit en zet Coleco-modus aan (dit maakt de bank vrij)
+    //setMachineType(Machine_Coleco);
+    // Laad de cartridge data
 
     BYTE retload = coleco_loadcart(path.data());
 
     if (retload == ROM_LOAD_PASS)
     {
+        //coleco_reset();
         m_currentColecoCartPath.clear();
         m_currentAdamCartPath = QFileInfo(romPath).fileName();
-
-        // Belangrijk: eerst ADAM cartridge mode zetten,
-        // daarna pas reset/restart zodat coleco_reset_and_restart_bios()
-        // de juiste ADAM cartridge mapping ziet.
-        g_adamCartridgeMode = true;
-
-        coleco_reset_and_restart_bios();
-        resumeEmulation();
     }
     else if (retload == ROM_VERIFY_FAIL)
     {
         qDebug() << "[CTRL] Can't verify the rom file";
         m_currentAdamCartPath.clear();
         m_currentColecoCartPath.clear();
-        g_adamCartridgeMode = false;
     }
-    else
-    {
+    else {
         qWarning() << "[CTRL] ADAM ROM laden faalde, code =" << int(retload);
         m_currentAdamCartPath.clear();
         m_currentColecoCartPath.clear();
-        g_adamCartridgeMode = false;
     }
+
+    g_adamCartridgeMode = true;
+    coleco_reset_and_restart_bios();   // of coleco_reset()
+    resumeEmulation();
 
     emit cartridgeStatusChanged(m_currentColecoCartPath, m_currentAdamCartPath);
 }
@@ -593,15 +596,6 @@ void ColecoController::ColecoCartridge(const QString &romPath)
     emit cartridgeStatusChanged(m_currentColecoCartPath, m_currentAdamCartPath);
 }
 
-
-
-void ColecoController::resetDkaLoadedCartridge()
-{
-    qDebug() << "[CTRL][DKA] compatibility reset path -> normal cartridge reset";
-    resetMachine();
-    resumeEmulation();
-}
-
 void ColecoController::ejectColecoCartridge()
 {
     // if (!m_currentColecoCartPath.isEmpty()) {
@@ -616,11 +610,9 @@ void ColecoController::resetMachine() // SOFT
     if (AlreadyReset) return;
     AlreadyReset = true;
 
-    qDebug() << "[CTRL] resetMachine() - soft reset, keep loaded ROM/RAM";
-    coleco_reset();                       // soft reset: do NOT call coleco_initialise()
+    qDebug() << "[CTRL] resetMachine()";
+    coleco_reset();
     PsgBridge::reset(m_Clock, m_SampleRate);
-
-    AlreadyReset = false;
 }
 
 void ColecoController::resethMachine() // HARD
@@ -650,39 +642,30 @@ void ColecoController::powerOffMachine()
 {
     qDebug() << "[CTRL] power off Machine()";
 
-    const bool wasCpm  = m_cpm_enabled;
-    const bool wasAdam = (emulator && emulator->currentMachineType == MACHINEADAM);
-
     releaseCpm80StateForPowerOff();
     m_cpm_enabled = false;
     m_tdos_enabled = false;
     m_cpm_selected = false;
-    g_adamCartridgeMode = false;
 
-    // Reset SmartWriter printer
+    // Reset smartwriter  printer
     g_prn_line_counter = 0;
     g_prn_in_wp = false;
     PrintWindow* w = PrintWindow::instance();
     if (w) {
-        QMetaObject::invokeMethod(
-            w,
-            "updatePrinterMode",
-            Qt::QueuedConnection,
-            Q_ARG(bool, g_prn_in_wp)
-            );
+        QMetaObject::invokeMethod(w, "updatePrinterMode", Qt::QueuedConnection, Q_ARG(bool, g_prn_in_wp));
     }
 
     // Stop eventueel lopende CP/M deferred mount
     m_deferredMountFramesRemaining = 0;
     m_deferredMountDisk0Path.clear();
 
-    // Power-cycle: hier mag coleco_initialise() WEL.
-    // PowerOff is de harde, propere start vanaf BIOS/Writer.
+    // Power-cycle naar Writer/EOS
+    // 1️⃣ First reset (direct)
     coleco_initialise();
     coleco_reset_and_restart_bios();
-    coleco_hide_current_vdp_sprites();
 
-    if (wasCpm || wasAdam)
+    // 2️⃣ second reset when cp/m loaded
+    if (m_cpm_enabled || emulator->currentMachineType == MACHINEADAM)
     {
         QTimer::singleShot(500, QCoreApplication::instance(), []() {
             qDebug() << "[CTRL] doubleResetToWriter() SECOND reset";
@@ -691,11 +674,11 @@ void ColecoController::powerOffMachine()
             m_cpm_enabled = false;
             m_tdos_enabled = false;
             m_cpm_selected = false;
-            g_adamCartridgeMode = false;
 
             coleco_initialise();
             coleco_reset_and_restart_bios();
         });
+
     }
 
     PsgBridge::reset(m_Clock, m_SampleRate);
@@ -704,19 +687,23 @@ void ColecoController::powerOffMachine()
 
 void ColecoController::setSGMEnabled(bool enabled)
 {
+
     if (emulator->currentMachineType == MACHINEADAM)
     {
+        // ADAM Modus
         if (enabled) {
             qDebug() << "[COLECO] Ignoring SGM *enable* in ADAM mode.";
             emit sgmStatusChanged(false);
             return;
         }
 
+        // Forceer SGM 'uit' in de core
         qDebug() << "[COLECO] SGM set = false (Forced for ADAM)";
         emulator->SGM = 0;
     }
     else
     {
+        // COLECO Modus
         qDebug() << "[COLECO] SGM set =" << enabled;
         emulator->SGM = enabled ? 1 : 0;
 
@@ -729,29 +716,13 @@ void ColecoController::setSGMEnabled(bool enabled)
         }
     }
 
+    coleco_reset_and_restart_bios();
     emit sgmStatusChanged(enabled);
 
     PsgBridge::init(m_Clock, m_SampleRate);
     ay8910_init(m_Clock, m_SampleRate);
-
-    /*
-     * Niet altijd resetten.
-     * Tijdens ADAM -> COLECO, pending ROM boot, DKA-special boot, of directe startup
-     * kan deze extra reset de geladen ROM/banking opnieuw breken.
-     */
-    if (m_running && !m_switchingMachineType && !m_cartridgeBootInProgress)
-    {
-        qDebug() << "[COLECO] SGM changed by user: reset/restart BIOS";
-        coleco_reset_and_restart_bios();
-    }
-    else
-    {
-        qDebug() << "[COLECO] SGM reset skipped"
-                 << "running=" << m_running
-                 << "switching=" << m_switchingMachineType
-                 << "cartBoot=" << m_cartridgeBootInProgress;
-    }
 }
+
 QImage ColecoController::frameFromBridge()
 {
     const int w = vb_current_width();
@@ -981,126 +952,34 @@ void ColecoController::doHardReset()
     resethMachine();
 }
 
-// void ColecoController::setMachineType(ColecoController::MachineType machineType)
-//  {
-//      const int isAdam = machineType ; // 0=COLECO 1=ADAM
-//      coleco_set_machine_type(isAdam);
-//      qDebug() << "[CTRL] Machine switched to "<< (isAdam ? "ADAM" : "COLECO");
-
-//      // Audio sync
-//      PsgBridge::init(m_Clock, m_SampleRate);
-//      ay8910_init(m_Clock, m_SampleRate);
-//      machine.interrupt = 0;
-
-//      if (isAdam) {
-//          emulator->SGM = 0;
-//          emit sgmStatusChanged(false);
-//          if (!m_cpm_enabled)
-//             resethMachine();
-//          else
-//              bootCpmDisk();
-
-//      }
-//      else
-//      {
-//          /*
-//           * Coleco soft reset without clearing the loaded cartridge/RAM state.
-//           * Do NOT call coleco_initialise() here: it rebuilds the core memory state
-//           * and can wipe/break the ROM that was just prepared for reset-confirm boot.
-//           */
-//          resetMachine();
-//      }
-
-//      emit machineTypeChanged(machineType);
-//  }
-
 void ColecoController::setMachineType(ColecoController::MachineType machineType)
-{
-    const bool wasAdam = (emulator->currentMachineType == MACHINEADAM);
-    const bool toAdam  = (machineType == Machine_Adam);
+ {
+     const int isAdam = machineType ; // 0=COLECO 1=ADAM
+     coleco_set_machine_type(isAdam);
+     qDebug() << "[CTRL] Machine switched to "<< (isAdam ? "ADAM" : "COLECO");
 
-    coleco_set_machine_type(toAdam ? 1 : 0);
+     // Audio sync
+     PsgBridge::init(m_Clock, m_SampleRate);
+     ay8910_init(m_Clock, m_SampleRate);
+     machine.interrupt = 0;
 
-    qDebug() << "[CTRL] Machine switched to "
-             << (toAdam ? "ADAM" : "COLECO");
-
-    // Audio sync
-    PsgBridge::init(m_Clock, m_SampleRate);
-    ay8910_init(m_Clock, m_SampleRate);
-    machine.interrupt = 0;
-
-    if (toAdam)
-    {
-        emulator->SGM = 0;
-        emit sgmStatusChanged(false);
-
-        if (!m_cpm_enabled)
+     if (isAdam) {
+         emulator->SGM = 0;
+         emit sgmStatusChanged(false);
+         if (!m_cpm_enabled)
             resethMachine();
-        else
-            bootCpmDisk();
-    }
-    // else
-    // {
-    //     if (wasAdam)
-    //     {
-    //         qDebug() << "[CTRL] ADAM -> COLECO: hard reset required";
+         else
+             bootCpmDisk();
 
-    //         // Echte overgang van ADAM naar COLECO:
-    //         // volledige herinitialisatie zodat ADAM banking/RAM/ADAMNet-state weg is.
-    //        coleco_initialise();
-    //         resethMachine();
-    //     }
-    //     else
-    //     {
-    //         qDebug() << "[CTRL] COLECO -> COLECO: normal reset";
+     }
+     else
+     {
+         coleco_initialise();
+         resetMachine();
+     }
 
-    //         // Bestaande Coleco-flow behouden voor gewone games.
-    //         coleco_initialise();
-    //         resetMachine();
-    //     }
-    // }
-    else
-    {
-        // Coleco cartridge mode: forceer NTSC vóór elke reset/init.
-        m_isNTSC = true;
-
-        if (emulator)
-            emulator->NTSC = true;
-
-        m_Clock = 3579545;
-        m_AudioChunkFrames = 735;
-        m_AudioChunkBytes = m_AudioChunkFrames * m_BytesPerSampleStereo;
-        m_tstates_per_sample = (double)m_Clock / (double)m_SampleRate;
-
-        machine.tperscanline = 228;
-        tms.ScanLines = TMS9918_LINES;   // 262
-
-        coleco_set_vdp_type(coleco_get_vdp_type());
-
-        qDebug() << "[CTRL] COLECO mode forced NTSC"
-                 << "emulator->NTSC=" << (emulator ? emulator->NTSC : -1)
-                 << "scanlines=" << tms.ScanLines;
-
-        if (wasAdam)
-        {
-            qDebug() << "[CTRL] ADAM -> COLECO: hard reset required";
-
-            // Niet eerst PAL/ADAM timing laten terugkomen.
-            coleco_initialise();
-            resethMachine();
-        }
-        else
-        {
-            qDebug() << "[CTRL] COLECO -> COLECO: normal reset";
-
-            // Bestaande flow behouden.
-            coleco_initialise();
-            resetMachine();
-        }
-    }
-
-    emit machineTypeChanged(machineType);
-}
+     emit machineTypeChanged(machineType);
+ }
 
 extern "C" void coleco_set_bios_paths(const char* coleco_path, const char* eos_path, const char* writer_path);
 
@@ -1139,147 +1018,23 @@ void ColecoController::updateBiosStatus()
         );
 }
 
-// void ColecoController::prepareForNewCRomAndPauseOnBios()
-// {   // COLECO CARTRIDGE
-//     stopEmulation();
-//     coleco_reset_and_restart_bios();
-//     m_waitForCBiosFrames=true;
-//     startEmulation();
-// }
-
-// void ColecoController::prepareForNewARomAndPauseOnBios()
-// {   // ADAM CARTRIDGE
-//     stopEmulation();
-//     coleco_reset_and_restart_bios();
-//     m_waitForABiosFrames=true;
-//     startEmulation();
-// }
-
-void ColecoController::bootPreparedColecoCartridge(const QString &romPath)
-{
-    qDebug() << "[CTRL] bootPreparedColecoCartridge:" << romPath;
-
-    m_cartridgeBootInProgress = true;
-
-    // Altijd eerst Coleco machine-state zetten, maar hier GEEN setMachineType()
-    // gebruiken, want die kan extra resets/hardresets veroorzaken.
-    coleco_set_machine_type(0);
-
-    // Coleco cartridge mode standaard NTSC
-    m_isNTSC = true;
-    if (emulator)
-        emulator->NTSC = true;
-
-    m_Clock = 3579545;
-    m_AudioChunkFrames = 735;
-    m_AudioChunkBytes = m_AudioChunkFrames * m_BytesPerSampleStereo;
-    m_tstates_per_sample = (double)m_Clock / (double)m_SampleRate;
-
-    machine.tperscanline = 228;
-    tms.ScanLines = TMS9918_LINES;
-    coleco_set_vdp_type(coleco_get_vdp_type());
-
-    machine.interrupt = 0;
-
-    // SGM core-flag klaarzetten, maar NIET via setSGMEnabled(),
-    // want die kan opnieuw resetten.
-    if (emulator->SGM)
-    {
-        coleco_writeport(0x60, 0x0F, nullptr);
-        coleco_writeport(0x53, 0x01, nullptr);
-    }
-
-    // ROM pas nu laden
-    ColecoCartridge(romPath);
-
-    // Gearcoleco-style: no special DKA reset path.
-    // DKA/Mr.Do are normal MegaCart ROMs with SGM hardware available.
-    qDebug() << "[CTRL] bootPrepared normal cartridge reset";
-    resetMachine();
-    resumeEmulation();
-
-    m_cartridgeBootInProgress = false;
-
-    qDebug() << "[CTRL] bootPreparedColecoCartridge complete";
-}
-
-void ColecoController::prepareForNewCRomAndPauseOnBios(bool doReset)
-{
+void ColecoController::prepareForNewCRomAndPauseOnBios()
+{   // COLECO CARTRIDGE
     stopEmulation();
-
-    if (doReset)
-        coleco_reset_and_restart_bios();
-
-    m_waitForCBiosFrames = true;
+    coleco_reset_and_restart_bios();
+    m_waitForCBiosFrames=true;
     startEmulation();
 }
-void ColecoController::prepareForNewARomAndPauseOnBios(bool doReset)
-{
+
+void ColecoController::prepareForNewARomAndPauseOnBios()
+{   // ADAM CARTRIDGE
     stopEmulation();
-
-    if (doReset)
-        coleco_reset_and_restart_bios();
-
-    m_waitForABiosFrames = true;
+    coleco_reset_and_restart_bios();
+    m_waitForABiosFrames=true;
     startEmulation();
 }
 
 void ColecoController::setDTsoundEnabled(bool enabled)
 {
     g_dtSoundEnabled.store(enabled, std::memory_order_relaxed);
-}
-
-void ColecoController::coldStartAdam()
-{
-    if (AlreadyReset) return;
-    AlreadyReset = true;
-
-    qDebug() << "[CTRL] coldStartAdam() - single clean ADAM boot";
-
-    // Zet machine expliciet op ADAM.
-    coleco_set_machine_type(1);
-
-    // ADAM mag nooit SGM actief houden.
-    if (emulator)
-        emulator->SGM = 0;
-
-    emit sgmStatusChanged(false);
-
-    // Oude CP/M / TDOS / cartridge / 80-column toestand volledig loslaten.
-    releaseCpm80StateForPowerOff();
-
-    m_cpm_enabled = false;
-    m_tdos_enabled = false;
-    m_cpm_selected = false;
-    g_adamCartridgeMode = false;
-
-    // Deferred mounts resetten.
-    m_deferredMountFramesRemaining = 0;
-    m_deferredMountDisk0Path.clear();
-
-    // Printer state resetten.
-    g_prn_line_counter = 0;
-    g_prn_in_wp = false;
-
-    if (PrintWindow* w = PrintWindow::instance()) {
-        QMetaObject::invokeMethod(
-            w,
-            "updatePrinterMode",
-            Qt::QueuedConnection,
-            Q_ARG(bool, g_prn_in_wp)
-            );
-    }
-
-    // Echte koude ADAM start.
-    coleco_initialise();
-    coleco_reset_and_restart_bios();
-
-    PsgBridge::init(m_Clock, m_SampleRate);
-    PsgBridge::reset(m_Clock, m_SampleRate);
-
-    machine.interrupt = 0;
-
-    AlreadyReset = false;
-
-    emit machineTypeChanged(Machine_Adam);
 }

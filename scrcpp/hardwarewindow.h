@@ -18,6 +18,11 @@ enum MachineType {
     MACHINE_ADAM    = 1
 };
 
+enum VdpType {
+    VDP_TMS  = 0,
+    VDP_F18A = 1
+};
+
 struct HardwareConfig {
     MachineType machine = MACHINE_COLECO;
 
@@ -26,6 +31,8 @@ struct HardwareConfig {
 
     int  ntsc = 1;          // 1=NTSC , 0=PAL
     int  palette = 0;
+    int  vdpType = VDP_TMS;
+    bool f18a80SelfTest = false;
     int  renderMode = 0;
 
     // Emulation
@@ -104,6 +111,8 @@ private:
     QGroupBox*   m_groupVideo = nullptr;
     QComboBox*   m_cboDisplay = nullptr;
     QComboBox*   m_cboPalette = nullptr;
+    QComboBox*   m_cboVdp     = nullptr;
+    QCheckBox*   m_chkF18a80SelfTest = nullptr;
     QLabel*      m_paletteSwatches[16] = { nullptr };
 
     QGroupBox*   m_groupEmu = nullptr;

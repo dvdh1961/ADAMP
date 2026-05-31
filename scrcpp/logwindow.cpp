@@ -69,7 +69,7 @@ LogWidget::LogWidget(QWidget *parent)
     QString family;
     if (fontId != -1) {
         family = QFontDatabase::applicationFontFamilies(fontId).at(0);
-        qDebug() << "[UI] Custom font geladen:" << family;
+       // qDebug() << "[UI] Custom font geladen:" << family;
     } else {
         qDebug() << "[UI] Kon custom font niet laden, fallback naar Roboto";
         family = "Roboto";
