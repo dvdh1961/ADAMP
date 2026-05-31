@@ -93,15 +93,25 @@ This release adds some long-requested functionality, improves usability, and lay
 Highlights of version 1.0.05.26:
 
 -CP/M tape and disk support
+
 -Choice between TMS and F18A video hardware simulation
+
 -80-column CP/M and T-DOS support when using F18A
+
 -80-column copy & paste support
+
 -Various GUI improvements
+
 -Z80 CPU Space is now writable in the debugger
+
 -Completely redesigned Settings window with tabbed navigation
+
 -Option to start directly into your personal favorite application instead of Writer
+
 -Fixes for Coleco ROM playback issues
+
 -Major internal source code reorganization
+
 -Initial groundwork for future plug-in support
 
 This release is a mix of visible improvements and under-the-hood work that will help us move faster in future versions. 
