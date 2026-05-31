@@ -84,6 +84,28 @@ From the moment we have a fully working hardware system, everything will be publ
 
 ## 🚀 Versions
 
+Version 1.0.05.26 x86_64 Windows & Linux
+
+To the Adam/Coleco community,
+
+Again we are proud to unveil a powerful new additions to our emulator:
+
+• CP/M tape & disk support
+• Choice between TMS and F18A
+• 80-column CP/M & T-DOS support using F18A
+• 80-column copy & paste
+• Various GUI improvements
+• Z80 CPU Space in the debugger is now writable
+• Settings window redesigned with tabs
+• Option to start a personal favorite instead of Writer
+• Coleco ROM playback bug fixes
+• Major source-structure reorganization
+• Preparation for plug-ins 
+
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/.png)
+
+---
+
 Version 0.9.04.26 x86_64 Windows & Linux
 
 **Dear Retro Fans,**
