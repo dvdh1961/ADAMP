@@ -3,6 +3,7 @@
 # Bronbestanden
 # C++ bronnen voor de Qt-interface
 SOURCES += \
+           $$PWD/scrcpp/aim_dialog.cpp \
            $$PWD/scrcpp/customfiledialog.cpp \
            $$PWD/scrcpp/customiconprovider.cpp \
            $$PWD/scrcpp/gotoaddressdialog.cpp \
@@ -31,6 +32,7 @@ SOURCES += \
 
 # Headers voor de Qt-interface
 HEADERS += \
+           $$PWD/scrcpp/aim_dialog.h \
            $$PWD/scrcpp/customfiledialog.h \
            $$PWD/scrcpp/customiconprovider.h \
            $$PWD/scrcpp/gotoaddressdialog.h \
