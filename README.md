@@ -91,15 +91,25 @@ To the Adam/Coleco community,
 Again we are proud to unveil a powerful new additions to our emulator:
 
 • CP/M tape & disk support
+
 • Choice between TMS and F18A
+
 • 80-column CP/M & T-DOS support using F18A
+
 • 80-column copy & paste
+
 • Various GUI improvements
+
 • Z80 CPU Space in the debugger is now writable
+
 • Settings window redesigned with tab
+
 • Option to start a personal favorite instead of Writer
+
 • Coleco ROM playback bug fixes
+
 • Major source-structure reorganization
+
 • Preparation for plug-ins
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/HW_adamp.png)
