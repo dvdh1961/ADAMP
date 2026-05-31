@@ -1,5 +1,5 @@
 #include "debug_bridge.h"
-#include "coleco.h"   // coleco_getbyte
+#include "cv.h"   // coleco_getbyte
 #include "z80.h"      // Z80_Regs Z80, z80_cycle_count
 #include <QDebug>
 #include <QRegularExpression>
