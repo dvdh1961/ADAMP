@@ -96,13 +96,13 @@ Again we are proud to unveil a powerful new additions to our emulator:
 • 80-column copy & paste
 • Various GUI improvements
 • Z80 CPU Space in the debugger is now writable
-• Settings window redesigned with tabs
+• Settings window redesigned with tab
 • Option to start a personal favorite instead of Writer
 • Coleco ROM playback bug fixes
 • Major source-structure reorganization
-• Preparation for plug-ins 
+• Preparation for plug-ins
 
-![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/.png)
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/HW_adamp.png)
 
 ---
 
