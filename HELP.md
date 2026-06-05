@@ -7,6 +7,8 @@
 
 - Interface
 
+- Settings page
+
 
 
 
