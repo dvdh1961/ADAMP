@@ -6,6 +6,7 @@
 ---
 
 - Interface
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/manual/Interface.png)
 
 - Settings page
 
