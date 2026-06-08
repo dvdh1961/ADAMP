@@ -49,8 +49,6 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 
 [![release](https://img.shields.io/badge/Quick%20review-ADAM+%20Emulator-magenta.svg)](https://youtu.be/vobLE2F9Cc0)
 [![release](https://img.shields.io/badge/Quick%20review-ADAM+%20Hardware-magenta.svg)](https://youtu.be/u7YjjqL3C9E)
-
-![Commits](https://img.shields.io/github/commits-since/dvdh1961/ADAMP/latest)
 ![Stars](https://img.shields.io/github/stars/dvdh1961/ADAMP)
 ![Issues](https://img.shields.io/github/issues/dvdh1961/ADAMP)
 
