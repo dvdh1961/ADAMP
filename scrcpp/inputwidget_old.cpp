@@ -12,16 +12,13 @@ extern "C" {
 }
 
 // --- Adam Key Code Definities ---
-constexpr uint8_t ADAM_KEY_UP        = 0xA0;
-constexpr uint8_t ADAM_KEY_RIGHT     = 0xA1;
-constexpr uint8_t ADAM_KEY_DOWN      = 0xA2;
-constexpr uint8_t ADAM_KEY_LEFT      = 0xA3;
-
+constexpr uint8_t ADAM_KEY_UP        = 0x0B;
+constexpr uint8_t ADAM_KEY_DOWN      = 0x0A;
+constexpr uint8_t ADAM_KEY_LEFT      = 0x08;
+constexpr uint8_t ADAM_KEY_RIGHT     = 0x09;
 constexpr uint8_t ADAM_KEY_BACKSPACE = 0x08;
-constexpr uint8_t ADAM_KEY_TAB = 0x09;
 constexpr uint8_t ADAM_KEY_RETURN    = 0x0D;
 constexpr uint8_t ADAM_KEY_SPACE     = 0x20;
-
 constexpr uint8_t ADAM_KEY_I         = 0x81; // F1
 constexpr uint8_t ADAM_KEY_II        = 0x82; // F2
 constexpr uint8_t ADAM_KEY_III       = 0x83; // F3
@@ -229,114 +226,71 @@ void InputWidget::resizeEvent(QResizeEvent *e)
 
 void InputWidget::keyPressEvent(QKeyEvent *e)
 {
-    //if (e->isAutoRepeat()) return;
+    if (e->isAutoRepeat()) return;
     handleKey(e, true);
 }
 
 void InputWidget::keyReleaseEvent(QKeyEvent *e)
 {
-    //if (e->isAutoRepeat()) return;
+    if (e->isAutoRepeat()) return;
     handleKey(e, false);
 }
 
 bool InputWidget::handleKey(QKeyEvent *e, bool pressed)
 {
-    //if (e->isAutoRepeat())
-    //    return true;
+    if (e->isAutoRepeat()) return true; //
 
     const int key = e->key();
     const int idx = findIndexForQtKey(m_mapP1, key);
 
-    const bool isMapped  = (idx >= 0);
-    const bool jStorage  = (idx >= IDX_UP && idx <= IDX_RIGHT);
-    const bool kpStorage = (idx >= IDX_HASH && idx <= IDX_9);
-    const bool trStorage = (idx == IDX_TL || idx == IDX_TR);
+    bool isMapped  = (idx >= 0); //
+    bool jStorage  = (idx >= IDX_UP && idx <= IDX_RIGHT); //
+    bool kpStorage = (idx >= IDX_HASH && idx <= IDX_9); //
+    bool trStorage = (idx == IDX_TL || idx == IDX_TR); //
 
-    // ------------------------------------------------------------
-    // ADAM Writer/BASIC cursor fix:
-    // A0..A3 blijven keyboard-only, anders dubbele cursorstap.
-    // ------------------------------------------------------------
-    if (m_machineType == 1 && !m_adamGameMode && jStorage)
-    {
-        if (pressed)
-            handleAdamKeyPress(e);
-        else
-            handleAdamKeyRelease(e);
+    // --- STAP 1: ALTIJD BRIDGE EN HUD BIJWERKEN (Coleco & ADAM) ---
+    if (isMapped) {
+        if (pressed) m_flash = 1.0; //
 
-        return true;
-    }
-
-    // ------------------------------------------------------------
-    // Altijd pad-state bijwerken voor gemapte controller keys.
-    // Dit is de oude basisroute die games nodig hebben.
-    // ------------------------------------------------------------
-    if (isMapped)
-    {
-        if (pressed)
-            m_flash = 1.0;
-
-        if (jStorage)
-        {
+        // Update lokale pad-state voor HUD
+        if (jStorage) {
             if      (idx == IDX_UP)    m_pad0.up    = pressed;
             else if (idx == IDX_DOWN)  m_pad0.down  = pressed;
             else if (idx == IDX_LEFT)  m_pad0.left  = pressed;
             else if (idx == IDX_RIGHT) m_pad0.right = pressed;
-        }
-        else if (trStorage)
-        {
+        } else if (trStorage) {
             if (idx == IDX_TL) m_pad0.fireL = pressed;
             if (idx == IDX_TR) m_pad0.fireR = pressed;
-        }
-        else if (kpStorage)
-        {
-            int kp = (idx == IDX_HASH) ? 11 :
-                         (idx == IDX_STAR) ? 10 :
-                         (idx - IDX_0);
-
-            if (pressed)
-            {
-                m_pad0.keypad = kp;
-                m_keypadHeld = kp;
-            }
-            else if (m_keypadHeld == kp)
-            {
-                m_pad0.keypad = -1;
-                m_keypadHeld = -1;
-            }
+        } else if (kpStorage) {
+            int kp = (idx == IDX_HASH) ? 11 : (idx == IDX_STAR) ? 10 : (idx - IDX_0);
+            if (pressed) { m_pad0.keypad = kp; m_keypadHeld = kp; }
+            else if (m_keypadHeld == kp) { m_pad0.keypad = -1; m_keypadHeld = -1; }
         }
 
+        // Update de hardware registers (Bridge)
         updatePadAndBridge(idx, jStorage, kpStorage, trStorage, pressed);
         this->update();
     }
 
-    // ------------------------------------------------------------
-    // ADAM mode
-    // ------------------------------------------------------------
-    if (m_machineType == 1)
-    {
-        // ADAM game mode: controller/bridge only.
-        if (m_adamGameMode && isMapped && (jStorage || trStorage || kpStorage))
-        {
+    // --- STAP 2: MACHINE SPECIFIEKE ROUTING ---
+    if (m_machineType == 1) { // Machine_Adam
+        // WEG A: GAME MODE (Scancodes 0x100)
+        if (m_adamGameMode && isMapped && (jStorage || trStorage || kpStorage)) {
             processHardwareRoute(idx, jStorage, kpStorage, trStorage, pressed);
-            return true;
+            return true; //
         }
 
-        // ADAM Writer/BASIC gewone keyboardroute.
-        if (pressed)
-            handleAdamKeyPress(e);
-        else
-            handleAdamKeyRelease(e);
-
+        // WEG B: WRITER MODE (ASCII)
+        if (pressed) handleAdamKeyPress(e);
+        else handleAdamKeyRelease(e);
         return true;
     }
 
-    // ------------------------------------------------------------
-    // Coleco mode
-    // ------------------------------------------------------------
-    if (isMapped)
-    {
-        coleco_setController(0, m_pad0);
-        return true;
+    // --- STAP 3: COLECO MODE FIX ---
+    if (isMapped) {
+        // Forceer synchronisatie in Coleco-modus naar de controller thread
+        coleco_setController(0, m_pad0); //
+        return true; //
     }
 
     return false;
@@ -358,80 +312,45 @@ void InputWidget::updatePadAndBridge(int idx, bool jStorage, bool kpStorage, boo
     }
 }
 
-void InputWidget::processHardwareRoute(int idx, bool jStorage, bool kpStorage, bool trStorage, bool pressed)
-{
-    qDebug() << "[INPUT] processHardwareRoute"
-             << "idx=" << idx
-             << "j=" << jStorage
-             << "kp=" << kpStorage
-             << "tr=" << trStorage
-             << "pressed=" << pressed
-             << "controller=" << (m_controller ? "OK" : "NULL");
-
-    if (jStorage)
-    {
-        m_pad0.up    = (idx == IDX_UP)    ? pressed : m_pad0.up;
-        m_pad0.down  = (idx == IDX_DOWN)  ? pressed : m_pad0.down;
-        m_pad0.left  = (idx == IDX_LEFT)  ? pressed : m_pad0.left;
-        m_pad0.right = (idx == IDX_RIGHT) ? pressed : m_pad0.right;
-
-        int dir =
-            (idx == IDX_UP)   ? IB_UP :
-                (idx == IDX_DOWN) ? IB_DOWN :
-                (idx == IDX_LEFT) ? IB_LEFT :
-                IB_RIGHT;
-
-        qDebug() << "[INPUT] bridge direction dir=" << dir << "pressed=" << pressed;
-
+void InputWidget::processHardwareRoute(int idx, bool jStorage, bool kpStorage, bool trStorage, bool pressed) {
+    // 1. Update de Bridge (Hardware Registers)
+    if (jStorage) {
+        int dir = (idx == IDX_UP) ? IB_UP : (idx == IDX_DOWN) ? IB_DOWN :
+                                            (idx == IDX_LEFT) ? IB_LEFT : IB_RIGHT;
         ib_set_joy1_dir(dir, pressed);
-    }
-    else if (trStorage)
-    {
-        if (idx == IDX_TL) {
-            m_pad0.fireL = pressed;
-            ib_set_joy1_btn(IB_BTN1, pressed);
-        }
-
-        if (idx == IDX_TR) {
-            m_pad0.fireR = pressed;
-            ib_set_joy1_btn(IB_BTN2, pressed);
-        }
-
-        qDebug() << "[INPUT] bridge fire idx=" << idx << "pressed=" << pressed;
-    }
-    else if (kpStorage)
-    {
-        int kp =
-            (idx == IDX_HASH) ? 11 :
-                (idx == IDX_STAR) ? 10 :
-                (idx - IDX_0);
-
-        if (pressed) {
-            m_pad0.keypad = kp;
-            m_keypadHeld = kp;
-        }
-        else if (m_keypadHeld == kp) {
-            m_pad0.keypad = -1;
-            m_keypadHeld = -1;
-        }
-
-        qDebug() << "[INPUT] bridge keypad kp=" << kp
-                 << "pressed=" << pressed
-                 << "m_pad0.keypad=" << m_pad0.keypad;
-
-        ib_set_keypad_bit(kp, pressed);
+    } else if (trStorage) {
+        if (idx == IDX_TL) ib_set_joy1_btn(0, pressed); // Fire 1 (Button A)
+        if (idx == IDX_TR) ib_set_joy1_btn(1, pressed); // Fire 2 (Button B)
+        //qDebug() << "    [BRIDGE] Fire Button" << (idx == IDX_TL ? "A" : "B") << "gezet op" << pressed;
+    } else if (kpStorage) {
+        ib_set_keypad_bit(m_pad0.keypad, pressed);
     }
 
+    // Synchroniseer de lokale state naar de kern
     coleco_setController(0, m_pad0);
 
-    qDebug() << "[INPUT] coleco_setController:"
-             << "up=" << m_pad0.up
-             << "down=" << m_pad0.down
-             << "left=" << m_pad0.left
-             << "right=" << m_pad0.right
-             << "fireL=" << m_pad0.fireL
-             << "fireR=" << m_pad0.fireR
-             << "keypad=" << m_pad0.keypad;
+    // 2. ADAMNET SCANCODE ROUTING (De "Last Mile" fix)
+    uint8_t adamCode = 0;
+    if (idx >= IDX_0 && idx <= IDX_9) adamCode = '0' + (idx - IDX_0);
+    else if (idx == IDX_UP)    adamCode = ADAM_KEY_UP;
+    else if (idx == IDX_DOWN)  adamCode = ADAM_KEY_DOWN;
+    else if (idx == IDX_LEFT)  adamCode = ADAM_KEY_LEFT;
+    else if (idx == IDX_RIGHT) adamCode = ADAM_KEY_RIGHT;
+    else if (idx == IDX_STAR)  adamCode = '*';
+    else if (idx == IDX_HASH)  adamCode = '#';
+
+    if (adamCode && m_controller) {
+        // Gebruik de 0x100 marker om onAdamKeyEvent te dwingen het scancode-pad te nemen
+        int markedCode = 0x100 | (pressed ? adamCode : (adamCode | 0x80));
+        //qDebug() << "    [SCANCODE] Injectie via Controller:" << Qt::hex << markedCode;
+        // CRUCIAAL: Hier gaat de data naar de ColecoController thread
+        QMetaObject::invokeMethod(
+            m_controller,
+            "onAdamKeyEvent",
+            Qt::QueuedConnection,
+            Q_ARG(int, markedCode)
+            );
+    }
 }
 
 void InputWidget::stepOverlay()
@@ -905,25 +824,12 @@ void InputWidget::handleAdamKeyPress(QKeyEvent *e)
         sendAdamKeyEvent(ADAM_FUNCTION_KEYS[key - Qt::Key_F1], true);
         return;
     }
-    if (key == Qt::Key_Tab)
-    {
-        sendAdamKeyEvent(ADAM_KEY_TAB, false);  // echte Tab
-        m_pressedKeyMap.insert(key, ADAM_KEY_TAB);
-        return;
-    }
+    if (key == Qt::Key_Tab) { sendAdamKeyEvent(0x09, true); return; }
 
     // Cursortoetsen afhandeling
-    // Belangrijk: via scancode-route sturen, niet als gewone ASCII/control-code.
-    // Rechts mag 0x09 blijven, maar mag NIET als Tab/ASCII binnenkomen.
-    if (key == Qt::Key_Up || key == Qt::Key_Down || key == Qt::Key_Left || key == Qt::Key_Right)
-    {
-        uint8_t code =
-            (key == Qt::Key_Up)    ? ADAM_KEY_UP :
-                (key == Qt::Key_Down)  ? ADAM_KEY_DOWN :
-                (key == Qt::Key_Left)  ? ADAM_KEY_LEFT :
-                ADAM_KEY_RIGHT;
-
-        sendAdamKeyEvent(code, true);   // true = gemarkeerd/scancode-route
+    if (key == Qt::Key_Up || key == Qt::Key_Down || key == Qt::Key_Left || key == Qt::Key_Right) {
+        uint8_t code = (key == Qt::Key_Up) ? ADAM_KEY_UP : (key == Qt::Key_Down) ? ADAM_KEY_DOWN : (key == Qt::Key_Left) ? ADAM_KEY_LEFT : ADAM_KEY_RIGHT;
+        sendAdamKeyEvent(code, false);
         m_pressedKeyMap.insert(key, code);
         return;
     }
@@ -953,14 +859,6 @@ void InputWidget::handleAdamKeyRelease(QKeyEvent *e)
     }
     if (key == Qt::Key_Tab) { sendAdamKeyEvent(0x09 | 0x80, true); return; }
 
-    // Release van cursortoetsen ook via scancode-route.
-    // Niet via gewone ASCII-route, anders wordt 0x89/0x88 verkeerd behandeld.
-    if (key == Qt::Key_Up || key == Qt::Key_Down ||
-        key == Qt::Key_Left || key == Qt::Key_Right)
-    {
-        m_pressedKeyMap.remove(key);
-        return;
-    }
     auto it = m_pressedKeyMap.find(key);
     if (it != m_pressedKeyMap.end()) {
         sendAdamKeyEvent(int(it.value() | 0x80), false);

@@ -612,99 +612,8 @@ void SoundManager::writePreviewOnlyChunk()
 #endif
 }
 
-static double previewEnvelopeFactor(int env, double t, double duration)
-{
-    if (duration <= 0.0)
-        return 1.0;
-
-    const double x = qBound(0.0, t / duration, 1.0);
-
-    switch (env & 0x0F) {
-    case 0x01:
-        // Short pluck.
-        return qMax(0.0, 1.0 - x * 1.45);
-
-    case 0x02:
-        // Mild decay.
-        return 1.0 - (x * 0.35);
-
-    case 0x03:
-        // Bass / square sustain: strong attack, medium sustain.
-        return (x < 0.04) ? (x / 0.04) : 0.82;
-
-    case 0x04:
-        // Brass stab: hard hit and fast fall.
-        return qMax(0.0, 1.0 - x * 1.10);
-
-    case 0x05:
-        // Soft pad: slow attack, soft sustain.
-        return (x < 0.25) ? (x / 0.25) * 0.70 : 0.70;
-
-    case 0x06:
-        // Lead synth: slight tremolo, long sustain.
-        return 0.78 + 0.22 * std::sin(2.0 * M_PI * 6.0 * t);
-
-    case 0x07:
-        // Arp pluck: repeating pulse envelope.
-        return (std::fmod(t * 12.0, 1.0) < 0.38) ? (1.0 - x * 0.45) : 0.18;
-
-    case 0x08:
-        // Bell: exponential-ish decay.
-        return std::exp(-4.0 * x);
-
-    case 0x09:
-        // Perc click: extremely short.
-        return (x < 0.10) ? (1.0 - x * 9.0) : 0.0;
-
-    case 0x0A:
-        // Snare: short noisy body.
-        return qMax(0.0, 1.0 - x * 2.8);
-
-    case 0x0B:
-        // HiHat: very short bright decay.
-        return qMax(0.0, 1.0 - x * 5.5);
-
-    case 0x0C:
-        // Explosion: slow noisy fade.
-        return qMax(0.0, 1.0 - x * 0.85);
-
-    case 0x0D:
-        // PowerUp: rising pulse feeling.
-        return 0.35 + 0.65 * x;
-
-    default:
-        return 1.0;
-    }
-}
-
-static double previewPitchMultiplier(int env, double t)
-{
-    switch (env & 0x0F) {
-    case 0x06:
-        // Lead vibrato.
-        return 1.0 + 0.010 * std::sin(2.0 * M_PI * 5.5 * t);
-
-    case 0x07:
-        // Arp feeling: major chord steps.
-        switch (static_cast<int>(t * 12.0) % 3) {
-        case 0: return 1.0;
-        case 1: return 1.2599210499; // +4 semitones
-        default: return 1.4983070769; // +7 semitones
-        }
-
-    case 0x08:
-        // Bell slight detune wobble.
-        return 1.0 + 0.006 * std::sin(2.0 * M_PI * 9.0 * t);
-
-    case 0x0D:
-        // Power up sweep.
-        return 1.0 + qMin(0.65, t * 1.8);
-
-    default:
-        return 1.0;
-    }
-}
-
+static double previewEnvelopeFactor(int env, double t, double duration);
+static double previewPitchMultiplier(int env, double t);
 
 void SoundManager::mixPreviewIntoBuffer(int16_t* stereo, int framesStereo)
 {
@@ -1100,6 +1009,99 @@ void SoundManager::releaseDirectSoundPreviewBuffer()
         m_previewBuf->Stop();
         m_previewBuf->Release();
         m_previewBuf = nullptr;
+    }
+}
+
+static double previewEnvelopeFactor(int env, double t, double duration)
+{
+    if (duration <= 0.0)
+        return 1.0;
+
+    const double x = qBound(0.0, t / duration, 1.0);
+
+    switch (env & 0x0F) {
+    case 0x01:
+        // Short pluck.
+        return qMax(0.0, 1.0 - x * 1.45);
+
+    case 0x02:
+        // Mild decay.
+        return 1.0 - (x * 0.35);
+
+    case 0x03:
+        // Bass / square sustain: strong attack, medium sustain.
+        return (x < 0.04) ? (x / 0.04) : 0.82;
+
+    case 0x04:
+        // Brass stab: hard hit and fast fall.
+        return qMax(0.0, 1.0 - x * 1.10);
+
+    case 0x05:
+        // Soft pad: slow attack, soft sustain.
+        return (x < 0.25) ? (x / 0.25) * 0.70 : 0.70;
+
+    case 0x06:
+        // Lead synth: slight tremolo, long sustain.
+        return 0.78 + 0.22 * std::sin(2.0 * M_PI * 6.0 * t);
+
+    case 0x07:
+        // Arp pluck: repeating pulse envelope.
+        return (std::fmod(t * 12.0, 1.0) < 0.38) ? (1.0 - x * 0.45) : 0.18;
+
+    case 0x08:
+        // Bell: exponential-ish decay.
+        return std::exp(-4.0 * x);
+
+    case 0x09:
+        // Perc click: extremely short.
+        return (x < 0.10) ? (1.0 - x * 9.0) : 0.0;
+
+    case 0x0A:
+        // Snare: short noisy body.
+        return qMax(0.0, 1.0 - x * 2.8);
+
+    case 0x0B:
+        // HiHat: very short bright decay.
+        return qMax(0.0, 1.0 - x * 5.5);
+
+    case 0x0C:
+        // Explosion: slow noisy fade.
+        return qMax(0.0, 1.0 - x * 0.85);
+
+    case 0x0D:
+        // PowerUp: rising pulse feeling.
+        return 0.35 + 0.65 * x;
+
+    default:
+        return 1.0;
+    }
+}
+
+static double previewPitchMultiplier(int env, double t)
+{
+    switch (env & 0x0F) {
+    case 0x06:
+        // Lead vibrato.
+        return 1.0 + 0.010 * std::sin(2.0 * M_PI * 5.5 * t);
+
+    case 0x07:
+        // Arp feeling: major chord steps.
+        switch (static_cast<int>(t * 12.0) % 3) {
+        case 0: return 1.0;
+        case 1: return 1.2599210499; // +4 semitones
+        default: return 1.4983070769; // +7 semitones
+        }
+
+    case 0x08:
+        // Bell slight detune wobble.
+        return 1.0 + 0.006 * std::sin(2.0 * M_PI * 9.0 * t);
+
+    case 0x0D:
+        // Power up sweep.
+        return 1.0 + qMin(0.65, t * 1.8);
+
+    default:
+        return 1.0;
     }
 }
 

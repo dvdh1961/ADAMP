@@ -15,7 +15,7 @@
 #include "joypadwindow.h"
 #include "printwindow.h"
 #include "simplejoystick.h"
-#include "f18a_term80_tdos.h"
+#include "GRAPH/f18a_term80_tdos.h"
 
 // Qt includes
 #include <QMenuBar>
@@ -110,7 +110,7 @@ MainWindow::MainWindow(QWidget *parent)
     QCoreApplication::setApplicationName("ADAMP_EMU");
 
     // Version
-    appVersion = "1.0.05.26";
+    appVersion = "1.1.06.26";
 
     setWindowTitle(QString("ADAM+ Emulator - v%1").arg(appVersion));
 

@@ -10,7 +10,7 @@ class QWidget;
 class QRadioButton;
 class QButtonGroup;
 
-#include "emu.h"
+#include "CORE/emu.h"
 
 class CartridgeInfoDialog : public QDialog
 {

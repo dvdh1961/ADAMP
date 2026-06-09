@@ -4,6 +4,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -45,6 +46,56 @@ QString pathFromEdit(const QLineEdit *edit)
     return v.isValid() ? v.toString() : edit->text();
 }
 
+
+QString appDefaultPath(const QString& relativePath)
+{
+    return QDir::cleanPath(QDir(QCoreApplication::applicationDirPath()).filePath(relativePath));
+}
+
+QString defaultRomPath()        { return appDefaultPath("media/roms"); }
+QString defaultDiskPath()       { return appDefaultPath("media/disks"); }
+QString defaultTapePath()       { return appDefaultPath("media/tapes"); }
+QString defaultStatePath()      { return appDefaultPath("media/states"); }
+QString defaultBreakpointPath() { return appDefaultPath("media/breakpoints"); }
+QString defaultScreenshotPath() { return appDefaultPath("media/screenshots"); }
+QString defaultSymbolsPath()    { return appDefaultPath("media/symbols"); }
+QString defaultBezelPath()      { return appDefaultPath("media/bezels"); }
+
+QString defaultCvBasicExePath()
+{
+#if defined(Q_OS_WIN)
+    return appDefaultPath("tools/cvbasic/cvbasic.exe");
+#else
+    return appDefaultPath("tools/cvbasic/cvbasic_linux");
+#endif
+}
+
+QString defaultGasm80ExePath()
+{
+#if defined(Q_OS_WIN)
+    return appDefaultPath("tools/cvbasic/gasm80.exe");
+#else
+    return appDefaultPath("tools/cvbasic/gasm80_linux");
+#endif
+}
+
+QString defaultCvBasicSourcePath() { return appDefaultPath("media/cvbasic/source"); }
+QString defaultCvBasicBuildPath()  { return appDefaultPath("media/cvbasic/build"); }
+QString defaultSpriteSourcePath()  { return appDefaultPath("media/cvbasic/source"); }
+QString defaultSpriteBuildPath()   { return appDefaultPath("media/cvbasic/build/sprites"); }
+QString defaultSoundSourcePath()   { return appDefaultPath("media/cvbasic/sound"); }
+QString defaultSoundBuildPath()    { return appDefaultPath("media/cvbasic/build/sound"); }
+
+
+QString executableFileFilter()
+{
+#if defined(Q_OS_WIN)
+    return QObject::tr("Executable Files (*.exe);;All Files (*.*)");
+#else
+    return QObject::tr("Executable Files (*)");
+#endif
+}
+
 } // namespace
 
 SettingsWindow::SettingsWindow(QWidget *parent)
@@ -53,7 +104,7 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     setWindowTitle(tr("Settings"));
     setWindowFlags(windowFlags() & ~Qt::WindowCloseButtonHint);
     setFixedWidth(780);
-    setFixedHeight(450);
+    setFixedHeight(560);
 
     // Icoonknoppen niet kunstmatig omhoog/omlaag duwen:
     // de QGridLayout centreert ze verticaal op dezelfde baseline als de QLineEdit.
@@ -236,6 +287,16 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     QWidget *pluginsTab = new QWidget(tabs);
     QGridLayout *pluginsLayout = createTabLayout();
     pluginsTab->setLayout(pluginsLayout);
+
+    addRowWithClr(pluginsLayout, 0, tr("CVBasic source path:"), m_cvbasicSourcePathEdit, m_cvbasicSourcePathBtn, m_cvbasicSourceDefaultBtn, tr("Browse CVBasic source directory"));
+    addRowWithClr(pluginsLayout, 1, tr("CVBasic build path:"),  m_cvbasicBuildPathEdit,  m_cvbasicBuildPathBtn,  m_cvbasicBuildDefaultBtn,  tr("Browse CVBasic build directory"));
+    addRowWithClr(pluginsLayout, 2, tr("CVBasic compiler:"),    m_cvbasicExePathEdit,    m_cvbasicExePathBtn,    m_cvbasicExeDefaultBtn,    tr("Browse CVBasic executable"));
+    addRowWithClr(pluginsLayout, 3, tr("GASM80 assembler:"),    m_gasm80ExePathEdit,     m_gasm80ExePathBtn,     m_gasm80ExeDefaultBtn,     tr("Browse GASM80 executable"));
+    addRowWithClr(pluginsLayout, 4, tr("Sprite source path:"),  m_spriteSourcePathEdit,  m_spriteSourcePathBtn,  m_spriteSourceDefaultBtn,  tr("Browse Sprite Editor source directory"));
+    addRowWithClr(pluginsLayout, 5, tr("Sprite build path:"),   m_spriteBuildPathEdit,   m_spriteBuildPathBtn,   m_spriteBuildDefaultBtn,   tr("Browse Sprite Editor build directory"));
+    addRowWithClr(pluginsLayout, 6, tr("Sound source path:"),   m_soundSourcePathEdit,   m_soundSourcePathBtn,   m_soundSourceDefaultBtn,   tr("Browse Sound Editor source directory"));
+    addRowWithClr(pluginsLayout, 7, tr("Sound build path:"),    m_soundBuildPathEdit,    m_soundBuildPathBtn,    m_soundBuildDefaultBtn,    tr("Browse Sound Editor build directory"));
+
     addTabBottomIcon(pluginsLayout, "PLUG-INS");
     tabs->addTab(pluginsTab, tr("PLUG-INS"));
 
@@ -305,6 +366,25 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     connect(m_adamStartupPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseAdamStartupPath);
     connect(m_adamStartupDefaultBtn, &QPushButton::clicked, this, &SettingsWindow::onDefaultAdamStartupPath);
 
+    // PLUG-INS / CVBasic suite
+    connect(m_cvbasicSourcePathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseCvBasicSourcePath);
+    connect(m_cvbasicBuildPathBtn,  &QPushButton::clicked, this, &SettingsWindow::onBrowseCvBasicBuildPath);
+    connect(m_cvbasicExePathBtn,    &QPushButton::clicked, this, &SettingsWindow::onBrowseCvBasicExePath);
+    connect(m_gasm80ExePathBtn,     &QPushButton::clicked, this, &SettingsWindow::onBrowseGasm80ExePath);
+    connect(m_spriteSourcePathBtn,  &QPushButton::clicked, this, &SettingsWindow::onBrowseSpriteSourcePath);
+    connect(m_spriteBuildPathBtn,   &QPushButton::clicked, this, &SettingsWindow::onBrowseSpriteBuildPath);
+    connect(m_soundSourcePathBtn,   &QPushButton::clicked, this, &SettingsWindow::onBrowseSoundSourcePath);
+    connect(m_soundBuildPathBtn,    &QPushButton::clicked, this, &SettingsWindow::onBrowseSoundBuildPath);
+
+    connect(m_cvbasicSourceDefaultBtn, &QPushButton::clicked, this, &SettingsWindow::onDefaultCvBasicSourcePath);
+    connect(m_cvbasicBuildDefaultBtn,  &QPushButton::clicked, this, &SettingsWindow::onDefaultCvBasicBuildPath);
+    connect(m_cvbasicExeDefaultBtn,    &QPushButton::clicked, this, &SettingsWindow::onDefaultCvBasicExePath);
+    connect(m_gasm80ExeDefaultBtn,     &QPushButton::clicked, this, &SettingsWindow::onDefaultGasm80ExePath);
+    connect(m_spriteSourceDefaultBtn,  &QPushButton::clicked, this, &SettingsWindow::onDefaultSpriteSourcePath);
+    connect(m_spriteBuildDefaultBtn,   &QPushButton::clicked, this, &SettingsWindow::onDefaultSpriteBuildPath);
+    connect(m_soundSourceDefaultBtn,   &QPushButton::clicked, this, &SettingsWindow::onDefaultSoundSourcePath);
+    connect(m_soundBuildDefaultBtn,    &QPushButton::clicked, this, &SettingsWindow::onDefaultSoundBuildPath);
+
     connect(m_resetAllPathsBtn, &QPushButton::clicked, this, &SettingsWindow::onResetAllPathsToDefault);
     connect(m_resetAllMemoryPathsBtn, &QPushButton::clicked,this, &SettingsWindow::onResetAllMemoryPaths);
     connect(m_okButton, &QPushButton::clicked, this, &SettingsWindow::accept);
@@ -325,6 +405,14 @@ QString SettingsWindow::colecoBiosPath() const  { return pathFromEdit(m_colecoBi
 QString SettingsWindow::eosBiosPath() const     { return pathFromEdit(m_eosBiosPathEdit); }
 QString SettingsWindow::writerBiosPath() const  { return pathFromEdit(m_writerBiosPathEdit); }
 QString SettingsWindow::adamStartupPath() const  { return pathFromEdit(m_adamStartupPathEdit); }
+QString SettingsWindow::cvbasicSourcePath() const { return pathFromEdit(m_cvbasicSourcePathEdit); }
+QString SettingsWindow::cvbasicBuildPath() const  { return pathFromEdit(m_cvbasicBuildPathEdit); }
+QString SettingsWindow::cvbasicExePath() const    { return pathFromEdit(m_cvbasicExePathEdit); }
+QString SettingsWindow::gasm80ExePath() const     { return pathFromEdit(m_gasm80ExePathEdit); }
+QString SettingsWindow::spriteSourcePath() const  { return pathFromEdit(m_spriteSourcePathEdit); }
+QString SettingsWindow::spriteBuildPath() const   { return pathFromEdit(m_spriteBuildPathEdit); }
+QString SettingsWindow::soundSourcePath() const   { return pathFromEdit(m_soundSourcePathEdit); }
+QString SettingsWindow::soundBuildPath() const    { return pathFromEdit(m_soundBuildPathEdit); }
 int SettingsWindow::adamBootMode() const
 {
     return m_adamBootModeCombo ? m_adamBootModeCombo->currentData().toInt() : 0;
@@ -344,6 +432,38 @@ void SettingsWindow::setColecoBiosPath(const QString &path) { setPathText(m_cole
 void SettingsWindow::setEosBiosPath(const QString &path)    { setPathText(m_eosBiosPathEdit, path); }
 void SettingsWindow::setWriterBiosPath(const QString &path) { setPathText(m_writerBiosPathEdit, path); }
 void SettingsWindow::setAdamStartupPath(const QString &path)    { setPathText(m_adamStartupPathEdit, path); }
+void SettingsWindow::setCvBasicSourcePath(const QString &path)
+{
+    setPathText(m_cvbasicSourcePathEdit, path.isEmpty() ? defaultCvBasicSourcePath() : path);
+}
+void SettingsWindow::setCvBasicBuildPath(const QString &path)
+{
+    setPathText(m_cvbasicBuildPathEdit, path.isEmpty() ? defaultCvBasicBuildPath() : path);
+}
+void SettingsWindow::setCvBasicExePath(const QString &path)
+{
+    setPathText(m_cvbasicExePathEdit, path.isEmpty() ? defaultCvBasicExePath() : path);
+}
+void SettingsWindow::setGasm80ExePath(const QString &path)
+{
+    setPathText(m_gasm80ExePathEdit, path.isEmpty() ? defaultGasm80ExePath() : path);
+}
+void SettingsWindow::setSpriteSourcePath(const QString &path)
+{
+    setPathText(m_spriteSourcePathEdit, path.isEmpty() ? defaultSpriteSourcePath() : path);
+}
+void SettingsWindow::setSpriteBuildPath(const QString &path)
+{
+    setPathText(m_spriteBuildPathEdit, path.isEmpty() ? defaultSpriteBuildPath() : path);
+}
+void SettingsWindow::setSoundSourcePath(const QString &path)
+{
+    setPathText(m_soundSourcePathEdit, path.isEmpty() ? defaultSoundSourcePath() : path);
+}
+void SettingsWindow::setSoundBuildPath(const QString &path)
+{
+    setPathText(m_soundBuildPathEdit, path.isEmpty() ? defaultSoundBuildPath() : path);
+}
 void SettingsWindow::setAdamBootMode(int mode)
 {
     if (!m_adamBootModeCombo) return;
@@ -353,19 +473,30 @@ void SettingsWindow::setAdamBootMode(int mode)
 
 void SettingsWindow::onResetAllPathsToDefault()
 {
-    setPathText(m_romPathEdit, QString());
-    setPathText(m_diskPathEdit, QString());
-    setPathText(m_tapePathEdit, QString());
-    setPathText(m_statePathEdit, QString());
-    setPathText(m_breakpointPathEdit, QString());
-    setPathText(m_screenshotPathEdit, QString());
-    setPathText(m_symbolPathEdit, QString());
-    setPathText(m_adamBezelPathEdit, QString());
-    setPathText(m_cvBezelPathEdit, QString());
+    setPathText(m_romPathEdit, defaultRomPath());
+    setPathText(m_diskPathEdit, defaultDiskPath());
+    setPathText(m_tapePathEdit, defaultTapePath());
+    setPathText(m_statePathEdit, defaultStatePath());
+    setPathText(m_breakpointPathEdit, defaultBreakpointPath());
+    setPathText(m_screenshotPathEdit, defaultScreenshotPath());
+    setPathText(m_symbolPathEdit, defaultSymbolsPath());
+    setPathText(m_adamBezelPathEdit, defaultBezelPath());
+    setPathText(m_cvBezelPathEdit, defaultBezelPath());
+
+    // BIOS/startup blijven leeg = interne/default boot zonder externe ROM/image.
     setPathText(m_colecoBiosPathEdit, QString());
     setPathText(m_eosBiosPathEdit, QString());
     setPathText(m_writerBiosPathEdit, QString());
     setPathText(m_adamStartupPathEdit, QString());
+
+    setPathText(m_cvbasicSourcePathEdit, defaultCvBasicSourcePath());
+    setPathText(m_cvbasicBuildPathEdit, defaultCvBasicBuildPath());
+    setPathText(m_cvbasicExePathEdit, defaultCvBasicExePath());
+    setPathText(m_gasm80ExePathEdit, defaultGasm80ExePath());
+    setPathText(m_spriteSourcePathEdit, defaultSpriteSourcePath());
+    setPathText(m_spriteBuildPathEdit, defaultSpriteBuildPath());
+    setPathText(m_soundSourcePathEdit, defaultSoundSourcePath());
+    setPathText(m_soundBuildPathEdit, defaultSoundBuildPath());
     setAdamBootMode(0);
 }
 
@@ -477,3 +608,105 @@ void SettingsWindow::onDefaultColecoBiosPath() { setPathText(m_colecoBiosPathEdi
 void SettingsWindow::onDefaultEosBiosPath()    { setPathText(m_eosBiosPathEdit, QString()); }
 void SettingsWindow::onDefaultWriterBiosPath() { setPathText(m_writerBiosPathEdit, QString()); }
 void SettingsWindow::onDefaultAdamStartupPath() { setPathText(m_adamStartupPathEdit, QString()); }
+
+void SettingsWindow::onBrowseCvBasicSourcePath()
+{
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select CVBasic Source Directory"), pathFromEdit(m_cvbasicSourcePathEdit).isEmpty() ? defaultCvBasicSourcePath() : pathFromEdit(m_cvbasicSourcePathEdit));
+    if (!dir.isEmpty()) setPathText(m_cvbasicSourcePathEdit, QDir::cleanPath(dir));
+}
+
+void SettingsWindow::onBrowseCvBasicBuildPath()
+{
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select CVBasic Build Directory"), pathFromEdit(m_cvbasicBuildPathEdit).isEmpty() ? defaultCvBasicBuildPath() : pathFromEdit(m_cvbasicBuildPathEdit));
+    if (!dir.isEmpty()) setPathText(m_cvbasicBuildPathEdit, QDir::cleanPath(dir));
+}
+
+void SettingsWindow::onBrowseSpriteSourcePath()
+{
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select Sprite Editor Source Directory"), pathFromEdit(m_spriteSourcePathEdit).isEmpty() ? defaultSpriteSourcePath() : pathFromEdit(m_spriteSourcePathEdit));
+    if (!dir.isEmpty()) setPathText(m_spriteSourcePathEdit, QDir::cleanPath(dir));
+}
+
+void SettingsWindow::onBrowseSpriteBuildPath()
+{
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select Sprite Editor Build Directory"), pathFromEdit(m_spriteBuildPathEdit).isEmpty() ? defaultSpriteBuildPath() : pathFromEdit(m_spriteBuildPathEdit));
+    if (!dir.isEmpty()) setPathText(m_spriteBuildPathEdit, QDir::cleanPath(dir));
+}
+
+void SettingsWindow::onBrowseSoundSourcePath()
+{
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select Sound Editor Source Directory"), pathFromEdit(m_soundSourcePathEdit).isEmpty() ? defaultSoundSourcePath() : pathFromEdit(m_soundSourcePathEdit));
+    if (!dir.isEmpty()) setPathText(m_soundSourcePathEdit, QDir::cleanPath(dir));
+}
+
+void SettingsWindow::onBrowseSoundBuildPath()
+{
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select Sound Editor Build Directory"), pathFromEdit(m_soundBuildPathEdit).isEmpty() ? defaultSoundBuildPath() : pathFromEdit(m_soundBuildPathEdit));
+    if (!dir.isEmpty()) setPathText(m_soundBuildPathEdit, QDir::cleanPath(dir));
+}
+
+void SettingsWindow::onBrowseCvBasicExePath()
+{
+    const QString file = QFileDialog::getOpenFileName(
+        this,
+        tr("Select CVBasic compiler"),
+        pathFromEdit(m_cvbasicExePathEdit).isEmpty() ? QFileInfo(defaultCvBasicExePath()).absolutePath() : QFileInfo(pathFromEdit(m_cvbasicExePathEdit)).absolutePath(),
+        executableFileFilter()
+    );
+
+    if (!file.isEmpty())
+        setPathText(m_cvbasicExePathEdit, QDir::cleanPath(file));
+}
+
+void SettingsWindow::onBrowseGasm80ExePath()
+{
+    const QString file = QFileDialog::getOpenFileName(
+        this,
+        tr("Select GASM80 assembler"),
+        pathFromEdit(m_gasm80ExePathEdit).isEmpty() ? QFileInfo(defaultGasm80ExePath()).absolutePath() : QFileInfo(pathFromEdit(m_gasm80ExePathEdit)).absolutePath(),
+        executableFileFilter()
+    );
+
+    if (!file.isEmpty())
+        setPathText(m_gasm80ExePathEdit, QDir::cleanPath(file));
+}
+
+void SettingsWindow::onDefaultCvBasicSourcePath()
+{
+    setPathText(m_cvbasicSourcePathEdit, defaultCvBasicSourcePath());
+}
+
+void SettingsWindow::onDefaultCvBasicBuildPath()
+{
+    setPathText(m_cvbasicBuildPathEdit, defaultCvBasicBuildPath());
+}
+
+void SettingsWindow::onDefaultCvBasicExePath()
+{
+    setPathText(m_cvbasicExePathEdit, defaultCvBasicExePath());
+}
+
+void SettingsWindow::onDefaultGasm80ExePath()
+{
+    setPathText(m_gasm80ExePathEdit, defaultGasm80ExePath());
+}
+
+void SettingsWindow::onDefaultSpriteSourcePath()
+{
+    setPathText(m_spriteSourcePathEdit, defaultSpriteSourcePath());
+}
+
+void SettingsWindow::onDefaultSpriteBuildPath()
+{
+    setPathText(m_spriteBuildPathEdit, defaultSpriteBuildPath());
+}
+
+void SettingsWindow::onDefaultSoundSourcePath()
+{
+    setPathText(m_soundSourcePathEdit, defaultSoundSourcePath());
+}
+
+void SettingsWindow::onDefaultSoundBuildPath()
+{
+    setPathText(m_soundBuildPathEdit, defaultSoundBuildPath());
+}

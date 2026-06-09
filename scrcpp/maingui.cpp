@@ -5,6 +5,8 @@
 #include "inputwidget.h"
 #include "logwindow.h"
 #include "debuggerwindow.h"
+#include "debugterminalwidget.h"
+#include "commandprocessor.h"
 #include "disasm_bridge.h"
 #include "cartridgeinfowindow.h"
 #include "ntablewindow.h"
@@ -12,12 +14,13 @@
 #include "spritewindow.h"
 #include "settingswindow.h"
 #include "hardwarewindow.h"
-#include "cv.h"
-#include "f18a.h"
-#include "adnet.h"
+#include "CORE/cv.h"
+#include "GRAPH/f18a.h"
+#include "6801/adnet_core.h"
 #include "joypadwindow.h"
 #include "printwindow.h"
 #include "simplejoystick.h"
+#include "soundpreviewbridge.h"
 
 // Qt includes
 #include <QMenuBar>
@@ -53,12 +56,13 @@
 #include <QPixmap>
 #include <QFont>
 #include <QMap>
+#include <QStringList>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QUrl>
 #include <QMessageBox>
 #include <QProgressDialog>
-#include "adnet.h"
+#include "6801/adnet_core.h"
 
 //---------------------------------------------------------------------------------------------
 // GUI implementations (menus, widgets, media, settings, input, etc.)
@@ -127,6 +131,47 @@ static void updateRomLabelForStatusBar(QStatusBar* bar, QLabel* sepLabel4, QLabe
     romLabel->setFixedWidth(maxWidth);
     romLabel->setText(statusBarElideText3Dots(display, romLabel->font(), maxWidth - 4));
     romLabel->setToolTip(display);
+}
+
+
+
+static QString appDefaultPath(const QString& relativePath)
+{
+    return QDir::cleanPath(QDir(QCoreApplication::applicationDirPath()).filePath(relativePath));
+}
+
+static QString defaultRomPathForPlatform()          { return appDefaultPath("media/roms"); }
+static QString defaultDiskPathForPlatform()         { return appDefaultPath("media/disks"); }
+static QString defaultTapePathForPlatform()         { return appDefaultPath("media/tapes"); }
+static QString defaultStatePathForPlatform()        { return appDefaultPath("media/states"); }
+static QString defaultBreakpointPathForPlatform()   { return appDefaultPath("media/breakpoints"); }
+static QString defaultScreenshotPathForPlatform()   { return appDefaultPath("media/screenshots"); }
+static QString defaultSymbolsPathForPlatform()      { return appDefaultPath("media/symbols"); }
+static QString defaultBezelPathForPlatform()        { return appDefaultPath("media/bezels"); }
+
+static QString defaultCvBasicSourcePathForPlatform(){ return appDefaultPath("media/cvbasic/source"); }
+static QString defaultCvBasicBuildPathForPlatform() { return appDefaultPath("media/cvbasic/build"); }
+static QString defaultSpriteSourcePathForPlatform() { return appDefaultPath("media/cvbasic/source"); }
+static QString defaultSpriteBuildPathForPlatform()  { return appDefaultPath("media/cvbasic/build/sprites"); }
+static QString defaultSoundSourcePathForPlatform()  { return appDefaultPath("media/cvbasic/sound"); }
+static QString defaultSoundBuildPathForPlatform()   { return appDefaultPath("media/cvbasic/build/sound"); }
+
+static QString defaultCvBasicExePathForPlatform()
+{
+#if defined(Q_OS_WIN)
+    return appDefaultPath("tools/cvbasic/cvbasic.exe");
+#else
+    return appDefaultPath("tools/cvbasic/cvbasic_linux");
+#endif
+}
+
+static QString defaultGasm80ExePathForPlatform()
+{
+#if defined(Q_OS_WIN)
+    return appDefaultPath("tools/cvbasic/gasm80.exe");
+#else
+    return appDefaultPath("tools/cvbasic/gasm80_linux");
+#endif
 }
 
 
@@ -512,6 +557,12 @@ void MainWindow::setupUI()
     m_debuggerAction = new QAction(tr("Debugger"), this);
     debugMenu->addAction(m_debuggerAction);
 
+    m_actShowTerminal = new QAction(tr("Terminal"), this);
+    debugMenu->addAction(m_actShowTerminal);
+
+    connect(m_actShowTerminal, &QAction::triggered,
+            this, &MainWindow::onShowDebugTerminal);
+
     // --- TOOLS MENU ---
     QMenu* toolsMenu = menuBar()->addMenu(tr("Tools"));
     m_actShowNameTable = new QAction(tr("Name Table Viewer"), this);
@@ -541,8 +592,12 @@ void MainWindow::setupUI()
     });
     toolsMenu->addSeparator();
     toolsMenu->addAction(m_actImageManager);
-
-
+    // --- CVBASIC ---
+    m_actCvBasicEditor = new QAction(tr("CVBasic SUITE PLUG-IN"), this);
+    connect(m_actCvBasicEditor, &QAction::triggered,
+            this, &MainWindow::onShowCvBasicEditor);
+    toolsMenu->addSeparator();
+    toolsMenu->addAction(m_actCvBasicEditor);
 
     // --- INPUT MENU ---
     QMenu* inputMenu = menuBar()->addMenu(tr("Input"));
@@ -556,6 +611,26 @@ void MainWindow::setupUI()
     // Keypad mapper (was in Tools)
     m_actJoypadMapper = new QAction(tr("Keypad mapper"), this);
     inputMenu->addAction(m_actJoypadMapper);
+
+    inputMenu->addSeparator();
+
+    m_adamInputMenu = inputMenu->addMenu(tr("ADAM game mode"));
+    m_adamInputGroup = new QActionGroup(this);
+    m_adamInputGroup->setExclusive(true);
+
+    m_actAdamGameOn = new QAction(tr("ENABLED"), this);
+    m_actAdamGameOn->setCheckable(true);
+    m_actAdamGameOn->setChecked(false);
+    m_adamInputGroup->addAction(m_actAdamGameOn);
+    m_adamInputMenu->addAction(m_actAdamGameOn);
+
+    m_actAdamGameOff = new QAction(tr("DISABLED"), this);
+    m_actAdamGameOff->setCheckable(true);
+    m_actAdamGameOff->setChecked(true);
+    m_adamInputGroup->addAction(m_actAdamGameOff);
+    m_adamInputMenu->addAction(m_actAdamGameOff);
+
+    m_adamInputMenu->setEnabled(false);
 
     inputMenu->addSeparator();
 
@@ -831,38 +906,25 @@ void MainWindow::setupUI()
     connect(m_actToggleSnap, &QAction::toggled, this, &MainWindow::onToggleSnap);
     optionsMenu->addAction(m_actToggleSnap);
 
-    optionsMenu->addSeparator();
+    //optionsMenu->addSeparator();
 
-    m_adamInputMenu = optionsMenu->addMenu(tr("ADAM game mode"));
-    m_adamInputGroup = new QActionGroup(this);
-    m_adamInputGroup->setExclusive(true);
-
-    m_actAdamGameOn = new QAction(tr("ENABLED"), this);
-    m_actAdamGameOn->setCheckable(true);
-    m_actAdamGameOn->setChecked(false);
-    m_adamInputGroup->addAction(m_actAdamGameOn);
-    m_adamInputMenu->addAction(m_actAdamGameOn);
-
-    m_actAdamGameOff = new QAction(tr("DISABLED"), this);
-    m_actAdamGameOff->setCheckable(true);
-    m_actAdamGameOff->setChecked(true);
-    m_adamInputGroup->addAction(m_actAdamGameOff);
-    m_adamInputMenu->addAction(m_actAdamGameOff);
-
-    m_adamInputMenu->setEnabled(false);
-
-    // --- HELP MENU ---
-    QMenu* helpMenu = menuBar()->addMenu(tr("Help"));
+    // --- INFO MENU ---
+    QMenu* infoMenu = menuBar()->addMenu(tr("Info"));
     m_actWiki = new QAction(tr("Github page"), this);
-    helpMenu->addAction(m_actWiki);
+    infoMenu->addAction(m_actWiki);
     m_actReport = new QAction(tr("Report a bug"), this);
-    helpMenu->addAction(m_actReport);
-    helpMenu->addSeparator();
+    infoMenu->addAction(m_actReport);
+    infoMenu->addSeparator();
     m_actDonate = new QAction(tr("Donate"), this);
-    helpMenu->addAction(m_actDonate);
-    helpMenu->addSeparator();
+    infoMenu->addAction(m_actDonate);
+    infoMenu->addSeparator();
     m_actAbout = new QAction(tr("About"), this);
-    helpMenu->addAction(m_actAbout);
+    infoMenu->addAction(m_actAbout);
+
+    // --- HELP ---
+    QMenu* helpMenu = menuBar()->addMenu(tr("Help"));
+    m_actHelp = new QAction(tr("Github Help page"), this);
+    helpMenu->addAction(m_actHelp);
 
     // --- CONNECTIES ---
     connect(m_actWiki, &QAction::triggered, this, []() {
@@ -873,6 +935,9 @@ void MainWindow::setupUI()
     });
     connect(m_actDonate, &QAction::triggered, this, []() {
         QDesktopServices::openUrl(QUrl("https://www.paypal.com/donate?business=dannyvdh@pandora.be"));
+    });
+    connect(m_actHelp, &QAction::triggered, this, []() {
+        QDesktopServices::openUrl(QUrl("https://github.com/dvdh1961/ADAMP/blob/main/HELP.md"));
     });
 
     // Scanlines connectie
@@ -964,6 +1029,14 @@ void MainWindow::onOpenSettings()
     m_settingsWindow->setEosBiosPath(m_eosBiosPath);
     m_settingsWindow->setWriterBiosPath(m_writerBiosPath);
     m_settingsWindow->setAdamStartupPath(m_adamStartupPath);
+    m_settingsWindow->setCvBasicSourcePath(m_cvbasicSourcePath);
+    m_settingsWindow->setCvBasicBuildPath(m_cvbasicBuildPath);
+    m_settingsWindow->setCvBasicExePath(m_cvbasicExePath);
+    m_settingsWindow->setGasm80ExePath(m_gasm80ExePath);
+    m_settingsWindow->setSpriteSourcePath(m_spriteSourcePath);
+    m_settingsWindow->setSpriteBuildPath(m_spriteBuildPath);
+    m_settingsWindow->setSoundSourcePath(m_soundSourcePath);
+    m_settingsWindow->setSoundBuildPath(m_soundBuildPath);
     m_settingsWindow->setAdamBootMode(m_adamBootMode);
 
     // 2) Toon dialog
@@ -980,6 +1053,14 @@ void MainWindow::onOpenSettings()
     m_eosBiosPath    = m_settingsWindow->eosBiosPath();
     m_writerBiosPath = m_settingsWindow->writerBiosPath();
     m_adamStartupPath = m_settingsWindow->adamStartupPath();
+    m_cvbasicSourcePath = resolvePath(m_settingsWindow->cvbasicSourcePath(), "cvbasic/source");
+    m_cvbasicBuildPath  = resolvePath(m_settingsWindow->cvbasicBuildPath(),  "cvbasic/build");
+    m_cvbasicExePath =  m_settingsWindow->cvbasicExePath();
+    m_gasm80ExePath = m_settingsWindow->gasm80ExePath();
+    m_spriteSourcePath = resolvePath(m_settingsWindow->spriteSourcePath(), "cvbasic/source");
+    m_spriteBuildPath  = resolvePath(m_settingsWindow->spriteBuildPath(),  "cvbasic/build/sprites");
+    m_soundSourcePath  = resolvePath(m_settingsWindow->soundSourcePath(),  "cvbasic/sound");
+    m_soundBuildPath   = resolvePath(m_settingsWindow->soundBuildPath(),   "cvbasic/build/sound");
     m_adamBootMode = m_settingsWindow->adamBootMode();
 
     saveSettings();
@@ -989,21 +1070,26 @@ void MainWindow::loadSettings()
 {
     const QDir appDir(QCoreApplication::applicationDirPath());
     const QString iniPath = appDir.filePath("settings.ini");
+    const bool firstRun = !QFileInfo::exists(iniPath);
 
     QSettings settings(iniPath, QSettings::IniFormat);
 
-    auto resolvePath = [&](const char *key, const QString &mediaSubdir, const QString& def = ".") -> QString {
-        QString value = settings.value(key, def).toString().trimmed();
+    auto makeAbsolutePath = [&](QString value, const QString& defaultAbsolutePath) -> QString {
+        value = value.trimmed();
 
-        // Backwards compat: "." of leeg = media/<type> naast EXE
+        // Eerste installatie of oude lege/"." waarde: echte default naast de applicatie.
         if (value.isEmpty() || value == ".")
-            return QDir::cleanPath(appDir.filePath("media/" + mediaSubdir));
+            return QDir::cleanPath(defaultAbsolutePath);
 
-        // Relatief -> absoluut t.o.v. appDir
+        // Relatief blijft ondersteund, maar altijd t.o.v. applicationDirPath().
         if (QDir::isRelativePath(value))
-            value = QDir::cleanPath(appDir.filePath(value));
+            value = appDir.filePath(value);
 
-        return value;
+        return QDir::cleanPath(value);
+    };
+
+    auto resolvePath = [&](const char *key, const QString& defaultAbsolutePath) -> QString {
+        return makeAbsolutePath(settings.value(key).toString(), defaultAbsolutePath);
     };
 
     auto readEnum = [&](const char* key, int def) -> int {
@@ -1022,18 +1108,20 @@ void MainWindow::loadSettings()
         }
     };
 
-    // --- Media paths (met compat + relatieve paden) ---
-    m_romPath         = resolvePath("romPath",         "roms");
-    m_diskPath        = resolvePath("diskPath",        "disks");
-    m_tapePath        = resolvePath("tapePath",        "tapes");
-    m_statePath       = resolvePath("statePath",       "states");
-    m_breakpointPath  = resolvePath("breakpointPath",  "breakpoints");
-    m_screenshotsPath = resolvePath("screenshotPath",  "screenshots");
-    m_symbolsPath     = resolvePath("symbolsPath",     "symbols");
+    // --- Media paths ---
+    // Geen settings.ini? Dan starten alle directories vanuit de app-folder:
+    // <app>/media/...  en tools vanuit <app>/tools/...
+    m_romPath         = resolvePath("romPath",         defaultRomPathForPlatform());
+    m_diskPath        = resolvePath("diskPath",        defaultDiskPathForPlatform());
+    m_tapePath        = resolvePath("tapePath",        defaultTapePathForPlatform());
+    m_statePath       = resolvePath("statePath",       defaultStatePathForPlatform());
+    m_breakpointPath  = resolvePath("breakpointPath",  defaultBreakpointPathForPlatform());
+    m_screenshotsPath = resolvePath("screenshotPath",  defaultScreenshotPathForPlatform());
+    m_symbolsPath     = resolvePath("symbolsPath",     defaultSymbolsPathForPlatform());
 
-    // Bezel paths: geen media default, maar wel relatieve paden naar appDir oplossen
-    m_adamBezelPath   = resolvePath("adambezelpath", "", ""); // "" blijft "" / "none"
-    m_cvBezelPath     = resolvePath("cvbezelpath",   "", "");
+    // Bezel directories krijgen ook een media-default; BIOS-bestanden blijven intern/leeg.
+    m_adamBezelPath   = resolvePath("adambezelpath",   defaultBezelPathForPlatform());
+    m_cvBezelPath     = resolvePath("cvbezelpath",     defaultBezelPathForPlatform());
 
     // --- Video/Machine ---
     m_paletteIndex = settings.value("video/palette", 0).toInt();
@@ -1054,7 +1142,7 @@ void MainWindow::loadSettings()
              << "value =" << m_vdpType;
 
     m_machineType = settings.value("machine/type", 0).toInt();
-    m_machineType = 1; // always start in adam
+    //m_machineType = 1; // always start in adam
 
     m_realhardware     = settings.value("machine/realhardware", false).toBool();
 
@@ -1086,6 +1174,23 @@ void MainWindow::loadSettings()
     m_eosBiosPath     = settings.value("bios/eos",    "").toString();
     m_writerBiosPath  = settings.value("bios/writer", "").toString();
     m_adamStartupPath = settings.value("adam/startup", "").toString();
+    // CVBasic Suite paths: MainWindow/settings.ini blijft de enige bron,
+    // maar bij eerste installatie worden die keys meteen met correcte defaults gevuld.
+    m_cvbasicSourcePath = resolvePath("cvbasic/lastOpenDir", defaultCvBasicSourcePathForPlatform());
+    m_cvbasicBuildPath  = resolvePath("cvbasic/buildDir",    defaultCvBasicBuildPathForPlatform());
+
+#if defined(Q_OS_WIN)
+    m_cvbasicExePath = resolvePath("cvbasic/cvbasicExe", defaultCvBasicExePathForPlatform());
+    m_gasm80ExePath  = resolvePath("cvbasic/gasm80Exe",  defaultGasm80ExePathForPlatform());
+#else
+    m_cvbasicExePath = resolvePath("cvbasic/cvbasicLinuxExe", defaultCvBasicExePathForPlatform());
+    m_gasm80ExePath  = resolvePath("cvbasic/gasm80LinuxExe",  defaultGasm80ExePathForPlatform());
+#endif
+
+    m_spriteSourcePath = resolvePath("cvbasic/spriteSourceDir", defaultSpriteSourcePathForPlatform());
+    m_spriteBuildPath  = resolvePath("cvbasic/spriteBuildDir",  defaultSpriteBuildPathForPlatform());
+    m_soundSourcePath  = resolvePath("cvbasic/soundSourceDir",  defaultSoundSourcePathForPlatform());
+    m_soundBuildPath   = resolvePath("cvbasic/soundBuildDir",   defaultSoundBuildPathForPlatform());
     m_adamBootMode = settings.value("adam/bootMode", AdamBootWriter).toInt();
     if (m_adamBootMode < AdamBootWriter || m_adamBootMode > AdamBootBasicImage)
         m_adamBootMode = AdamBootWriter;
@@ -1113,7 +1218,51 @@ void MainWindow::loadSettings()
         qDebug() << "[MAINWINDOW] InputWidget configured with loaded settings";
     }
 
-  m_settingsLoaded = true;
+    if (firstRun) {
+        qDebug() << "[SETTINGS] First run: writing default media/tools paths to" << iniPath;
+
+        const QStringList defaultDirs = {
+            m_romPath, m_diskPath, m_tapePath, m_statePath,
+            m_breakpointPath, m_screenshotsPath, m_symbolsPath,
+            m_adamBezelPath, m_cvBezelPath,
+            m_cvbasicSourcePath, m_cvbasicBuildPath,
+            m_spriteSourcePath, m_spriteBuildPath,
+            m_soundSourcePath, m_soundBuildPath
+        };
+
+        for (const QString& dirPath : defaultDirs) {
+            if (!dirPath.trimmed().isEmpty())
+                QDir().mkpath(dirPath);
+        }
+
+        settings.setValue("romPath",        m_romPath);
+        settings.setValue("diskPath",       m_diskPath);
+        settings.setValue("tapePath",       m_tapePath);
+        settings.setValue("statePath",      m_statePath);
+        settings.setValue("breakpointPath", m_breakpointPath);
+        settings.setValue("screenshotPath", m_screenshotsPath);
+        settings.setValue("symbolsPath",    m_symbolsPath);
+        settings.setValue("adambezelpath",  m_adamBezelPath);
+        settings.setValue("cvbezelpath",    m_cvBezelPath);
+
+        settings.setValue("cvbasic/lastOpenDir", m_cvbasicSourcePath);
+        settings.setValue("cvbasic/buildDir",    m_cvbasicBuildPath);
+#if defined(Q_OS_WIN)
+        settings.setValue("cvbasic/cvbasicExe",  m_cvbasicExePath);
+        settings.setValue("cvbasic/gasm80Exe",   m_gasm80ExePath);
+#else
+        settings.setValue("cvbasic/cvbasicLinuxExe", m_cvbasicExePath);
+        settings.setValue("cvbasic/gasm80LinuxExe",  m_gasm80ExePath);
+#endif
+        settings.setValue("cvbasic/spriteSourceDir", m_spriteSourcePath);
+        settings.setValue("cvbasic/spriteBuildDir",  m_spriteBuildPath);
+        settings.setValue("cvbasic/soundSourceDir",  m_soundSourcePath);
+        settings.setValue("cvbasic/soundBuildDir",   m_soundBuildPath);
+        settings.setValue("adam/bootMode", m_adamBootMode);
+        settings.sync();
+    }
+
+    m_settingsLoaded = true;
 }
 
 void MainWindow::saveSettings()
@@ -1178,6 +1327,19 @@ void MainWindow::saveSettings()
     put("bios/eos",    m_eosBiosPath);
     put("bios/writer", m_writerBiosPath);
     put("adam/startup", m_adamStartupPath);
+    put("cvbasic/lastOpenDir", m_cvbasicSourcePath);
+    put("cvbasic/buildDir",    m_cvbasicBuildPath);
+#if defined(Q_OS_WIN)
+    put("cvbasic/cvbasicExe",  m_cvbasicExePath);
+    put("cvbasic/gasm80Exe",   m_gasm80ExePath);
+#else
+    put("cvbasic/cvbasicLinuxExe", m_cvbasicExePath);
+    put("cvbasic/gasm80LinuxExe",  m_gasm80ExePath);
+#endif
+    put("cvbasic/spriteSourceDir", m_spriteSourcePath);
+    put("cvbasic/spriteBuildDir",  m_spriteBuildPath);
+    put("cvbasic/soundSourceDir",  m_soundSourcePath);
+    put("cvbasic/soundBuildDir",   m_soundBuildPath);
     put("adam/bootMode", m_adamBootMode);
 
     // Window (zet dit vóór sync)
@@ -1879,6 +2041,9 @@ void MainWindow::onEmuPausedChanged(bool paused)
     const bool allowState = paused;
     if (m_actSaveState) m_actSaveState->setEnabled(allowState);
     if (m_actLoadState) m_actLoadState->setEnabled(true);
+
+    if (m_debugTerminal)
+        m_debugTerminal->setEmulatorPaused(paused);
 }
 
 void MainWindow::onStartActionTriggered()
@@ -2838,8 +3003,8 @@ void MainWindow::powerOff()
     m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
     m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png"));
     loadExternalBiosRoms();
-    // QMetaObject::invokeMethod(m_colecoController, "resethMachine",
-    //                            Qt::QueuedConnection);
+   // QMetaObject::invokeMethod(m_colecoController, "resethMachine",
+   //                             Qt::QueuedConnection);
 
     // Cartridge ROM loskoppelen bij PowerOff
     QMetaObject::invokeMethod(m_colecoController, "ejectColecoCartridge",
@@ -2856,6 +3021,7 @@ void MainWindow::powerOff()
     qDebug() << "[UI] Button pressed do power off emulator.";
     QMetaObject::invokeMethod(m_colecoController, "powerOffMachine",
                              Qt::QueuedConnection);
+
 
     m_resetAdamLocked  = false;
     m_AdamDMedia_insert = false;
@@ -3566,5 +3732,275 @@ void MainWindow::configurePlatformSettings()
 #endif
 }
 
+//---------------------------------------------------------------------------------------------
+
+void MainWindow::onShowDebugTerminal()
+{
+    if (!m_debugTerminal)
+    {
+        m_commandProcessor = new CommandProcessor(this);
+
+        m_commandProcessor->setStartCallback([this]() -> QString {
+            onRunStop();
+            return "Start/Run command sent.";
+        });
+
+        m_commandProcessor->setStopCallback([this]() -> QString {
+            onRunStop();
+            return "Stop/Pause command sent.";
+        });
+
+        m_commandProcessor->setResetAdamCallback([this]() -> QString {
+            onResetAdamBtnClicked();
+            return "Reset ADAM command sent.";
+        });
+
+        m_commandProcessor->setResetColecoCallback([this]() -> QString {
+            onResetCartBtnClicked();
+            return "Reset Coleco command sent.";
+        });
+
+        m_commandProcessor->setPowerOffCallback([this]() -> QString {
+            onPowerBtnClicked();
+            return "PowerOff command sent.";
+        });
+
+        m_commandProcessor->setMemoryReadCallback([](uint32_t address, uint8_t& value) -> bool {
+            value = coleco_ReadByte(static_cast<word>(address & 0xFFFF));
+            return true;
+        });
+
+        m_commandProcessor->setMemoryReadCallback([](uint32_t address, uint8_t& value) -> bool {
+            value = coleco_ReadByte(static_cast<uint16_t>(address & 0xFFFF));
+            return true;
+        });
+
+
+        // Terminal command: dasm <address> <length>
+        // De tweede parameter is dus AANTAL BYTES, niet langer een eindadres.
+        m_commandProcessor->setDisasmCallback([](uint16_t from, uint16_t length) -> QString {
+            if (length == 0)
+                return "Invalid length. Usage: dasm <address> <length>";
+
+            QString out;
+
+            const uint32_t end32 = static_cast<uint32_t>(from) + static_cast<uint32_t>(length) - 1u;
+            const uint16_t to = static_cast<uint16_t>(end32 > 0xFFFFu ? 0xFFFFu : end32);
+
+            uint16_t cur = from;
+
+            while (cur <= to)
+            {
+                const uint16_t addr = cur;
+
+                int oplen = 0;
+                QString instr = disasmOneAt(cur, oplen);
+                instr.replace(QRegularExpression("\\$([0-9A-Fa-f]{4})\\$+"), "$\\1");
+
+                // Zelfde veiligheid als in DebuggerWindow
+                if (oplen <= 0 || oplen > 4)
+                    oplen = 1;
+
+                QString bytesStr;
+
+                for (int b = 0; b < oplen; ++b)
+                {
+                    const uint16_t byteAddr = static_cast<uint16_t>(addr + b);
+
+                    if (byteAddr > to)
+                        break;
+
+                    bytesStr += QString("%1 ")
+                                    .arg(coleco_ReadByte(byteAddr), 2, 16, QChar('0'))
+                                    .toUpper();
+                }
+
+                bytesStr = bytesStr.trimmed();
+                bytesStr = bytesStr.leftJustified(12, ' ');
+
+                out += QString("%1: %2 %3\n")
+                           .arg(addr, 4, 16, QChar('0'))
+                           .arg(bytesStr)
+                           .arg(instr)
+                           .toUpper();
+
+                if (addr == 0xFFFF)
+                    break;
+
+                uint16_t next = static_cast<uint16_t>(addr + oplen);
+
+                if (next <= addr)
+                    break;
+
+                cur = next;
+            }
+
+            return out.trimmed();
+        });
+
+
+        m_commandProcessor->setCpuRegsCallback([]() -> QString {
+            return QString(
+                       "PC=%1  SP=%2\n"
+                       "AF=%3  BC=%4  DE=%5  HL=%6\n"
+                       "IX=%7  IY=%8\n"
+                       "AF'=%9  BC'=%10  DE'=%11  HL'=%12\n"
+                       "I=%13  R=%14"
+                       )
+                .arg(Z80.pc.w.l, 4, 16, QChar('0'))
+                .arg(Z80.sp.w.l, 4, 16, QChar('0'))
+                .arg(Z80.af.w.l, 4, 16, QChar('0'))
+                .arg(Z80.bc.w.l, 4, 16, QChar('0'))
+                .arg(Z80.de.w.l, 4, 16, QChar('0'))
+                .arg(Z80.hl.w.l, 4, 16, QChar('0'))
+                .arg(Z80.ix.w.l, 4, 16, QChar('0'))
+                .arg(Z80.iy.w.l, 4, 16, QChar('0'))
+                .arg(Z80.af2.w.l, 4, 16, QChar('0'))
+                .arg(Z80.bc2.w.l, 4, 16, QChar('0'))
+                .arg(Z80.de2.w.l, 4, 16, QChar('0'))
+                .arg(Z80.hl2.w.l, 4, 16, QChar('0'))
+                .arg(Z80.i , 2, 16, QChar('0'))
+                .arg(Z80.r , 2, 16, QChar('0'))
+                .toUpper();
+        });
+
+        m_commandProcessor->setMemoryWriteCallback([](uint32_t address, uint8_t value) -> bool {
+            const uint32_t addr = address & 0xFFFF;
+
+            const int page = (addr >> 13) & 0x07;
+            const int offs = addr & 0x1FFF;
+
+            if (!MemoryMap[page])
+                return false;
+
+            *(MemoryMap[page] + offs) = value;
+
+            qDebug().noquote() << QString("[MONITOR POKE] Z80 addr=%1 page=%2 offs=%3 data=%4 phys=%5")
+                                      .arg(addr, 4, 16, QChar('0'))
+                                      .arg(page)
+                                      .arg(offs, 4, 16, QChar('0'))
+                                      .arg(value, 2, 16, QChar('0'))
+                                      .arg((quintptr)(MemoryMap[page]), 0, 16)
+                                      .toUpper();
+
+            return true;
+        });
+
+        m_debugTerminal = new DebugTerminalWidget(m_commandProcessor, nullptr);
+        m_debugTerminal->setEmulatorPaused(m_isPaused);
+
+        m_debugTerminal->setWindowFlags(Qt::Window);
+        m_debugTerminal->setWindowTitle("Terminal");
+        m_debugTerminal->resize(650, 500);
+    }
+
+    if (m_debugTerminal->isVisible())
+    {
+        m_debugTerminal->hide();
+    }
+    else
+    {
+        // Center terminal on current main emulator window position
+        const QRect mainFrame = frameGeometry();
+        const QSize terminalSize = m_debugTerminal->size();
+
+        QPoint centeredPos(
+            mainFrame.center().x() - (terminalSize.width() / 2),
+            mainFrame.center().y() - (terminalSize.height() / 2)
+            );
+
+        m_debugTerminal->move(centeredPos);
+        m_debugTerminal->setEmulatorPaused(m_isPaused);
+
+        m_debugTerminal->show();
+        m_debugTerminal->raise();
+        m_debugTerminal->activateWindow();
+    }
+}
+
+//---------------------------------------------------------------------------------------------
+void MainWindow::onShowCvBasicEditor()
+{
+    if (!m_cvBasicEditor) {
+        m_cvBasicEditor = new CvBasicEditorWindow(this);
+
+        // CVBasicEditorWindow mag zelf geen paden kiezen.
+        // Altijd de waarden gebruiken die MainWindow uit settings.ini geladen heeft.
+        m_cvBasicEditor->setToolPaths(
+            m_cvbasicExePath,
+            m_gasm80ExePath,
+            m_cvbasicBuildPath,
+            m_cvbasicSourcePath
+        );
+
+        connect(m_cvBasicEditor, &CvBasicEditorWindow::romBuilt,
+                this, &MainWindow::onCvBasicRomBuilt);
+
+        // Sound Editor live preview.
+        // De bridge houdt windows.h / dsound.h uit maingui.cpp,
+        // zodat er geen PrintWindow/DWORD/ULONG conflicten ontstaan.
+        if (!m_soundPreviewBridge) {
+            m_soundPreviewBridge = createSoundPreviewBridge(
+                m_cvBasicEditor,
+                winId(),
+                this
+            );
+        }
+    }
+
+    // Ook bij opnieuw openen synchroniseren, voor het geval settings gewijzigd zijn
+    // terwijl het editorvenster al bestond.
+    m_cvBasicEditor->setToolPaths(
+        m_cvbasicExePath,
+        m_gasm80ExePath,
+        m_cvbasicBuildPath,
+        m_cvbasicSourcePath
+    );
+
+    m_cvBasicEditor->show();
+    m_cvBasicEditor->raise();
+    m_cvBasicEditor->activateWindow();
+}
+//---------------------------------------------------------------------------------------------
+void MainWindow::loadColecoRomFromPath(const QString& filePath, bool autoRun)
+{
+    if (filePath.isEmpty())
+        return;
+
+    if (m_machineType != 0)
+        switchToColecoMode();
+
+    QFileInfo fi(filePath);
+
+    m_pendingColecoRomPath = filePath;
+    m_pendingColecoBoot = true;
+
+    m_currentRomName = fi.fileName();
+    m_currentARomName.clear();
+
+    m_isColecoRomLoaded = true;
+    m_isAdamRomLoaded = false;
+    m_ColecoMedia_insert = true;
+    m_resetColecoLocked = false;
+
+    updateRomLabelForStatusBar(
+        statusBar(),
+        m_sepLabel4,
+        m_romLabel,
+        "Pending cart: " + m_currentRomName
+        );
+
+    updateMediaMenuState();
+    updateMediaStatusLabels();
+    updateHardwareWindowMediaDisplay();
+
+    if (autoRun)
+        onResetCartBtnClicked();
+}
+//---------------------------------------------------------------------------------------------
+void MainWindow::onCvBasicRomBuilt(const QString& romPath)
+{
+    loadColecoRomFromPath(romPath, true);
+}
 //---------------------------------------------------------------------------------------------
 

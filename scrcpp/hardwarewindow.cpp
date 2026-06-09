@@ -1,7 +1,7 @@
 #include "hardwarewindow.h"
 #include "printwindow.h"
 
-#include "cv.h"
+#include "CORE/cv.h"
 
 #include <QApplication>
 #include <QGroupBox>

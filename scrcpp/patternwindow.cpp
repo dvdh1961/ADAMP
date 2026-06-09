@@ -20,11 +20,11 @@
 #include <QPainter>
 #include <QImage>
 
-#include "cv.h"
+#include "CORE/cv.h"
 
 extern "C" {
-#include "emu.h"
-#include "tms9928a.h"
+#include "CORE/emu.h"
+#include "GRAPH/tms9928a.h"
 }
 
 extern int coleco_updatetms;

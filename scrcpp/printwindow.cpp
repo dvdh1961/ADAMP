@@ -1,5 +1,5 @@
 #include "printwindow.h"
-#include "adnet.h"
+#include "6801/adnet_core.h"
 
 #include <QTableWidget>
 #include <QHeaderView>
@@ -29,7 +29,7 @@
 #include <algorithm>
 
 extern "C" {
-#include "tms9928a.h"
+#include "GRAPH/tms9928a.h"
 extern tTMS9981A tms;
 }
 extern BYTE VDP_Memory[0x10000];

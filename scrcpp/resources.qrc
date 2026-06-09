@@ -76,6 +76,21 @@
         <file>images/TAB_GENERAL.png</file>
         <file>images/TAB_STATES.png</file>
         <file>images/TAB_PLUG-INS.png</file>
+        <file>images/SPR_DOWN.png</file>
+        <file>images/SPR_FILL.png</file>
+        <file>images/SPR_LEFT.png</file>
+        <file>images/SPR_PEN.png</file>
+        <file>images/SPR_RIGHT.png</file>
+        <file>images/SPR_UP.png</file>
+        <file>images/PNG_DEL.png</file>
+        <file>images/PNG_LOAD.png</file>
+        <file>images/PNG_LOCK.png</file>
+        <file>images/SPR_CLEAR.png</file>
+        <file>images/SNDKEYS.png</file>
+        <file>images/SND_PLAY.png</file>
+        <file>images/SND_RESTART.png</file>
+        <file>images/SND_LOOP.png</file>
+        <file>images/SND_STOP.png</file>
     </qresource>
     <qresource prefix="/sounds">
         <file>sounds/adam_tape.wav</file>

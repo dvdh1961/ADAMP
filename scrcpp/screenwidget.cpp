@@ -25,17 +25,17 @@
 #include <QMouseEvent>
 #include <QEvent>
 #include <QStringList>
-#include "cv.h"
-#include "f18a.h"
-#include "f18a_term80.h"
-#include "f18a_term80_cpm.h"
-#include "f18a_term80_tdos.h"
+#include "CORE/cv.h"
+#include "GRAPH/f18a.h"
+#include "GRAPH/f18a_term80.h"
+#include "GRAPH/f18a_term80_cpm.h"
+#include "GRAPH/f18a_term80_tdos.h"
 
 bool m_80colEnabled = false;
 
 extern "C" {
-    #include "cv.h"
-    #include "tms9928a.h"
+    #include "CORE/cv.h"
+    #include "GRAPH/tms9928a.h"
     void PutKBD(unsigned int Key);
 }
 

@@ -1,10 +1,10 @@
 #include "debuggerwindow.h"
 #include "colecocontroller.h"
 #include "disasm_bridge.h"
-#include "cv.h"
-#include "z80.h"
+#include "CORE/cv.h"
+#include "CORE/z80.h"
 #include "gotoaddressdialog.h"
-#include "tms9928a.h" // Noodzakelijk voor tms.VR[i] access
+#include "GRAPH/tms9928a.h" // Noodzakelijk voor tms.VR[i] access
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>

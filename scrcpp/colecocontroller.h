@@ -6,7 +6,7 @@
 #include <QAudioSink>
 #include <QIODevice>
 #include <QElapsedTimer>
-#include "cv.h"
+#include "CORE/cv.h"
 #include <QSoundEffect>
 
 #define KB_F1 0x54

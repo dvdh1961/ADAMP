@@ -5,7 +5,7 @@
 #include <QDialog>
 #include <QTableWidget>
 #include <QVector>
-#include "fdidisk.h"
+#include "6801/fdidisk.h"
 
 class QPushButton;
 class QLabel;

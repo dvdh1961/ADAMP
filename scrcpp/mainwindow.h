@@ -13,6 +13,7 @@
 #include "simplejoystick.h"
 #include "hardwarewindow.h"
 #include "aim_dialog.h"
+#include "cvbasiceditorwindow.h"
 
 class ColecoController;
 class ScreenWidget;
@@ -30,6 +31,8 @@ class HardwareWindow;
 class JoypadWindow;
 class QActionGroup;
 class QMenu;
+class DebugTerminalWidget;
+class CommandProcessor;
 
 struct HardwareConfig;
 
@@ -145,6 +148,9 @@ private slots:
     void onBiosCFramesDone();
     void onBiosAFramesDone();
     void onToggleDTsound(bool checked);
+    void onShowDebugTerminal();
+    void onShowCvBasicEditor();
+    void onCvBasicRomBuilt(const QString& romPath);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -178,6 +184,7 @@ private:
     void loadExternalBiosRoms();
     void mountAdamStartupImageIfNeeded();
     void stopResetCartBlinkAndSetFinalIcon();
+    void loadColecoRomFromPath(const QString& filePath, bool autoRun);
 
 private:
     // emulator thread en controller
@@ -237,6 +244,7 @@ private:
     QAction *m_actShowPatternTable = nullptr;
     QAction *m_actShowSpriteTable  = nullptr;
     QAction *m_actWiki            = nullptr;
+    QAction *m_actHelp            = nullptr;
     QAction *m_actReport          = nullptr;
     QAction *m_actChat            = nullptr;
     QAction *m_actDonate          = nullptr;
@@ -315,6 +323,15 @@ private:
     QAction *m_actJoystickXbox    = nullptr;
     int m_joystickType = 0; // 0=General, 1=PS, 2=Xbox (NIEUWE MEMBER)
     QAction *m_actTogglePaddleMode = nullptr;
+
+    QAction* m_actShowTerminal = nullptr;
+    DebugTerminalWidget* m_debugTerminal = nullptr;
+    CommandProcessor* m_commandProcessor = nullptr;
+
+    QAction* m_actCvBasicEditor = nullptr;
+    CvBasicEditorWindow* m_cvBasicEditor = nullptr;
+    QObject* m_soundPreviewBridge = nullptr;
+
     bool m_usePaddleMode = false;
     bool m_useDTsound = false;
 
@@ -375,6 +392,14 @@ private:
     QString m_adamBezelPath;
     QString m_cvBezelPath;
     QString m_adamStartupPath;
+    QString m_cvbasicSourcePath;
+    QString m_cvbasicBuildPath;
+    QString m_cvbasicExePath;
+    QString m_gasm80ExePath;
+    QString m_spriteSourcePath;
+    QString m_spriteBuildPath;
+    QString m_soundSourcePath;
+    QString m_soundBuildPath;
     int m_adamBootMode = AdamBootWriter;
     bool m_isStartupPending = false;
     QString m_colecoBiosPath;

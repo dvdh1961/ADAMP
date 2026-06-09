@@ -11,21 +11,21 @@
 #include <QDir>
 
 // ==== C++-core header ====
-#include "cv.h"
+#include "CORE/cv.h"
 #include "psg_bridge.h"
 
 // ==== C-core headers ====
 extern "C" {
-#include "emu.h"
-#include "tms9928a.h"
+#include "CORE/emu.h"
 #include "video_bridge.h"
-#include "adnet.h"
-#include "snd_ay8910.h"
-#include "z80.h"
-#include "f18a.h"
-#include "f18a_term80.h"
-#include "f18a_term80_cpm.h"
-#include "f18a_term80_tdos.h"
+#include "6801/adnet_core.h"
+#include "SOUND/snd_ay8910.h"
+#include "CORE/z80.h"
+#include "GRAPH/tms9928a.h"
+#include "GRAPH/f18a.h"
+#include "GRAPH/f18a_term80.h"
+#include "GRAPH/f18a_term80_cpm.h"
+#include "GRAPH/f18a_term80_tdos.h"
 }
 
 #include <stdint.h>
@@ -149,14 +149,15 @@ extern tTMS9981A tms;
 
 void ColecoController::onAdamKeyEvent(int code)
 {
-    //qDebug() << "[CTRL] onAdamKeyEvent ontvangen:" << Qt::hex << code << " CODE";
+    qDebug() << "[CTRL] onAdamKeyEvent received:" << Qt::hex << code;
+
     if (code >= 0x100) {
         uint8_t sc = uint8_t(code & 0xFF);
-        //qDebug() << "  -> ROUTE: ADAMNET Scancode:" << Qt::hex << sc << ")";
+        qDebug() << "[CTRL] -> ADAMNET scancode:" << Qt::hex << sc;
         adamnet_inject_scancode(sc);
     } else {
         uint8_t ascii = uint8_t(code & 0xFF);
-        //qDebug() << "  -> ROUTE: ASCII BUFFER (PutKBD:" << Qt::hex << ascii << ")";
+        qDebug() << "[CTRL] -> ASCII PutKBD:" << Qt::hex << ascii;
         PutKBD(unsigned(ascii));
     }
 }
