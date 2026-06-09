@@ -86,7 +86,9 @@ Version 1.1.06.26 x86_64 Windows & Linux
 
 This release has been expanded with a complete plug-in for creating games, applications, and music ROMs in CVBasic. 
 
-The plug-in includes a CVBasic IDE, Sprite Editor, and Sound Editor. --> CVBASIC core files build by Óscar Toledo (https://github.com/nanochess/CVBasic) <--
+The plug-in includes a CVBasic IDE, Sprite Editor, and Sound Editor. 
+
+--> CVBASIC core files build by Óscar Toledo (https://github.com/nanochess/CVBasic) <--
 
 All projects can be baked into a ROM with just one click!
 
