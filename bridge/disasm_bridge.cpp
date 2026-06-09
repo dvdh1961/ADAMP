@@ -1,5 +1,5 @@
 #include "disasm_bridge.h"
-#include "cv.h"
+#include "CORE/cv.h"
 #include <QString>
 #include <QVector>
 

@@ -2,7 +2,7 @@
 #define DISASM_H
 
 #include <QString>
-#include "z80.h"
+#include "CORE/z80.h"
 #include "debuggerwindow.h"
 
 class ColecoController;
