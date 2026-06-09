@@ -83,6 +83,20 @@ Version 1.1.06.26 x86_64 Windows & Linux
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/CVBASIC_PLUGINS1.png)
 
+This release has been expanded with a complete plug-in for creating games, applications, and music ROMs in CVBasic. 
+
+The plug-in includes a CVBasic IDE, Sprite Editor, and Sound Editor.
+
+All projects can be baked into a ROM with just one click!
+
+For Linux users: do not forget to give the two files cvbasic_linux and gasm80_linux the required permissions using chmod +x, 
+
+otherwise the compiler will not be able to run.
+
+I have also added automatic default paths for new installations when no settings.ini file exists. This makes it much easier to get started.
+
+Please note: if you overwrite an older installation and the settings.ini file already exists, these automatic default paths will not be applied.
+
 ---
 
 Version 1.0.05.26 x86_64 Windows & Linux
