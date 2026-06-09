@@ -97,6 +97,12 @@ I have also added automatic default paths for new installations when no settings
 
 Please note: if you overwrite an older installation and the settings.ini file already exists, these automatic default paths will not be applied.
 
+Have fun with it!
+
+If you encounter anything that causes problems, or if you think something could be improved, please let me know.
+
+
+
 ---
 
 Version 1.0.05.26 x86_64 Windows & Linux
