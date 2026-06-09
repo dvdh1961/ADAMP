@@ -372,6 +372,7 @@ Thanks to everyone who shared their knowledge and inspiration — without them, 
 - EightyOne            (https://sourceforge.net/projects/eightyone-sinclair-emulator/)
 - Russell Marks        (https://sz81.sourceforge.net/)
 - Juergen Buchmueller  (R.I.P.) (z80 code)
+- Óscar Toledo         (https://github.com/nanochess/CVBasic) 
 
 ## Support ADAM+
 
