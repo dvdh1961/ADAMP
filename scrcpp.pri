@@ -4,8 +4,11 @@
 # C++ bronnen voor de Qt-interface
 SOURCES += \
            $$PWD/scrcpp/aim_dialog.cpp \
+           $$PWD/scrcpp/commandprocessor.cpp \
            $$PWD/scrcpp/customfiledialog.cpp \
            $$PWD/scrcpp/customiconprovider.cpp \
+           $$PWD/scrcpp/cvbasiceditorwindow.cpp \
+           $$PWD/scrcpp/debugterminalwidget.cpp \
            $$PWD/scrcpp/gotoaddressdialog.cpp \
            $$PWD/scrcpp/hardwarewindow.cpp \
            $$PWD/scrcpp/joypadwindow.cpp \
@@ -27,14 +30,19 @@ SOURCES += \
            $$PWD/scrcpp/setsymboldialog.cpp \
            $$PWD/scrcpp/settingswindow.cpp \
            $$PWD/scrcpp/simplejoystick.cpp \
+           $$PWD/scrcpp/soundeditorplayer.cpp \
            $$PWD/scrcpp/soundmanager.cpp \
+           $$PWD/scrcpp/soundpreviewbridge.cpp \
            $$PWD/scrcpp/spritewindow.cpp
 
 # Headers voor de Qt-interface
 HEADERS += \
            $$PWD/scrcpp/aim_dialog.h \
+           $$PWD/scrcpp/commandprocessor.h \
            $$PWD/scrcpp/customfiledialog.h \
            $$PWD/scrcpp/customiconprovider.h \
+           $$PWD/scrcpp/cvbasiceditorwindow.h \
+           $$PWD/scrcpp/debugterminalwidget.h \
            $$PWD/scrcpp/gotoaddressdialog.h \
            $$PWD/scrcpp/hardwarewindow.h \
            $$PWD/scrcpp/joypadwindow.h \
@@ -53,7 +61,9 @@ HEADERS += \
            $$PWD/scrcpp/setsymboldialog.h \
            $$PWD/scrcpp/settingswindow.h \
            $$PWD/scrcpp/simplejoystick.h \
+           $$PWD/scrcpp/soundeditorplayer.h \
            $$PWD/scrcpp/soundmanager.h \
+           $$PWD/scrcpp/soundpreviewbridge.h \
            $$PWD/scrcpp/spritewindow.h
 
 RESOURCES += \
