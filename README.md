@@ -81,7 +81,7 @@ From the moment we have a fully working hardware system, everything will be publ
 
 Version 1.1.06.26 x86_64 Windows & Linux
 
-![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/CVBASIC_PLUGINS.png)
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/CVBASIC_PLUGINS1.png)
 
 ---
 
