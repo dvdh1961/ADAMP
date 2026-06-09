@@ -45,7 +45,7 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 [![release](https://img.shields.io/badge/Latest%20release-windows8+_64-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/1.1.06.26/WINDOWS_ADAMP_1.1.06.26.exe)
 [![release](https://img.shields.io/badge/Latest%20release-windows8+_64_ZIP-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/1.1.06.26/WINDOWS_ADAMP_1.1.06.26.zip)
 [![release](https://img.shields.io/badge/Latest%20release-linux64_ZIP-blue.svg)](https://github.com/dvdh1961/ADAMP/releases/download/1.1.06.26/LINUX_ADAMP_1.1.06.26.zip)
-![Current Release](https://img.shields.io/badge/Version-V1.0.05.26-yellow)
+![Current Release](https://img.shields.io/badge/Version-V1.1.06.26-yellow)
 ![Downloads](https://img.shields.io/badge/dynamic/json?url=https://raw.githubusercontent.com/dvdh1961/ADAMP/main/stats/downloads.json&label=Downloads&query=display_total&color=orange)
 
 [![release](https://img.shields.io/badge/Quick%20review-ADAM+%20Emulator-magenta.svg)](https://youtu.be/vobLE2F9Cc0)
