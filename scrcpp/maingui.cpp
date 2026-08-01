@@ -69,6 +69,7 @@
 //---------------------------------------------------------------------------------------------
 // Declaratie bovenaan je bestand
 extern "C" void adamnet_set_game_mode(bool enabled);
+extern "C" void PutKBD(unsigned int Key);
 
 
 static bool isDka2018RomName(const QString& name)
@@ -228,7 +229,7 @@ void MainWindow::setStatusBar()
     // Window flags
     Qt::WindowFlags flags = windowFlags();
     flags &= ~Qt::WindowMaximizeButtonHint;
-    flags &= ~Qt::WindowMinimizeButtonHint;
+    flags |= Qt::WindowMinimizeButtonHint;
     flags |= Qt::CustomizeWindowHint;
     setWindowFlags(flags);
 
@@ -598,6 +599,24 @@ void MainWindow::setupUI()
             this, &MainWindow::onShowCvBasicEditor);
     toolsMenu->addSeparator();
     toolsMenu->addAction(m_actCvBasicEditor);
+
+    // --- SMARTBASIC TEXT INJECTOR ---
+    toolsMenu->addSeparator();
+    m_actStartBasicInject = new QAction(tr("START INJECT"), this);
+    connect(m_actStartBasicInject, &QAction::triggered,
+            this, &MainWindow::onStartBasicInject);
+    toolsMenu->addAction(m_actStartBasicInject);
+
+    m_actStopBasicInject = new QAction(tr("STOP INJECT"), this);
+    m_actStopBasicInject->setEnabled(false);
+    connect(m_actStopBasicInject, &QAction::triggered,
+            this, &MainWindow::onStopBasicInject);
+    toolsMenu->addAction(m_actStopBasicInject);
+
+    m_basicInjectTimer = new QTimer(this);
+    m_basicInjectTimer->setSingleShot(true);
+    connect(m_basicInjectTimer, &QTimer::timeout,
+            this, &MainWindow::injectNextBasicCharacter);
 
     // --- INPUT MENU ---
     QMenu* inputMenu = menuBar()->addMenu(tr("Input"));
@@ -2966,6 +2985,122 @@ void MainWindow::onAdamGameMode()
 
 }
 
+void MainWindow::onStartBasicInject()
+{
+    // Use the configured media root. For example:
+    // ROM Path C:/ADAMP_EMU/media/roms -> C:/ADAMP_EMU/media/injected.
+    const QString mediaRoot = QFileInfo(QDir::cleanPath(m_romPath)).absoluteDir().absolutePath();
+    const QString injectPath = QDir::cleanPath(QDir(mediaRoot).filePath("injected"));
+
+    if (!QDir().mkpath(injectPath)) {
+        QMessageBox::warning(this, tr("START INJECT"),
+                             tr("The folder media/injected could not be created."));
+        return;
+    }
+
+    const QString filePath = CustomFileDialog::getOpenFileName(
+        this,
+        tr("Load SmartBASIC source"),
+        injectPath,
+        tr("BASIC source (*.txt *.bas);;Text files (*.txt);;BASIC files (*.bas)"),
+        nullptr,
+        CustomFileDialog::PathInjected);
+
+    if (filePath.isEmpty())
+        return;
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("START INJECT"),
+                             tr("The selected file could not be opened."));
+        return;
+    }
+
+    QByteArray source = file.readAll();
+    file.close();
+
+    source.replace("\r\n", "\n");
+    source.replace('\r', '\n');
+
+    QByteArray filtered;
+    filtered.reserve(source.size());
+    for (const char raw : source) {
+        const unsigned char ch = static_cast<unsigned char>(raw);
+        if (ch == '\n') {
+            filtered.append('\r');
+        } else if (ch == '\t') {
+            filtered.append(' ');
+        } else if (ch >= 32 && ch <= 126) {
+            filtered.append(static_cast<char>(ch));
+        }
+    }
+
+    if (filtered.isEmpty()) {
+        QMessageBox::information(this, tr("START INJECT"),
+                                 tr("The selected file contains no injectable BASIC text."));
+        return;
+    }
+
+    // Also submit the final BASIC line when the source file has no newline at EOF.
+    if (!filtered.endsWith('\r'))
+        filtered.append('\r');
+
+    onStopBasicInject();
+    m_basicInjectData = filtered;
+    m_basicInjectPosition = 0;
+    m_actStartBasicInject->setEnabled(false);
+    m_actStopBasicInject->setEnabled(true);
+
+    qDebug() << "[INJECT] Started:" << QFileInfo(filePath).fileName();
+    m_basicInjectTimer->start(1);
+}
+
+void MainWindow::onStopBasicInject()
+{
+    const bool wasActive = m_basicInjectTimer && m_basicInjectTimer->isActive();
+
+    if (m_basicInjectTimer)
+        m_basicInjectTimer->stop();
+
+    m_basicInjectData.clear();
+    m_basicInjectPosition = 0;
+
+    if (m_actStartBasicInject)
+        m_actStartBasicInject->setEnabled(true);
+    if (m_actStopBasicInject)
+        m_actStopBasicInject->setEnabled(false);
+
+    if (wasActive)
+        qDebug() << "[INJECT] Stopped by user.";
+}
+
+void MainWindow::injectNextBasicCharacter()
+{
+    if (m_basicInjectPosition >= m_basicInjectData.size()) {
+        m_basicInjectData.clear();
+        m_basicInjectPosition = 0;
+        m_actStartBasicInject->setEnabled(true);
+        m_actStopBasicInject->setEnabled(false);
+        qDebug() << "[INJECT] Completed.";
+        return;
+    }
+
+    // PutKBD gebruikt één LastKey-slot. Wacht tot de ADAM het vorige teken
+    // werkelijk heeft opgehaald; anders overschrijven de eerste tekens van
+    // een nieuwe BASIC-regel elkaar terwijl de vorige regel wordt getokenized.
+    if (LastKey != 0) {
+        m_basicInjectTimer->start(10);
+        return;
+    }
+
+    const unsigned char ch = static_cast<unsigned char>(
+        m_basicInjectData.at(m_basicInjectPosition++));
+    PutKBD(static_cast<unsigned int>(ch));
+
+    // SmartBASIC needs extra time to accept and tokenize a completed line.
+    m_basicInjectTimer->start(ch == '\r' ? 220 : 80);
+}
+
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
     // Doorsturen naar InputWidget - die regelt alles
@@ -3765,6 +3900,41 @@ void MainWindow::onShowDebugTerminal()
             return "PowerOff command sent.";
         });
 
+        m_commandProcessor->setInjectCallback([this](const QString& text) -> QString {
+            QByteArray filtered;
+            const QByteArray source = text.toLatin1();
+            filtered.reserve(source.size() + 1);
+
+            for (const char raw : source) {
+                const unsigned char ch = static_cast<unsigned char>(raw);
+                if (ch == '\n' || ch == '\r')
+                    filtered.append('\r');
+                else if (ch == '\t')
+                    filtered.append(' ');
+                else if (ch >= 32 && ch <= 126)
+                    filtered.append(static_cast<char>(ch));
+            }
+
+            if (filtered.isEmpty())
+                return "Nothing to inject.";
+
+            if (!filtered.endsWith('\r'))
+                filtered.append('\r');
+
+            onStopBasicInject();
+            m_basicInjectData = filtered;
+            m_basicInjectPosition = 0;
+
+            if (m_actStartBasicInject)
+                m_actStartBasicInject->setEnabled(false);
+            if (m_actStopBasicInject)
+                m_actStopBasicInject->setEnabled(true);
+
+            qDebug() << "[INJECT] Monitor text started:" << text;
+            m_basicInjectTimer->start(1);
+            return QString("Inject started: \"%1\"").arg(text);
+        });
+
         m_commandProcessor->setMemoryReadCallback([](uint32_t address, uint8_t& value) -> bool {
             value = coleco_ReadByte(static_cast<word>(address & 0xFFFF));
             return true;
@@ -4003,4 +4173,3 @@ void MainWindow::onCvBasicRomBuilt(const QString& romPath)
     loadColecoRomFromPath(romPath, true);
 }
 //---------------------------------------------------------------------------------------------
-

@@ -16,6 +16,7 @@ public:
     using DisasmCallback = std::function<QString(uint16_t from, uint16_t to)>;
     using BreakpointCallback = std::function<QString(uint16_t address, bool enabled)>;
     using MemoryWriteCallback = std::function<bool(uint32_t address, uint8_t value)>;
+    using InjectCallback = std::function<QString(const QString& text)>;
 
     explicit CommandProcessor(QObject* parent = nullptr);
 
@@ -29,6 +30,7 @@ public:
     void setResetColecoCallback(SimpleCallback cb) { m_resetColecoCb = std::move(cb); }
     void setPowerOffCallback(SimpleCallback cb)    { m_powerOffCb = std::move(cb); }
     void setCpuRegsCallback(SimpleCallback cb)     { m_cpuRegsCb = std::move(cb); }
+    void setInjectCallback(InjectCallback cb)      { m_injectCb = std::move(cb); }
 
     void setMemoryReadCallback(MemoryReadCallback cb) { m_memoryReadCb = std::move(cb); }
     void setDisasmCallback(DisasmCallback cb)         { m_disasmCb = std::move(cb); }
@@ -40,6 +42,7 @@ private:
     QString cmdDisasm(const QStringList& args) const;
     QString cmdBreakpoint(const QStringList& args) const;
     QString cmdPeek(const QStringList& args) const;
+    QString cmdInject(const QString& commandLine) const;
 
     bool parseAddress(const QString& text, uint32_t& value, uint32_t maxValue = 0xFFFF) const;
     QString formatHexDump(uint32_t from, uint32_t to) const;
@@ -55,6 +58,7 @@ private:
     SimpleCallback m_resetColecoCb;
     SimpleCallback m_powerOffCb;
     SimpleCallback m_cpuRegsCb;
+    InjectCallback m_injectCb;
 
     MemoryReadCallback m_memoryReadCb;
     DisasmCallback m_disasmCb;

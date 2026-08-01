@@ -93,6 +93,7 @@ private slots:
     void showBasicEditor();
     void showSpriteEditor();
     void showSoundEditor();
+    void showPaintEditor();
 
     void onEditorTextChanged();
     void onProcessFinished(int exitCode, QProcess::ExitStatus exitStatus);
@@ -178,6 +179,7 @@ private:
     QWidget* m_basicPage = nullptr;
     QWidget* m_spritePage = nullptr;
     QWidget* m_soundPage = nullptr;
+    QWidget* m_paintPage = nullptr;
     QTabWidget* m_tabs = nullptr;
     QTabWidget* m_codeTabs = nullptr;
     QPlainTextEdit* m_editor = nullptr;
@@ -224,6 +226,7 @@ private:
     QAction* m_actBasicEditor = nullptr;
     QAction* m_actSpriteEditor = nullptr;
     QAction* m_actSoundEditor = nullptr;
+    QAction* m_actPaintEditor = nullptr;
     QAction* m_actCompile = nullptr;
     QAction* m_actCompileRun = nullptr;
     QAction* m_actChooseCvBasic = nullptr;

@@ -22,7 +22,7 @@ class CustomFileDialog : public QDialog
 
 public:
     enum AcceptMode { AcceptOpen, AcceptSave };
-    enum PathType { PathDefault = 0, PathRom, PathDisk, PathTape, PathState, PathScreenshot, PathSymbol };
+    enum PathType { PathDefault = 0, PathRom, PathDisk, PathTape, PathState, PathScreenshot, PathSymbol, PathInjected };
 
     explicit CustomFileDialog(QWidget *parent = nullptr);
 

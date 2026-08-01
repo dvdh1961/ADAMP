@@ -194,7 +194,9 @@ void CustomFileDialog::loadLastVisitedPath(const QString &initialDir, AcceptMode
     m_limitPath = QFileInfo(initialDir.isEmpty() ? QDir::homePath() : initialDir).absoluteFilePath();
 
     QString key = keyFromPathType(m_pathType, mode);
-    QString path = settings.value(key, m_limitPath).toString();
+    QString path = (m_pathType == PathInjected)
+                       ? m_limitPath
+                       : settings.value(key, m_limitPath).toString();
     if (!QDir(path).exists()) path = m_limitPath;
 
     m_treeView->setRootIndex(m_model->index(path));
@@ -278,6 +280,7 @@ QString CustomFileDialog::keyFromPathType(PathType type, AcceptMode mode) const 
     switch (type) {
     case PathRom: base = "Rom"; break; case PathDisk: base = "Disk"; break; case PathTape: base = "Tape"; break;
     case PathState: base = "State"; break; case PathScreenshot: base = "Screenshot"; break; case PathSymbol: base = "Symbol"; break;
+    case PathInjected: base = "Injected"; break;
     default: base = (mode == AcceptOpen) ? "DefaultOpen" : "DefaultSave"; break;
     }
     return "CustomFileDialog/Last" + base + "Dir";

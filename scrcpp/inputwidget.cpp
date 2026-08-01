@@ -878,6 +878,16 @@ void InputWidget::handleAdamKeyPress(QKeyEvent *e)
     if (!m_controller) return;
     const int key = e->key();
 
+    // BASIC BREAK: Ctrl+C moet altijd als control-code 0x03 binnenkomen.
+    // Vertrouw hiervoor niet op QKeyEvent::text(), omdat Qt
+    // bij toetscombinaties met Ctrl niet op elk platform tekst teruggeeft.
+    if (key == Qt::Key_C && (e->modifiers() & Qt::ControlModifier)) {
+        // Via de ADAMNET-queue sturen zodat ook software die tijdens RUN
+        // rechtstreeks op de keyboard-DCB wacht (zoals UltraBasic) BREAK ziet.
+        sendAdamKeyEvent(0x03, true);
+        return;
+    }
+
     // GAME MODE PRIORITEIT: Gebruik de mapper om ASCII codes te forceren voor cijfers.
     // Hierdoor typt '1' altijd een '1' in de writer, ongeacht shift.
     if (m_adamGameMode) {

@@ -45,6 +45,9 @@ QString CommandProcessor::execute(const QString& commandLine)
     if (c0 == "regs" || c0 == "r")
         return m_cpuRegsCb ? m_cpuRegsCb() : "No CPU register callback connected.";
 
+    if (c0 == "inject")
+        return cmdInject(cmd);
+
     if (c0 == "mem" || c0 == "m" || c0 == "memory")
         return cmdMemory(args);
 
@@ -70,6 +73,7 @@ QString CommandProcessor::cmdHelp() const
         "  reset adam                reset to ADAM mode\n"
         "  reset coleco              reset to Coleco mode\n"
         "  poff                      power off / hard reset hook\n"
+        "  inject \"TEST\"             inject text and press RETURN\n"
         "\n"
         "  regs                      show Z80 registers\n"
         "  mem  7000 40              memory dump from hex address, hex length bytes\n"
@@ -79,6 +83,29 @@ QString CommandProcessor::cmdHelp() const
         "  dasm 8000 40              disassemble from hex address, hex length bytes\n"
         "\n"
         "  clear                     clear terminal\n\n";
+}
+
+QString CommandProcessor::cmdInject(const QString& commandLine) const
+{
+    const int separator = commandLine.indexOf(QRegularExpression("\\s"));
+    if (separator < 0)
+        return "Usage: inject \"text\"";
+
+    QString text = commandLine.mid(separator).trimmed();
+    if (text.size() < 2 || !text.startsWith('"') || !text.endsWith('"'))
+        return "Usage: inject \"text\"";
+
+    text = text.mid(1, text.size() - 2);
+    text.replace("\\\"", "\"");
+    text.replace("\\t", " ");
+    text.replace("\\r", "\n");
+    text.replace("\\n", "\n");
+    text.replace("\\\\", "\\");
+
+    if (text.isEmpty())
+        return "Nothing to inject.";
+
+    return m_injectCb ? m_injectCb(text) : "No inject callback connected.";
 }
 
 QString CommandProcessor::cmdMemory(const QStringList& args) const

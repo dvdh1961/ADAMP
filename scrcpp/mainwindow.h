@@ -9,6 +9,7 @@
 #include <QMap>
 #include <QProgressDialog>
 #include <QSoundEffect>
+#include <QByteArray>
 
 #include "simplejoystick.h"
 #include "hardwarewindow.h"
@@ -151,6 +152,9 @@ private slots:
     void onShowDebugTerminal();
     void onShowCvBasicEditor();
     void onCvBasicRomBuilt(const QString& romPath);
+    void onStartBasicInject();
+    void onStopBasicInject();
+    void injectNextBasicCharacter();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -331,6 +335,12 @@ private:
     QAction* m_actCvBasicEditor = nullptr;
     CvBasicEditorWindow* m_cvBasicEditor = nullptr;
     QObject* m_soundPreviewBridge = nullptr;
+
+    QAction* m_actStartBasicInject = nullptr;
+    QAction* m_actStopBasicInject = nullptr;
+    QTimer* m_basicInjectTimer = nullptr;
+    QByteArray m_basicInjectData;
+    qsizetype m_basicInjectPosition = 0;
 
     bool m_usePaddleMode = false;
     bool m_useDTsound = false;

@@ -2,14 +2,17 @@
 
 #include <QAction>
 #include <QPixmap>
+#include <QRadioButton>
 #include <QIcon>
 #include <QActionGroup>
 #include <QAbstractItemView>
 #include <QApplication>
+#include <QByteArray>
 #include <QCloseEvent>
 #include <QCheckBox>
 #include <functional>
 #include <algorithm>
+#include <limits>
 #include <QScrollArea>
 #include <QSizePolicy>
 #include <QSignalBlocker>
@@ -24,6 +27,7 @@
 #include <QGroupBox>
 #include <QComboBox>
 #include <QClipboard>
+#include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QColor>
 #include <QDateTime>
@@ -35,12 +39,14 @@
 #include <QFileDialog>
 #include <QDebug>
 #include <QFileInfo>
+#include <QEvent>
 #include <QFrame>
 #include <QFont>
 #include <QFormLayout>
 #include <QGuiApplication>
 #include <QGridLayout>
 #include <QFontDatabase>
+#include <QFontComboBox>
 #include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -83,6 +89,7 @@
 #include <QTextDocument>
 #include <QTextDocumentFragment>
 #include <QTextOption>
+#include <QTextStream>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
@@ -466,6 +473,4373 @@ bool linuxLockKeyActive(const QString& keyName, bool fallbackValue)
 
 } // namespace
 
+
+
+// ============================================================================
+// Integrated CVBasic paint editor (native Qt port of the first CV Paint Studio step)
+// ============================================================================
+
+class CvBasicPaintCanvas final : public QWidget
+{
+private:
+    struct RowCodec
+    {
+        quint8 pattern = 0;
+        int fg = 15;
+        int bg = 0;
+    };
+
+public:
+    enum class ToolMode
+    {
+        Pen,
+        Eraser,
+        Fill,
+        Pipette,
+        Select,
+        Line,
+        Rect,
+        FilledRect,
+        Ellipse,
+        FilledEllipse
+    };
+
+    explicit CvBasicPaintCanvas(QWidget* parent = nullptr)
+        : QWidget(parent)
+    {
+        setMinimumSize(520, 404);
+        setMouseTracking(true);
+        setFocusPolicy(Qt::StrongFocus);
+        m_pixels.fill(0, 256 * 192);
+        setZoomScale(2);
+    }
+
+    void setToolMode(ToolMode mode)
+    {
+        m_toolMode = mode;
+        switch (m_toolMode) {
+        case ToolMode::Pen:
+        case ToolMode::Eraser:
+            setCursor(Qt::CrossCursor);
+            break;
+        case ToolMode::Fill:
+            setCursor(Qt::PointingHandCursor);
+            break;
+        case ToolMode::Pipette:
+            setCursor(Qt::WhatsThisCursor);
+            break;
+        case ToolMode::Select:
+        case ToolMode::Line:
+        case ToolMode::Rect:
+        case ToolMode::FilledRect:
+        case ToolMode::Ellipse:
+        case ToolMode::FilledEllipse:
+            setCursor(Qt::CrossCursor);
+            break;
+        }
+    }
+
+    void setColorIndex(int color)
+    {
+        m_colorIndex = qBound(0, color, 15);
+        update();
+    }
+
+    int colorIndex() const
+    {
+        return m_colorIndex;
+    }
+
+    void setBackgroundColorIndex(int color)
+    {
+        m_backgroundColorIndex = qBound(0, color, 15);
+        updateStatus(QStringLiteral("Background color %1").arg(m_backgroundColorIndex));
+    }
+
+    int backgroundColorIndex() const
+    {
+        return m_backgroundColorIndex;
+    }
+
+    void setBrushSize(int size)
+    {
+        m_brushSize = qBound(1, size, 8);
+        updateStatus(QStringLiteral("Brush size %1").arg(m_brushSize));
+    }
+
+    int brushSize() const
+    {
+        return m_brushSize;
+    }
+
+    void setTransparentPaste(bool enabled)
+    {
+        m_transparentPaste = enabled;
+        updateStatus(enabled ? QStringLiteral("Transparent paste ON") : QStringLiteral("Transparent paste OFF"));
+    }
+
+    bool transparentPaste() const
+    {
+        return m_transparentPaste;
+    }
+
+    void replaceColor(int fromColor, int toColor)
+    {
+        fromColor = qBound(0, fromColor, 15);
+        toColor = qBound(0, toColor, 15);
+        if (fromColor == toColor)
+            return;
+
+        pushUndoSnapshot();
+
+        int changed = 0;
+        for (quint8& px : m_pixels) {
+            if (px == fromColor) {
+                px = static_cast<quint8>(toColor);
+                ++changed;
+            }
+        }
+
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QStringLiteral("Replaced color %1 with %2 (%3 pixels)").arg(fromColor).arg(toColor).arg(changed));
+    }
+
+    bool replaceColorInSelection(int fromColor, int toColor)
+    {
+        const QRect sel = selectionRect();
+        if (!sel.isValid()) {
+            updateStatus(QStringLiteral("No selection for color replace"));
+            return false;
+        }
+
+        fromColor = qBound(0, fromColor, 15);
+        toColor = qBound(0, toColor, 15);
+        if (fromColor == toColor)
+            return false;
+
+        pushUndoSnapshot();
+
+        int changed = 0;
+        for (int y = sel.top(); y <= sel.bottom(); ++y) {
+            for (int x = sel.left(); x <= sel.right(); ++x) {
+                const int index = y * 256 + x;
+                if (m_pixels[index] == fromColor) {
+                    m_pixels[index] = static_cast<quint8>(toColor);
+                    ++changed;
+                }
+            }
+        }
+
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QStringLiteral("Selection: replaced color %1 with %2 (%3 pixels)").arg(fromColor).arg(toColor).arg(changed));
+        return true;
+    }
+
+    bool swapColors(int colorA, int colorB)
+    {
+        colorA = qBound(0, colorA, 15);
+        colorB = qBound(0, colorB, 15);
+        if (colorA == colorB)
+            return false;
+
+        pushUndoSnapshot();
+
+        int changed = 0;
+        for (quint8& px : m_pixels) {
+            if (px == colorA) {
+                px = static_cast<quint8>(colorB);
+                ++changed;
+            } else if (px == colorB) {
+                px = static_cast<quint8>(colorA);
+                ++changed;
+            }
+        }
+
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QStringLiteral("Swapped colors %1/%2 on canvas (%3 pixels)").arg(colorA).arg(colorB).arg(changed));
+        return true;
+    }
+
+    bool swapColorsInSelection(int colorA, int colorB)
+    {
+        const QRect sel = selectionRect();
+        if (!sel.isValid()) {
+            updateStatus(QStringLiteral("No selection for color swap"));
+            return false;
+        }
+
+        colorA = qBound(0, colorA, 15);
+        colorB = qBound(0, colorB, 15);
+        if (colorA == colorB)
+            return false;
+
+        pushUndoSnapshot();
+
+        int changed = 0;
+        for (int y = sel.top(); y <= sel.bottom(); ++y) {
+            for (int x = sel.left(); x <= sel.right(); ++x) {
+                const int index = y * 256 + x;
+                if (m_pixels[index] == colorA) {
+                    m_pixels[index] = static_cast<quint8>(colorB);
+                    ++changed;
+                } else if (m_pixels[index] == colorB) {
+                    m_pixels[index] = static_cast<quint8>(colorA);
+                    ++changed;
+                }
+            }
+        }
+
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QStringLiteral("Selection: swapped colors %1/%2 (%3 pixels)").arg(colorA).arg(colorB).arg(changed));
+        return true;
+    }
+
+    void clearColor(int color)
+    {
+        replaceColor(color, 0);
+    }
+
+    bool clearColorInSelection(int color)
+    {
+        return replaceColorInSelection(color, m_backgroundColorIndex);
+    }
+
+    bool fillSelectionWithColor(int color)
+    {
+        const QRect sel = selectionRect();
+        if (!sel.isValid()) {
+            updateStatus(QStringLiteral("No selection to fill"));
+            return false;
+        }
+
+        color = qBound(0, color, 15);
+        pushUndoSnapshot();
+
+        for (int y = sel.top(); y <= sel.bottom(); ++y) {
+            for (int x = sel.left(); x <= sel.right(); ++x)
+                setPixel(x, y, color);
+        }
+
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QStringLiteral("Filled selection %1x%2 with color %3").arg(sel.width()).arg(sel.height()).arg(color));
+        return true;
+    }
+
+    bool outlineSelectionWithColor(int color)
+    {
+        const QRect sel = selectionRect();
+        if (!sel.isValid()) {
+            updateStatus(QStringLiteral("No selection to outline"));
+            return false;
+        }
+
+        color = qBound(0, color, 15);
+        pushUndoSnapshot();
+
+        for (int x = sel.left(); x <= sel.right(); ++x) {
+            setPixel(x, sel.top(), color);
+            setPixel(x, sel.bottom(), color);
+        }
+
+        for (int y = sel.top(); y <= sel.bottom(); ++y) {
+            setPixel(sel.left(), y, color);
+            setPixel(sel.right(), y, color);
+        }
+
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QStringLiteral("Outlined selection %1x%2 with color %3").arg(sel.width()).arg(sel.height()).arg(color));
+        return true;
+    }
+
+    bool armTextPlacement(const QString& text,
+                          int pointSize,
+                          const QString& fontFamily = QStringLiteral("Arial"),
+                          int letterSpacing = 0,
+                          const QVector<int>& gradientColors = QVector<int>())
+    {
+        const QString cleanText = text.trimmed();
+        if (cleanText.isEmpty()) {
+            updateStatus(QStringLiteral("No text to place"));
+            return false;
+        }
+
+        pointSize = qBound(6, pointSize, 48);
+
+        QFont font(fontFamily.trimmed().isEmpty() ? QStringLiteral("Arial") : fontFamily.trimmed());
+        font.setPixelSize(pointSize);
+        font.setBold(false);
+        font.setLetterSpacing(QFont::AbsoluteSpacing, qBound(-4, letterSpacing, 24));
+
+        QFontMetrics fm(font);
+        const QRect textRect = fm.boundingRect(cleanText).adjusted(-1, -1, 2, 2);
+
+        m_pendingTextMask = QImage(qMax(1, textRect.width()), qMax(1, textRect.height()), QImage::Format_ARGB32);
+        m_pendingTextMask.fill(Qt::transparent);
+        m_pendingTextColor = qBound(0, m_colorIndex, 15);
+        m_pendingTextGradientColors.clear();
+
+        for (int c : gradientColors)
+            m_pendingTextGradientColors.append(qBound(0, c, 15));
+
+        if (m_pendingTextGradientColors.isEmpty())
+            m_pendingTextGradientColors.append(m_pendingTextColor);
+
+        while (m_pendingTextGradientColors.size() > 4)
+            m_pendingTextGradientColors.removeLast();
+
+        m_pendingTextDragging = false;
+        m_pendingTextArmed = true;
+
+        QPainter painter(&m_pendingTextMask);
+        painter.setFont(font);
+        painter.setPen(Qt::white);
+        painter.drawText(-textRect.left(), -textRect.top(), cleanText);
+        painter.end();
+
+        setCursor(Qt::CrossCursor);
+        update();
+        updateStatus(QStringLiteral("Text ready: font=%1, vertical ink-row gradient colors=%2, click/drag on canvas, release to place")
+                         .arg(font.family())
+                         .arg(m_pendingTextGradientColors.size()));
+        return true;
+    }
+
+    void setGridVisible(bool visible)
+    {
+        m_gridVisible = visible;
+        update();
+    }
+
+    bool gridVisible() const
+    {
+        return m_gridVisible;
+    }
+
+    void setPixelGridVisible(bool visible)
+    {
+        m_pixelGridVisible = visible;
+        update();
+        updateStatus(visible ? QStringLiteral("Pixel grid ON") : QStringLiteral("Pixel grid OFF"));
+    }
+
+    bool pixelGridVisible() const
+    {
+        return m_pixelGridVisible;
+    }
+
+    void setShowTmsConflicts(bool visible)
+    {
+        m_showTmsConflicts = visible;
+        update();
+        updateStatus(visible ? QStringLiteral("TMS conflict overlay ON") : QStringLiteral("TMS conflict overlay OFF"));
+    }
+
+    bool showTmsConflicts() const
+    {
+        return m_showTmsConflicts;
+    }
+
+    bool loadReferenceImage(const QString& filePath)
+    {
+        QImage img(filePath);
+        if (img.isNull())
+            return false;
+
+        m_referenceImage = img.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        m_referenceOffset = QPoint(0, 0);
+        update();
+        updateStatus(QStringLiteral("Reference image loaded"));
+        return true;
+    }
+
+    void clearReferenceImage()
+    {
+        if (m_referenceImage.isNull())
+            return;
+
+        m_referenceImage = QImage();
+        update();
+        updateStatus(QStringLiteral("Reference image cleared"));
+    }
+
+    void setReferenceVisible(bool visible)
+    {
+        m_referenceVisible = visible;
+        update();
+        updateStatus(visible ? QStringLiteral("Reference image visible") : QStringLiteral("Reference image hidden"));
+    }
+
+    void setSelectionSnapToTile(bool enabled)
+    {
+        m_snapSelectionToTile = enabled;
+        updateStatus(enabled ? QStringLiteral("Selection snap 8x8 ON") : QStringLiteral("Selection snap 8x8 OFF"));
+    }
+
+    bool selectionSnapToTile() const
+    {
+        return m_snapSelectionToTile;
+    }
+
+    void armTileBlockSelection(int tileW, int tileH)
+    {
+        m_pendingTileSelection = QSize(qMax(1, tileW), qMax(1, tileH));
+        setCursor(Qt::CrossCursor);
+        updateStatus(QStringLiteral("Click canvas to select %1x%2 tile block").arg(m_pendingTileSelection.width()).arg(m_pendingTileSelection.height()));
+    }
+
+    void selectTileAtCursor()
+    {
+        selectTileBlockAtPixel(m_lastCanvasPixel, 1, 1);
+    }
+
+    void selectTileBlock(int tileW, int tileH)
+    {
+        selectTileBlockAtPixel(m_lastCanvasPixel, tileW, tileH);
+    }
+
+    void setReferenceOpacity(int opacity)
+    {
+        m_referenceOpacity = qBound(0, opacity, 100);
+        update();
+        updateStatus(QStringLiteral("Reference opacity %1%").arg(m_referenceOpacity));
+    }
+
+    void moveReference(int dx, int dy)
+    {
+        if (m_referenceImage.isNull())
+            return;
+
+        m_referenceOffset += QPoint(dx, dy);
+        update();
+        updateStatus(QStringLiteral("Reference moved X=%1 Y=%2").arg(m_referenceOffset.x()).arg(m_referenceOffset.y()));
+    }
+
+    void setZoomScale(int scale)
+    {
+        m_zoomScale = qBound(1, scale, 4);
+        setMinimumSize(256 * m_zoomScale + 30, 192 * m_zoomScale + 30);
+        setFixedSize(256 * m_zoomScale + 30, 192 * m_zoomScale + 30);
+        update();
+        updateStatus(QStringLiteral("Zoom %1x").arg(m_zoomScale));
+    }
+
+    int zoomScale() const
+    {
+        return m_zoomScale;
+    }
+
+    void clearCanvas()
+    {
+        if (isCanvasEmpty())
+            return;
+
+        pushUndoSnapshot();
+        m_pixels.fill(0);
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+    }
+
+    void clearCanvasToBackground()
+    {
+        pushUndoSnapshot();
+        m_pixels.fill(static_cast<quint8>(m_backgroundColorIndex));
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QStringLiteral("Canvas cleared to background color %1").arg(m_backgroundColorIndex));
+    }
+
+    void shiftCanvas(int dx, int dy)
+    {
+        if (dx == 0 && dy == 0)
+            return;
+
+        pushUndoSnapshot();
+
+        QVector<quint8> shifted(256 * 192);
+        shifted.fill(0);
+
+        for (int y = 0; y < 192; ++y) {
+            const int ny = y + dy;
+            if (ny < 0 || ny >= 192)
+                continue;
+
+            for (int x = 0; x < 256; ++x) {
+                const int nx = x + dx;
+                if (nx < 0 || nx >= 256)
+                    continue;
+
+                shifted[ny * 256 + nx] = m_pixels[y * 256 + x];
+            }
+        }
+
+        m_pixels = shifted;
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+    }
+
+    void mirrorHorizontal()
+    {
+        pushUndoSnapshot();
+
+        for (int y = 0; y < 192; ++y) {
+            for (int x = 0; x < 128; ++x) {
+                const int a = y * 256 + x;
+                const int b = y * 256 + (255 - x);
+                std::swap(m_pixels[a], m_pixels[b]);
+            }
+        }
+
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+    }
+
+    void mirrorVertical()
+    {
+        pushUndoSnapshot();
+
+        for (int y = 0; y < 96; ++y) {
+            for (int x = 0; x < 256; ++x) {
+                const int a = y * 256 + x;
+                const int b = (191 - y) * 256 + x;
+                std::swap(m_pixels[a], m_pixels[b]);
+            }
+        }
+
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+    }
+
+    bool flipSelectionHorizontal()
+    {
+        const QRect sel = selectionRect();
+        if (!sel.isValid()) {
+            updateStatus(QStringLiteral("No selection to flip"));
+            return false;
+        }
+
+        pushUndoSnapshot();
+
+        for (int y = sel.top(); y <= sel.bottom(); ++y) {
+            for (int x = 0; x < sel.width() / 2; ++x) {
+                const int ax = sel.left() + x;
+                const int bx = sel.right() - x;
+                const int a = y * 256 + ax;
+                const int b = y * 256 + bx;
+                std::swap(m_pixels[a], m_pixels[b]);
+            }
+        }
+
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QStringLiteral("Selection flipped horizontally"));
+        return true;
+    }
+
+    bool flipSelectionVertical()
+    {
+        const QRect sel = selectionRect();
+        if (!sel.isValid()) {
+            updateStatus(QStringLiteral("No selection to flip"));
+            return false;
+        }
+
+        pushUndoSnapshot();
+
+        for (int y = 0; y < sel.height() / 2; ++y) {
+            const int ay = sel.top() + y;
+            const int by = sel.bottom() - y;
+            for (int x = sel.left(); x <= sel.right(); ++x) {
+                const int a = ay * 256 + x;
+                const int b = by * 256 + x;
+                std::swap(m_pixels[a], m_pixels[b]);
+            }
+        }
+
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QStringLiteral("Selection flipped vertically"));
+        return true;
+    }
+
+    bool rotateSelection90(bool clockwise)
+    {
+        const QRect sel = selectionRect();
+        if (!sel.isValid()) {
+            updateStatus(QStringLiteral("No selection to rotate"));
+            return false;
+        }
+
+        const int w = sel.width();
+        const int h = sel.height();
+        const int newW = h;
+        const int newH = w;
+
+        if (sel.left() + newW > 256 || sel.top() + newH > 192) {
+            updateStatus(QStringLiteral("Rotated selection would not fit at current position"));
+            return false;
+        }
+
+        QVector<quint8> original(w * h);
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x)
+                original[y * w + x] = static_cast<quint8>(pixelAt(sel.left() + x, sel.top() + y));
+        }
+
+        pushUndoSnapshot();
+
+        for (int y = sel.top(); y <= sel.bottom(); ++y) {
+            for (int x = sel.left(); x <= sel.right(); ++x)
+                setPixel(x, y, 0);
+        }
+
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                int rx = 0;
+                int ry = 0;
+
+                if (clockwise) {
+                    rx = h - 1 - y;
+                    ry = x;
+                } else {
+                    rx = y;
+                    ry = w - 1 - x;
+                }
+
+                setPixel(sel.left() + rx, sel.top() + ry, original[y * w + x]);
+            }
+        }
+
+        m_selection = QRect(sel.topLeft(), QSize(newW, newH)).intersected(QRect(0, 0, 256, 192));
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(clockwise ? QStringLiteral("Selection rotated right 90") : QStringLiteral("Selection rotated left 90"));
+        return true;
+    }
+
+    bool nudgeSelection(int dx, int dy)
+    {
+        const QRect sel = selectionRect();
+        if (!sel.isValid()) {
+            updateStatus(QStringLiteral("No selection to nudge"));
+            return false;
+        }
+
+        const QRect target = sel.translated(dx, dy);
+        if (!QRect(0, 0, 256, 192).contains(target)) {
+            updateStatus(QStringLiteral("Selection cannot move outside canvas"));
+            return false;
+        }
+
+        QVector<quint8> original(sel.width() * sel.height());
+        for (int y = 0; y < sel.height(); ++y) {
+            for (int x = 0; x < sel.width(); ++x)
+                original[y * sel.width() + x] = static_cast<quint8>(pixelAt(sel.left() + x, sel.top() + y));
+        }
+
+        pushUndoSnapshot();
+
+        for (int y = sel.top(); y <= sel.bottom(); ++y) {
+            for (int x = sel.left(); x <= sel.right(); ++x)
+                setPixel(x, y, 0);
+        }
+
+        for (int y = 0; y < sel.height(); ++y) {
+            for (int x = 0; x < sel.width(); ++x)
+                setPixel(target.left() + x, target.top() + y, original[y * sel.width() + x]);
+        }
+
+        m_selection = target;
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QStringLiteral("Selection nudged to %1,%2").arg(target.left()).arg(target.top()));
+        return true;
+    }
+
+    int tmsConflictRowCount() const
+    {
+        int conflicts = 0;
+        for (int tileY = 0; tileY < 24; ++tileY) {
+            for (int tileX = 0; tileX < 32; ++tileX) {
+                for (int row = 0; row < 8; ++row) {
+                    bool seen[16] = { false };
+                    int used = 0;
+                    const int py = tileY * 8 + row;
+                    for (int col = 0; col < 8; ++col) {
+                        const int c = pixelAt(tileX * 8 + col, py);
+                        if (!seen[c]) {
+                            seen[c] = true;
+                            ++used;
+                        }
+                    }
+                    if (used > 2)
+                        ++conflicts;
+                }
+            }
+        }
+        return conflicts;
+    }
+
+    bool selectTmsConflictFromIndex(int startIndex, bool wrap, const QString& label)
+    {
+        const int totalRows = 32 * 24 * 8;
+        const int safeStart = qBound(0, startIndex, totalRows - 1);
+
+        for (int pass = 0; pass < (wrap ? 2 : 1); ++pass) {
+            const int begin = (pass == 0) ? safeStart : 0;
+            const int end = (pass == 0) ? totalRows : safeStart;
+
+            for (int index = begin; index < end; ++index) {
+                const int tileY = index / (32 * 8);
+                const int rem = index % (32 * 8);
+                const int tileX = rem / 8;
+                const int row = rem % 8;
+
+                bool seen[16] = { false };
+                int used = 0;
+                const int py = tileY * 8 + row;
+
+                for (int col = 0; col < 8; ++col) {
+                    const int c = pixelAt(tileX * 8 + col, py);
+                    if (!seen[c]) {
+                        seen[c] = true;
+                        ++used;
+                    }
+                }
+
+                if (used > 2) {
+                    m_selection = QRect(tileX * 8, py, 8, 1);
+                    m_lastTmsConflictIndex = index;
+                    update();
+                    updateStatus(QStringLiteral("%1 TMS conflict: tile %2,%3 row %4 at Y=%5 (%6 colors)")
+                                     .arg(label)
+                                     .arg(tileX)
+                                     .arg(tileY)
+                                     .arg(row)
+                                     .arg(py)
+                                     .arg(used));
+                    return true;
+                }
+            }
+        }
+
+        updateStatus(QStringLiteral("No TMS color conflicts found"));
+        return false;
+    }
+
+    bool selectFirstTmsConflict()
+    {
+        return selectTmsConflictFromIndex(0, false, QStringLiteral("First"));
+    }
+
+    bool selectNextTmsConflict()
+    {
+        const int totalRows = 32 * 24 * 8;
+        int startIndex = 0;
+
+        if (m_selection.isValid()) {
+            const int tileX = qBound(0, m_selection.left() / 8, 31);
+            const int py = qBound(0, m_selection.top(), 191);
+            const int tileY = py / 8;
+            const int row = py % 8;
+            startIndex = tileY * 32 * 8 + tileX * 8 + row + 1;
+        } else if (m_lastTmsConflictIndex >= 0) {
+            startIndex = m_lastTmsConflictIndex + 1;
+        }
+
+        if (startIndex >= totalRows)
+            startIndex = 0;
+
+        return selectTmsConflictFromIndex(startIndex, true, QStringLiteral("Next"));
+    }
+
+    bool reduceSelectedTmsRow()
+    {
+        if (!m_selection.isValid()) {
+            updateStatus(QStringLiteral("No selected TMS row to reduce"));
+            return false;
+        }
+
+        const int tileX = qBound(0, m_selection.left() / 8, 31);
+        const int py = qBound(0, m_selection.top(), 191);
+        const int tileY = py / 8;
+        const int row = py % 8;
+
+        bool seen[16] = { false };
+        int used = 0;
+        for (int col = 0; col < 8; ++col) {
+            const int c = pixelAt(tileX * 8 + col, tileY * 8 + row);
+            if (!seen[c]) {
+                seen[c] = true;
+                ++used;
+            }
+        }
+
+        if (used <= 2) {
+            updateStatus(QStringLiteral("Selected TMS row already uses %1 color(s)").arg(used));
+            return false;
+        }
+
+        pushUndoSnapshot();
+
+        const RowCodec codec = encodeTileRow(tileX, tileY, row);
+        const int y = tileY * 8 + row;
+
+        for (int col = 0; col < 8; ++col) {
+            const bool bit = (codec.pattern & (0x80 >> col)) != 0;
+            setPixel(tileX * 8 + col, y, bit ? codec.fg : codec.bg);
+        }
+
+        m_selection = QRect(tileX * 8, y, 8, 1);
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QStringLiteral("Selected TMS row reduced to colors %1/%2").arg(codec.fg).arg(codec.bg));
+        return true;
+    }
+
+    void reduceToTmsBitmapColors()
+    {
+        const int before = tmsConflictRowCount();
+        if (before <= 0) {
+            updateStatus(QStringLiteral("No TMS color conflicts to reduce"));
+            return;
+        }
+
+        pushUndoSnapshot();
+
+        for (int tileY = 0; tileY < 24; ++tileY) {
+            for (int tileX = 0; tileX < 32; ++tileX) {
+                for (int row = 0; row < 8; ++row) {
+                    const RowCodec codec = encodeTileRow(tileX, tileY, row);
+                    const int py = tileY * 8 + row;
+
+                    for (int col = 0; col < 8; ++col) {
+                        const bool bit = (codec.pattern & (0x80 >> col)) != 0;
+                        setPixel(tileX * 8 + col, py, bit ? codec.fg : codec.bg);
+                    }
+                }
+            }
+        }
+
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QStringLiteral("Reduced to TMS bitmap colors (%1 conflict rows fixed)").arg(before));
+    }
+
+    bool canUndo() const
+    {
+        return !m_undoStack.isEmpty();
+    }
+
+    bool canRedo() const
+    {
+        return !m_redoStack.isEmpty();
+    }
+
+    void undo()
+    {
+        if (m_undoStack.isEmpty())
+            return;
+
+        m_redoStack.append(m_pixels);
+        m_pixels = m_undoStack.takeLast();
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+    }
+
+    void redo()
+    {
+        if (m_redoStack.isEmpty())
+            return;
+
+        m_undoStack.append(m_pixels);
+        m_pixels = m_redoStack.takeLast();
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+    }
+
+
+    bool hasSelection() const
+    {
+        return selectionRect().isValid();
+    }
+
+    bool hasClipboardSelection() const
+    {
+        return !m_clipboardPixels.isEmpty() && m_clipboardSize.isValid();
+    }
+
+    void selectAll()
+    {
+        m_selection = QRect(0, 0, 256, 192);
+        update();
+        updateStatus(QStringLiteral("Selected full canvas 256x192"));
+    }
+
+    void clearSelection()
+    {
+        m_selection = QRect();
+        update();
+        updateStatus(QStringLiteral("Selection cleared"));
+    }
+
+    bool copySelection()
+    {
+        const QRect sel = selectionRect();
+        if (!sel.isValid()) {
+            updateStatus(QStringLiteral("No selection to copy"));
+            return false;
+        }
+
+        m_clipboardSize = sel.size();
+        m_clipboardPixels.resize(sel.width() * sel.height());
+        for (int y = 0; y < sel.height(); ++y) {
+            for (int x = 0; x < sel.width(); ++x)
+                m_clipboardPixels[y * sel.width() + x] = static_cast<quint8>(pixelAt(sel.left() + x, sel.top() + y));
+        }
+
+        updateStatus(QStringLiteral("Copied selection %1x%2").arg(sel.width()).arg(sel.height()));
+        return true;
+    }
+
+    bool cutSelection()
+    {
+        const QRect sel = selectionRect();
+        if (!copySelection())
+            return false;
+
+        pushUndoSnapshot();
+        for (int y = sel.top(); y <= sel.bottom(); ++y) {
+            for (int x = sel.left(); x <= sel.right(); ++x)
+                setPixel(x, y, 0);
+        }
+
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QStringLiteral("Cut selection %1x%2").arg(sel.width()).arg(sel.height()));
+        return true;
+    }
+
+    bool armMoveSelection()
+    {
+        const QRect sel = selectionRect();
+        if (!sel.isValid()) {
+            updateStatus(QStringLiteral("No selection to move"));
+            return false;
+        }
+
+        if (!copySelection())
+            return false;
+
+        pushUndoSnapshot();
+        for (int y = sel.top(); y <= sel.bottom(); ++y) {
+            for (int x = sel.left(); x <= sel.right(); ++x)
+                setPixel(x, y, 0);
+        }
+
+        m_moveSelectionArmed = true;
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        setCursor(Qt::CrossCursor);
+        updateStatus(QStringLiteral("Click canvas to move selection %1x%2").arg(sel.width()).arg(sel.height()));
+        return true;
+    }
+
+    bool pasteSelection()
+    {
+        if (!hasClipboardSelection()) {
+            updateStatus(QStringLiteral("No copied selection to paste"));
+            return false;
+        }
+
+        QRect target = selectionRect();
+        QPoint topLeft = target.isValid() ? target.topLeft() : QPoint(0, 0);
+        topLeft.setX(qBound(0, topLeft.x(), 255));
+        topLeft.setY(qBound(0, topLeft.y(), 191));
+
+        pushUndoSnapshot();
+        pasteClipboardAt(topLeft);
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QStringLiteral("Pasted selection at %1,%2").arg(topLeft.x()).arg(topLeft.y()));
+        return true;
+    }
+
+    bool makeStampFromSelection()
+    {
+        if (!copySelection())
+            return false;
+
+        updateStatus(QStringLiteral("Stamp captured %1x%2").arg(m_clipboardSize.width()).arg(m_clipboardSize.height()));
+        return true;
+    }
+
+    void armStampPlacement()
+    {
+        if (!hasClipboardSelection()) {
+            updateStatus(QStringLiteral("No stamp/selection to place"));
+            return;
+        }
+
+        m_stampPlacementArmed = true;
+        setCursor(Qt::CrossCursor);
+        updateStatus(QStringLiteral("Click canvas to place stamp %1x%2").arg(m_clipboardSize.width()).arg(m_clipboardSize.height()));
+    }
+
+    QJsonObject stampToJson() const
+    {
+        QJsonObject obj;
+        obj["type"] = QStringLiteral("ADAM_PLUS_CVPAINT_STAMP");
+        obj["version"] = 1;
+        obj["width"] = m_clipboardSize.width();
+        obj["height"] = m_clipboardSize.height();
+
+        QJsonArray pixels;
+        for (quint8 px : m_clipboardPixels)
+            pixels.append(static_cast<int>(px));
+        obj["pixels"] = pixels;
+        return obj;
+    }
+
+    bool stampFromJson(const QJsonObject& obj)
+    {
+        if (obj.value("type").toString() != QStringLiteral("ADAM_PLUS_CVPAINT_STAMP"))
+            return false;
+
+        const int w = obj.value("width").toInt();
+        const int h = obj.value("height").toInt();
+        const QJsonArray pixels = obj.value("pixels").toArray();
+
+        if (w <= 0 || h <= 0 || w > 256 || h > 192 || pixels.size() != w * h)
+            return false;
+
+        QVector<quint8> loaded;
+        loaded.reserve(pixels.size());
+        for (const QJsonValue& v : pixels)
+            loaded.append(static_cast<quint8>(qBound(0, v.toInt(), 15)));
+
+        m_clipboardSize = QSize(w, h);
+        m_clipboardPixels = loaded;
+        updateStatus(QStringLiteral("Stamp loaded %1x%2").arg(w).arg(h));
+        return true;
+    }
+
+    void pasteClipboardAt(const QPoint& topLeft)
+    {
+        const int w = m_clipboardSize.width();
+        const int h = m_clipboardSize.height();
+        for (int y = 0; y < h; ++y) {
+            const int py = topLeft.y() + y;
+            if (py < 0 || py >= 192)
+                continue;
+            for (int x = 0; x < w; ++x) {
+                const int px = topLeft.x() + x;
+                if (px < 0 || px >= 256)
+                    continue;
+                const quint8 sourcePixel = m_clipboardPixels[y * w + x];
+                if (m_transparentPaste && sourcePixel == 0)
+                    continue;
+                setPixel(px, py, sourcePixel);
+            }
+        }
+
+        m_selection = QRect(topLeft, QSize(qMin(w, 256 - topLeft.x()), qMin(h, 192 - topLeft.y())));
+    }
+
+    bool importImage(const QImage& sourceImage)
+    {
+        if (sourceImage.isNull())
+            return false;
+
+        pushUndoSnapshot();
+
+        const QImage scaled = sourceImage.scaled(256, 192, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                                      .convertToFormat(QImage::Format_ARGB32);
+
+        QVector<quint8> newPixels(256 * 192);
+        for (int y = 0; y < 192; ++y) {
+            const QRgb* line = reinterpret_cast<const QRgb*>(scaled.constScanLine(y));
+            for (int x = 0; x < 256; ++x) {
+                const QColor c = QColor::fromRgb(line[x]);
+                newPixels[y * 256 + x] = static_cast<quint8>(nearestColecoColor(c));
+            }
+        }
+
+        m_pixels = newPixels;
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        return true;
+    }
+
+    bool importImageDithered(const QImage& sourceImage)
+    {
+        if (sourceImage.isNull())
+            return false;
+
+        pushUndoSnapshot();
+
+        const QImage scaled = sourceImage.scaled(256, 192, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                                      .convertToFormat(QImage::Format_ARGB32);
+
+        QVector<quint8> newPixels(256 * 192);
+        for (int y = 0; y < 192; ++y) {
+            const QRgb* line = reinterpret_cast<const QRgb*>(scaled.constScanLine(y));
+            for (int x = 0; x < 256; ++x) {
+                QColor c = QColor::fromRgb(line[x]);
+
+                // Very small ordered checker dither before nearest palette match.
+                // This keeps it fast and deterministic, without pulling in extra dependencies.
+                const int delta = ((x + y) & 1) ? 18 : -18;
+                c.setRed(qBound(0, c.red() + delta, 255));
+                c.setGreen(qBound(0, c.green() + delta, 255));
+                c.setBlue(qBound(0, c.blue() + delta, 255));
+
+                newPixels[y * 256 + x] = static_cast<quint8>(nearestColecoColor(c));
+            }
+        }
+
+        m_pixels = newPixels;
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        return true;
+    }
+
+    bool importImageTmsConverted(const QImage& sourceImage)
+    {
+        if (sourceImage.isNull())
+            return false;
+
+        pushUndoSnapshot();
+
+        const QImage scaled = sourceImage.scaled(256, 192, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                                      .convertToFormat(QImage::Format_ARGB32);
+
+        QVector<quint8> newPixels(256 * 192);
+
+        // True TMS9918 Graphics II friendly conversion:
+        // every 8-pixel horizontal row inside a tile may only use 2 colors.
+        // For each 8-pixel row, find the best Coleco color pair and map all
+        // pixels in that row to one of those two colors.
+        for (int y = 0; y < 192; ++y) {
+            const QRgb* line = reinterpret_cast<const QRgb*>(scaled.constScanLine(y));
+
+            for (int x0 = 0; x0 < 256; x0 += 8) {
+                int dist[8][16];
+
+                for (int x = 0; x < 8; ++x) {
+                    QColor src = QColor::fromRgb(line[x0 + x]);
+
+                    // Small ordered pre-adjustment. It is intentionally modest:
+                    // enough to keep gems/details alive, but not so strong that
+                    // the row pair chooser becomes noisy.
+                    const int threshold = (((x0 + x) ^ y) & 1) ? 10 : -10;
+                    src.setRed(qBound(0, src.red() + threshold, 255));
+                    src.setGreen(qBound(0, src.green() + threshold, 255));
+                    src.setBlue(qBound(0, src.blue() + threshold, 255));
+
+                    for (int c = 0; c < 16; ++c) {
+                        const QColor pal = colecoColor(c);
+                        const int dr = src.red() - pal.red();
+                        const int dg = src.green() - pal.green();
+                        const int db = src.blue() - pal.blue();
+                        dist[x][c] = dr * dr + dg * dg + db * db;
+                    }
+                }
+
+                int bestA = 0;
+                int bestB = 15;
+                int bestScore = std::numeric_limits<int>::max();
+
+                for (int a = 0; a < 16; ++a) {
+                    for (int b = a; b < 16; ++b) {
+                        int score = 0;
+                        for (int x = 0; x < 8; ++x)
+                            score += qMin(dist[x][a], dist[x][b]);
+
+                        // Prefer black as one of the two colors when the score is very close.
+                        // This keeps black backgrounds stable on title screens.
+                        if (a != 0 && a != 1 && b != 0 && b != 1)
+                            score += 80;
+
+                        if (score < bestScore) {
+                            bestScore = score;
+                            bestA = a;
+                            bestB = b;
+                        }
+                    }
+                }
+
+                // Put black in the background side if available; otherwise use the
+                // most-used nearest color as background.
+                int bg = bestA;
+                int fg = bestB;
+                if (bestB == 0 || bestB == 1) {
+                    bg = bestB;
+                    fg = bestA;
+                } else if (bestA == 0 || bestA == 1) {
+                    bg = bestA;
+                    fg = bestB;
+                }
+
+                for (int x = 0; x < 8; ++x) {
+                    const int chosen = (dist[x][fg] < dist[x][bg]) ? fg : bg;
+                    newPixels[y * 256 + x0 + x] = static_cast<quint8>(chosen);
+                }
+            }
+        }
+
+        m_pixels = newPixels;
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        return true;
+    }
+
+
+    QImage toImage() const
+    {
+        QImage img(256, 192, QImage::Format_ARGB32);
+        for (int y = 0; y < 192; ++y) {
+            QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(y));
+            for (int x = 0; x < 256; ++x) {
+                const int idx = pixelAt(x, y);
+                line[x] = colecoColor(idx).rgb();
+            }
+        }
+        return img;
+    }
+
+    QJsonObject toJson() const
+    {
+        QJsonObject root;
+        root[QStringLiteral("format")] = QStringLiteral("ADAMP_CVPAINT_STEP2");
+        root[QStringLiteral("width")] = 256;
+        root[QStringLiteral("height")] = 192;
+        root[QStringLiteral("fgColor")] = m_colorIndex;
+
+        QJsonArray rows;
+        for (int y = 0; y < 192; ++y) {
+            QString row;
+            row.reserve(256);
+            for (int x = 0; x < 256; ++x)
+                row.append(QString::number(pixelAt(x, y), 16).toUpper());
+            rows.append(row);
+        }
+        root[QStringLiteral("pixels")] = rows;
+        return root;
+    }
+
+    bool fromJson(const QJsonObject& root)
+    {
+        if (root.value(QStringLiteral("width")).toInt() != 256 ||
+            root.value(QStringLiteral("height")).toInt() != 192) {
+            return false;
+        }
+
+        const QJsonArray rows = root.value(QStringLiteral("pixels")).toArray();
+        if (rows.size() != 192)
+            return false;
+
+        QVector<quint8> newPixels(256 * 192);
+        for (int y = 0; y < 192; ++y) {
+            const QString row = rows.at(y).toString();
+            if (row.size() < 256)
+                return false;
+
+            for (int x = 0; x < 256; ++x) {
+                bool ok = false;
+                const int c = row.mid(x, 1).toInt(&ok, 16);
+                newPixels[y * 256 + x] = static_cast<quint8>(ok ? qBound(0, c, 15) : 0);
+            }
+        }
+
+        m_pixels = newPixels;
+        m_colorIndex = qBound(0, root.value(QStringLiteral("fgColor")).toInt(m_colorIndex), 15);
+        m_undoStack.clear();
+        m_redoStack.clear();
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        return true;
+    }
+
+    QByteArray bitmapPatternBytes() const
+    {
+        QByteArray bytes;
+        bytes.reserve(32 * 24 * 8);
+
+        for (int tileY = 0; tileY < 24; ++tileY) {
+            for (int tileX = 0; tileX < 32; ++tileX) {
+                for (int row = 0; row < 8; ++row) {
+                    const RowCodec codec = encodeTileRow(tileX, tileY, row);
+                    bytes.append(static_cast<char>(codec.pattern));
+                }
+            }
+        }
+
+        return bytes;
+    }
+
+    QByteArray bitmapColorBytes() const
+    {
+        QByteArray bytes;
+        bytes.reserve(32 * 24 * 8);
+
+        for (int tileY = 0; tileY < 24; ++tileY) {
+            for (int tileX = 0; tileX < 32; ++tileX) {
+                for (int row = 0; row < 8; ++row) {
+                    const RowCodec codec = encodeTileRow(tileX, tileY, row);
+                    bytes.append(static_cast<char>((codec.fg << 4) | codec.bg));
+                }
+            }
+        }
+
+        return bytes;
+    }
+
+    QByteArray bitmapNameTableBytes() const
+    {
+        QByteArray bytes;
+        bytes.reserve(32 * 24);
+
+        // TMS Graphics II bitmap mode needs a correct 768-byte name table.
+        // 0..255 repeated 3 times maps the top/middle/bottom 64-line sections.
+        for (int section = 0; section < 3; ++section) {
+            for (int i = 0; i < 256; ++i)
+                bytes.append(static_cast<char>(i));
+        }
+
+        return bytes;
+    }
+
+    QString exportCvBasicBitmapData(const QString& labelPrefix = QStringLiteral("PAINT"), bool addViewerRoutine = false) const
+    {
+        const QByteArray pattern = bitmapPatternBytes();
+        const QByteArray color = bitmapColorBytes();
+
+        QString out;
+        QTextStream ts(&out);
+        ts << "REM ADAM+ Paint Editor - ColecoVision/TMS bitmap export\n";
+        ts << "REM 256x192, 32x24 tiles, 6144 bytes bitmap + 6144 bytes color\n";
+        ts << "REM CVBasic DATA is emitted as DATA BYTE, compatible with DEFINE VRAM.\n";
+        ts << "REM Each 8-pixel row is reduced to BG + one FG color, because TMS bitmap rows allow 2 colors.\n";
+        ts << "REM TMS rows using more than 2 colors before conversion: " << tmsConflictRowCount() << "\n\n";
+
+        if (addViewerRoutine) {
+            ts << "REM --- Small viewer routine generated by ADAM+ Paint Editor ---\n";
+            ts << "MODE 1\n";
+            ts << "SCREEN DISABLE\n";
+            ts << "DEFINE VRAM $0000,$1800," << labelPrefix << "_BITMAP\n";
+            ts << "DEFINE VRAM $2000,$1800," << labelPrefix << "_COLOR\n";
+            ts << "SCREEN ENABLE\n";
+            ts << "WHILE 1: WEND\n\n";
+        } else {
+            ts << "REM Data only. Example viewer:\n";
+            ts << "REM   MODE 1\n";
+            ts << "REM   SCREEN DISABLE\n";
+            ts << "REM   DEFINE VRAM $0000,$1800," << labelPrefix << "_BITMAP\n";
+            ts << "REM   DEFINE VRAM $2000,$1800," << labelPrefix << "_COLOR\n";
+            ts << "REM   SCREEN ENABLE\n";
+            ts << "REM   WHILE 1: WEND\n\n";
+        }
+
+        appendByteData(ts, labelPrefix + QStringLiteral("_BITMAP"), pattern);
+        ts << "\n";
+        appendByteData(ts, labelPrefix + QStringLiteral("_COLOR"), color);
+        return out;
+    }
+
+    QString exportCvBasicRawData(const QString& labelPrefix = QStringLiteral("PAINT")) const
+    {
+        QString out;
+        QTextStream ts(&out);
+        ts << "REM ADAM+ Paint Editor 256x192 raw color index data\n";
+        ts << "REM 0..15 = ColecoVision palette index per pixel\n";
+        ts << labelPrefix << "_WIDTH:\nDATA 256\n";
+        ts << labelPrefix << "_HEIGHT:\nDATA 192\n";
+        ts << labelPrefix << "_PIXELS:\n";
+
+        for (int y = 0; y < 192; ++y) {
+            ts << "DATA ";
+            for (int x = 0; x < 256; ++x) {
+                if (x > 0)
+                    ts << ",";
+                ts << pixelAt(x, y);
+            }
+            ts << "\n";
+        }
+        return out;
+    }
+
+    std::function<void(int)> onColorPicked;
+    std::function<void()> onChanged;
+    std::function<void(bool, bool)> onUndoStateChanged;
+    std::function<void(const QString&)> onStatus;
+    std::function<void(const QPoint&)> onContextMenuRequested;
+
+protected:
+    bool tmsRowHasConflict(int tileX, int tileY, int row) const
+    {
+        bool seen[16] = { false };
+        int used = 0;
+        const int py = tileY * 8 + row;
+
+        for (int col = 0; col < 8; ++col) {
+            const int c = pixelAt(tileX * 8 + col, py);
+            if (!seen[c]) {
+                seen[c] = true;
+                ++used;
+            }
+        }
+
+        return used > 2;
+    }
+
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.fillRect(rect(), QColor("#242424"));
+
+        const QRect frame = canvasFrameRect();
+        p.setRenderHint(QPainter::Antialiasing, false);
+        p.fillRect(frame.adjusted(-8, -8, 8, 8), QColor("#222222"));
+        p.fillRect(frame, QColor("#000000"));
+
+        const qreal sx = static_cast<qreal>(frame.width()) / 256.0;
+        const qreal sy = static_cast<qreal>(frame.height()) / 192.0;
+
+        if (m_referenceVisible && !m_referenceImage.isNull() && m_referenceOpacity > 0) {
+            p.save();
+            p.setClipRect(frame);
+            p.setOpacity(m_referenceOpacity / 100.0);
+            p.setRenderHint(QPainter::SmoothPixmapTransform, false);
+
+            const QRect refTarget(frame.left() + m_referenceOffset.x() * frame.width() / 256,
+                                  frame.top() + m_referenceOffset.y() * frame.height() / 192,
+                                  m_referenceImage.width() * frame.width() / 256,
+                                  m_referenceImage.height() * frame.height() / 192);
+            p.drawImage(refTarget, m_referenceImage);
+            p.restore();
+        }
+
+        QImage img = toImage();
+        p.setRenderHint(QPainter::SmoothPixmapTransform, false);
+        p.drawImage(frame, img);
+
+        if (m_showTmsConflicts) {
+            p.setPen(QPen(QColor(255, 60, 60, 190), qMax(1, m_zoomScale)));
+            p.setBrush(QColor(255, 0, 0, 45));
+
+            for (int tileY = 0; tileY < 24; ++tileY) {
+                for (int tileX = 0; tileX < 32; ++tileX) {
+                    for (int row = 0; row < 8; ++row) {
+                        if (!tmsRowHasConflict(tileX, tileY, row))
+                            continue;
+
+                        const int px = frame.left() + qRound((tileX * 8) * sx);
+                        const int py = frame.top() + qRound((tileY * 8 + row) * sy);
+                        const int pw = qMax(1, qRound(8 * sx));
+                        const int ph = qMax(1, qRound(1 * sy));
+                        p.drawRect(QRect(px, py, pw, ph));
+                    }
+                }
+            }
+        }
+
+        if (m_pixelGridVisible && m_zoomScale >= 3) {
+            p.setPen(QColor(255, 255, 255, 22));
+            for (int x = 1; x < 256; ++x) {
+                const int px = frame.left() + qRound(x * sx);
+                p.drawLine(px, frame.top(), px, frame.bottom());
+            }
+            for (int y = 1; y < 192; ++y) {
+                const int py = frame.top() + qRound(y * sy);
+                p.drawLine(frame.left(), py, frame.right(), py);
+            }
+        }
+
+        if (m_gridVisible) {
+            p.setPen(QColor(255, 220, 90, 120));
+            for (int x = 8; x < 256; x += 8) {
+                const int px = frame.left() + qRound(x * sx);
+                p.drawLine(px, frame.top(), px, frame.bottom());
+            }
+            for (int y = 8; y < 192; y += 8) {
+                const int py = frame.top() + qRound(y * sy);
+                p.drawLine(frame.left(), py, frame.right(), py);
+            }
+        }
+
+        if (m_shapeDragging) {
+            const QRectF pr(frame.left() + m_shapePreviewRect.left() * sx,
+                            frame.top() + m_shapePreviewRect.top() * sy,
+                            m_shapePreviewRect.width() * sx,
+                            m_shapePreviewRect.height() * sy);
+
+            QPen shapePen(QColor("#FFFF00"));
+            shapePen.setStyle(Qt::DashLine);
+            shapePen.setWidth(2);
+            p.setPen(shapePen);
+            p.setBrush(Qt::NoBrush);
+
+            if (m_toolMode == ToolMode::Line) {
+                p.drawLine(frame.left() + m_shapeAnchor.x() * sx,
+                           frame.top() + m_shapeAnchor.y() * sy,
+                           frame.left() + m_shapeCurrent.x() * sx,
+                           frame.top() + m_shapeCurrent.y() * sy);
+            } else if (m_toolMode == ToolMode::Ellipse || m_toolMode == ToolMode::FilledEllipse) {
+                p.drawEllipse(pr.adjusted(0, 0, -1, -1));
+            } else {
+                p.drawRect(pr.adjusted(0, 0, -1, -1));
+            }
+        }
+
+        if (m_pendingTextArmed && !m_pendingTextMask.isNull()) {
+            const QRect textRect = pendingTextRectAt(m_pendingTextPos);
+            if (textRect.isValid()) {
+                const QRectF tr(frame.left() + textRect.left() * sx,
+                                frame.top() + textRect.top() * sy,
+                                textRect.width() * sx,
+                                textRect.height() * sy);
+
+                p.fillRect(tr, QColor(255, 255, 255, 22));
+                QPen textPen(QColor("#00E5FF"));
+                textPen.setStyle(Qt::DashLine);
+                textPen.setWidth(2);
+                p.setPen(textPen);
+                p.setBrush(Qt::NoBrush);
+                p.drawRect(tr.adjusted(0, 0, -1, -1));
+
+                p.setOpacity(0.55);
+                p.setPen(colecoColor(m_pendingTextGradientColors.isEmpty() ? m_pendingTextColor : m_pendingTextGradientColors.first()));
+                p.setFont(QFont(QStringLiteral("Arial"), qMax(8, qRound(10 * sx))));
+                p.drawText(tr.topLeft() + QPointF(2, qMax(10.0, 12.0 * sy)), QStringLiteral("TEXT"));
+                p.setOpacity(1.0);
+            }
+        }
+
+        const QRect sel = selectionRect();
+        if (sel.isValid()) {
+            const QRectF sr(frame.left() + sel.left() * sx,
+                            frame.top() + sel.top() * sy,
+                            sel.width() * sx,
+                            sel.height() * sy);
+            p.fillRect(sr, QColor(255, 255, 255, 28));
+            QPen pen(QColor("#FFFFFF"));
+            pen.setStyle(Qt::DashLine);
+            pen.setWidth(2);
+            p.setPen(pen);
+            p.drawRect(sr.adjusted(0, 0, -1, -1));
+        }
+
+        p.setPen(QColor("#444444"));
+        p.drawRect(frame.adjusted(-1, -1, 1, 1));
+    }
+
+    void mousePressEvent(QMouseEvent* event) override
+    {
+        if (event->button() == Qt::RightButton) {
+            event->ignore();
+            return;
+        }
+
+        handleMouse(event->position().toPoint(), event->button(), true);
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override
+    {
+        if (event->buttons() & Qt::LeftButton)
+            handleMouse(event->position().toPoint(), Qt::LeftButton, false);
+        else
+            updateHoverStatus(event->position().toPoint());
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override
+    {
+        if (m_pendingTextArmed && m_pendingTextDragging) {
+            int x = 0;
+            int y = 0;
+            if (widgetToPixel(event->position().toPoint(), &x, &y))
+                m_pendingTextPos = QPoint(x, y);
+
+            pushUndoSnapshot();
+            const int written = placePendingTextAt(m_pendingTextPos);
+
+            m_pendingTextArmed = false;
+            m_pendingTextDragging = false;
+            m_pendingTextMask = QImage();
+
+            update();
+            notifyChanged();
+            notifyUndoStateChanged();
+            updateStatus(QStringLiteral("Text placed at %1,%2 (%3 pixels)").arg(m_pendingTextPos.x()).arg(m_pendingTextPos.y()).arg(written));
+            return;
+        }
+
+        if (m_shapeDragging) {
+            const int drawColor = m_colorIndex;
+            pushUndoSnapshot();
+
+            if (m_toolMode == ToolMode::Line)
+                drawLinePixels(m_shapeAnchor, m_shapeCurrent, drawColor);
+            else if (m_toolMode == ToolMode::Ellipse || m_toolMode == ToolMode::FilledEllipse)
+                drawEllipsePixels(m_shapePreviewRect, drawColor, m_toolMode == ToolMode::FilledEllipse);
+            else
+                drawRectPixels(m_shapePreviewRect, drawColor, m_toolMode == ToolMode::FilledRect);
+
+            m_shapeDragging = false;
+            update();
+            notifyChanged();
+            notifyUndoStateChanged();
+            updateStatus(QStringLiteral("Shape drawn"));
+        }
+
+        m_strokeUndoCaptured = false;
+        m_selecting = false;
+    }
+
+    void contextMenuEvent(QContextMenuEvent* event) override
+    {
+        if (onContextMenuRequested) {
+            onContextMenuRequested(event->globalPos());
+            event->accept();
+            return;
+        }
+
+        QWidget::contextMenuEvent(event);
+    }
+
+private:
+    RowCodec encodeTileRow(int tileX, int tileY, int row) const
+    {
+        int counts[16] = { 0 };
+        const int py = tileY * 8 + row;
+
+        for (int col = 0; col < 8; ++col) {
+            const int c = pixelAt(tileX * 8 + col, py);
+            counts[qBound(0, c, 15)]++;
+        }
+
+        int bg = 0;
+        for (int i = 1; i < 16; ++i) {
+            if (counts[i] > counts[bg])
+                bg = i;
+        }
+
+        int fg = (bg == 0) ? 15 : 0;
+        for (int i = 0; i < 16; ++i) {
+            if (i == bg)
+                continue;
+            if (counts[i] > counts[fg])
+                fg = i;
+        }
+
+        if (counts[fg] == 0)
+            fg = (bg == 15) ? 0 : 15;
+
+        RowCodec codec;
+        codec.fg = qBound(0, fg, 15);
+        codec.bg = qBound(0, bg, 15);
+
+        for (int col = 0; col < 8; ++col) {
+            const int c = pixelAt(tileX * 8 + col, py);
+
+            // TMS bitmap rows only allow 2 colors.
+            // Preserve the shape first:
+            //   BG = most used color in this 8-pixel row
+            //   FG = most used non-BG color
+            //   every non-BG pixel becomes FG
+            //
+            // This is much better for imported pictures with many tiny colors:
+            // details keep their silhouette instead of disappearing into BG.
+            if (c != codec.bg)
+                codec.pattern |= static_cast<quint8>(0x80 >> col);
+        }
+
+        return codec;
+    }
+
+    static void appendByteData(QTextStream& ts, const QString& label, const QByteArray& bytes)
+    {
+        ts << label << ":\n";
+        for (int i = 0; i < bytes.size(); i += 16) {
+            ts << "\tDATA BYTE ";
+            const int count = qMin(16, bytes.size() - i);
+            for (int j = 0; j < count; ++j) {
+                if (j > 0)
+                    ts << ",";
+                const int value = static_cast<unsigned char>(bytes.at(i + j));
+                ts << "$" << QStringLiteral("%1").arg(value, 2, 16, QLatin1Char('0')).toUpper();
+            }
+            ts << "\n";
+        }
+    }
+
+    QRect canvasFrameRect() const
+    {
+        const QSize preferred(256 * m_zoomScale, 192 * m_zoomScale);
+        QSize s = preferred;
+        const QSize maxSize(qMax(64, width() - 30), qMax(48, height() - 30));
+        if (s.width() > maxSize.width() || s.height() > maxSize.height())
+            s.scale(maxSize, Qt::KeepAspectRatio);
+
+        return QRect(QPoint((width() - s.width()) / 2, (height() - s.height()) / 2), s);
+    }
+
+    bool widgetToPixel(const QPoint& pos, int* outX, int* outY) const
+    {
+        const QRect r = canvasFrameRect();
+        if (!r.contains(pos))
+            return false;
+
+        const int x = qBound(0, static_cast<int>((pos.x() - r.left()) * 256.0 / qMax(1, r.width())), 255);
+        const int y = qBound(0, static_cast<int>((pos.y() - r.top()) * 192.0 / qMax(1, r.height())), 191);
+
+        if (outX) *outX = x;
+        if (outY) *outY = y;
+        return true;
+    }
+
+
+    QRect makeSelectionRect(const QPoint& a, const QPoint& b) const
+    {
+        int left = qMin(a.x(), b.x());
+        int top = qMin(a.y(), b.y());
+        int right = qMax(a.x(), b.x());
+        int bottom = qMax(a.y(), b.y());
+
+        if (m_snapSelectionToTile) {
+            left = (left / 8) * 8;
+            top = (top / 8) * 8;
+            right = qMin(255, ((right / 8) * 8) + 7);
+            bottom = qMin(191, ((bottom / 8) * 8) + 7);
+        }
+
+        return QRect(left, top, right - left + 1, bottom - top + 1).intersected(QRect(0, 0, 256, 192));
+    }
+
+    void selectTileBlockAtPixel(const QPoint& pixel, int tileW, int tileH)
+    {
+        QPoint p = pixel;
+        if (p.x() < 0 || p.y() < 0)
+            p = QPoint(0, 0);
+
+        const int left = (p.x() / 8) * 8;
+        const int top = (p.y() / 8) * 8;
+        m_selection = QRect(left, top, qMax(1, tileW) * 8, qMax(1, tileH) * 8).intersected(QRect(0, 0, 256, 192));
+        update();
+        updateStatus(QStringLiteral("Selected %1x%2 tile block at TILE=%3,%4")
+                         .arg(tileW)
+                         .arg(tileH)
+                         .arg(left / 8)
+                         .arg(top / 8));
+    }
+
+    QRect selectionRect() const
+    {
+        return m_selection.normalized().intersected(QRect(0, 0, 256, 192));
+    }
+
+    int pixelAt(int x, int y) const
+    {
+        if (x < 0 || y < 0 || x >= 256 || y >= 192)
+            return 0;
+        return qBound(0, static_cast<int>(m_pixels[y * 256 + x]), 15);
+    }
+
+    void setPixel(int x, int y, int color)
+    {
+        if (x < 0 || y < 0 || x >= 256 || y >= 192)
+            return;
+        m_pixels[y * 256 + x] = static_cast<quint8>(qBound(0, color, 15));
+    }
+
+    QColor colecoColor(int idx) const
+    {
+        static const QColor pal[16] = {
+            QColor("#000000"), QColor("#000000"), QColor("#21C842"), QColor("#5EDC78"),
+            QColor("#5455ED"), QColor("#7D76FC"), QColor("#D4524D"), QColor("#42EBF5"),
+            QColor("#FC5554"), QColor("#FF7978"), QColor("#D4C154"), QColor("#E6CE80"),
+            QColor("#21B03B"), QColor("#C95BBA"), QColor("#CCCCCC"), QColor("#FFFFFF")
+        };
+        return pal[qBound(0, idx, 15)];
+    }
+
+    void drawLinePixels(const QPoint& a, const QPoint& b, int color)
+    {
+        int x0 = a.x();
+        int y0 = a.y();
+        const int x1 = b.x();
+        const int y1 = b.y();
+
+        const int dx = qAbs(x1 - x0);
+        const int sx = x0 < x1 ? 1 : -1;
+        const int dy = -qAbs(y1 - y0);
+        const int sy = y0 < y1 ? 1 : -1;
+        int err = dx + dy;
+
+        while (true) {
+            setPixel(x0, y0, color);
+            if (x0 == x1 && y0 == y1)
+                break;
+
+            const int e2 = 2 * err;
+            if (e2 >= dy) {
+                err += dy;
+                x0 += sx;
+            }
+            if (e2 <= dx) {
+                err += dx;
+                y0 += sy;
+            }
+        }
+    }
+
+    void drawRectPixels(const QRect& r, int color, bool filled)
+    {
+        const QRect rr = r.normalized().intersected(QRect(0, 0, 256, 192));
+        if (!rr.isValid())
+            return;
+
+        if (filled) {
+            for (int y = rr.top(); y <= rr.bottom(); ++y) {
+                for (int x = rr.left(); x <= rr.right(); ++x)
+                    setPixel(x, y, color);
+            }
+            return;
+        }
+
+        for (int x = rr.left(); x <= rr.right(); ++x) {
+            setPixel(x, rr.top(), color);
+            setPixel(x, rr.bottom(), color);
+        }
+        for (int y = rr.top(); y <= rr.bottom(); ++y) {
+            setPixel(rr.left(), y, color);
+            setPixel(rr.right(), y, color);
+        }
+    }
+
+    void drawEllipsePixels(const QRect& r, int color, bool filled)
+    {
+        const QRect rr = r.normalized().intersected(QRect(0, 0, 256, 192));
+        if (!rr.isValid())
+            return;
+
+        const double cx = (rr.left() + rr.right()) / 2.0;
+        const double cy = (rr.top() + rr.bottom()) / 2.0;
+        const double rx = qMax(0.5, rr.width() / 2.0);
+        const double ry = qMax(0.5, rr.height() / 2.0);
+
+        for (int y = rr.top(); y <= rr.bottom(); ++y) {
+            for (int x = rr.left(); x <= rr.right(); ++x) {
+                const double nx = (x - cx) / rx;
+                const double ny = (y - cy) / ry;
+                const double v = nx * nx + ny * ny;
+
+                if (filled) {
+                    if (v <= 1.0)
+                        setPixel(x, y, color);
+                } else {
+                    const double border = qMax(0.08, 1.8 / qMax(rx, ry));
+                    if (qAbs(v - 1.0) <= border)
+                        setPixel(x, y, color);
+                }
+            }
+        }
+    }
+
+    void drawBrushAt(int cx, int cy, int color)
+    {
+        const int size = qBound(1, m_brushSize, 8);
+        const int half = size / 2;
+        const int startX = cx - half;
+        const int startY = cy - half;
+
+        for (int y = 0; y < size; ++y) {
+            for (int x = 0; x < size; ++x)
+                setPixel(startX + x, startY + y, color);
+        }
+    }
+
+    void floodFill(int sx, int sy, int newColor)
+    {
+        const int oldColor = pixelAt(sx, sy);
+        newColor = qBound(0, newColor, 15);
+        if (oldColor == newColor)
+            return;
+
+        QVector<QPoint> stack;
+        stack.reserve(4096);
+        stack.append(QPoint(sx, sy));
+
+        while (!stack.isEmpty()) {
+            const QPoint pt = stack.takeLast();
+            const int x = pt.x();
+            const int y = pt.y();
+            if (x < 0 || y < 0 || x >= 256 || y >= 192)
+                continue;
+            if (pixelAt(x, y) != oldColor)
+                continue;
+
+            setPixel(x, y, newColor);
+            stack.append(QPoint(x + 1, y));
+            stack.append(QPoint(x - 1, y));
+            stack.append(QPoint(x, y + 1));
+            stack.append(QPoint(x, y - 1));
+        }
+    }
+
+    bool isCanvasEmpty() const
+    {
+        for (quint8 value : m_pixels) {
+            if (value != 0)
+                return false;
+        }
+        return true;
+    }
+
+    void pushUndoSnapshot()
+    {
+        if (!m_undoStack.isEmpty() && m_undoStack.last() == m_pixels)
+            return;
+
+        m_undoStack.append(m_pixels);
+        while (m_undoStack.size() > 50)
+            m_undoStack.removeFirst();
+
+        m_redoStack.clear();
+        notifyUndoStateChanged();
+    }
+
+    void ensureUndoSnapshotForStroke()
+    {
+        if (m_strokeUndoCaptured)
+            return;
+
+        pushUndoSnapshot();
+        m_strokeUndoCaptured = true;
+    }
+
+    void notifyUndoStateChanged()
+    {
+        if (onUndoStateChanged)
+            onUndoStateChanged(canUndo(), canRedo());
+    }
+
+    int placePendingTextAt(const QPoint& pos)
+    {
+        if (m_pendingTextMask.isNull())
+            return 0;
+
+        QVector<int> inkRowIndex(m_pendingTextMask.height(), -1);
+        int inkRows = 0;
+
+        for (int y = 0; y < m_pendingTextMask.height(); ++y) {
+            bool hasInk = false;
+            for (int x = 0; x < m_pendingTextMask.width(); ++x) {
+                if (qAlpha(m_pendingTextMask.pixel(x, y)) >= 96) {
+                    hasInk = true;
+                    break;
+                }
+            }
+
+            if (hasInk)
+                inkRowIndex[y] = inkRows++;
+        }
+
+        if (inkRows <= 0)
+            return 0;
+
+        int written = 0;
+        for (int y = 0; y < m_pendingTextMask.height(); ++y) {
+            for (int x = 0; x < m_pendingTextMask.width(); ++x) {
+                if (qAlpha(m_pendingTextMask.pixel(x, y)) < 96)
+                    continue;
+
+                const int px = pos.x() + x;
+                const int py = pos.y() + y;
+                if (px < 0 || py < 0 || px >= 256 || py >= 192)
+                    continue;
+
+                int drawColor = m_pendingTextColor;
+                if (!m_pendingTextGradientColors.isEmpty()) {
+                    if (m_pendingTextGradientColors.size() == 1 || inkRows == 1) {
+                        drawColor = m_pendingTextGradientColors.first();
+                    } else {
+                        const int rowIdx = qBound(0, inkRowIndex.value(y, 0), inkRows - 1);
+                        const int colorCount = m_pendingTextGradientColors.size();
+                        const int idx = qBound(0,
+                                               (rowIdx * colorCount) / inkRows,
+                                               colorCount - 1);
+                        drawColor = m_pendingTextGradientColors.at(idx);
+                    }
+                }
+
+                setPixel(px, py, drawColor);
+                ++written;
+            }
+        }
+
+        return written;
+    }
+
+    QRect pendingTextRectAt(const QPoint& pos) const
+    {
+        if (m_pendingTextMask.isNull())
+            return QRect();
+
+        return QRect(pos, QSize(qMin(m_pendingTextMask.width(), 256 - pos.x()),
+                                qMin(m_pendingTextMask.height(), 192 - pos.y())))
+            .intersected(QRect(0, 0, 256, 192));
+    }
+
+    int nearestColecoColor(const QColor& color) const
+    {
+        if (color.alpha() < 16)
+            return 0;
+
+        int bestIndex = 0;
+        int bestDistance = std::numeric_limits<int>::max();
+        for (int i = 0; i < 16; ++i) {
+            const QColor pal = colecoColor(i);
+            const int dr = color.red() - pal.red();
+            const int dg = color.green() - pal.green();
+            const int db = color.blue() - pal.blue();
+            const int distance = dr * dr + dg * dg + db * db;
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestIndex = i;
+            }
+        }
+        return bestIndex;
+    }
+
+    void handleMouse(const QPoint& pos, Qt::MouseButton button, bool firstPress)
+    {
+        int x = 0;
+        int y = 0;
+        if (!widgetToPixel(pos, &x, &y))
+            return;
+
+        m_lastCanvasPixel = QPoint(x, y);
+
+        if (m_pendingTextArmed) {
+            m_pendingTextPos = QPoint(x, y);
+            m_pendingTextDragging = true;
+            update();
+            updateStatus(QStringLiteral("Text position %1,%2 - release mouse to place").arg(x).arg(y));
+            return;
+        }
+
+        if (firstPress && m_pendingTileSelection.isValid()) {
+            const QSize block = m_pendingTileSelection;
+            m_pendingTileSelection = QSize();
+            selectTileBlockAtPixel(QPoint(x, y), block.width(), block.height());
+            return;
+        }
+
+        if (firstPress && m_stampPlacementArmed) {
+            m_stampPlacementArmed = false;
+            pushUndoSnapshot();
+            pasteClipboardAt(QPoint(x, y));
+            update();
+            notifyChanged();
+            notifyUndoStateChanged();
+            updateStatus(QStringLiteral("Stamp placed at %1,%2").arg(x).arg(y));
+            return;
+        }
+
+        if (firstPress && m_moveSelectionArmed) {
+            m_moveSelectionArmed = false;
+            pasteClipboardAt(QPoint(x, y));
+            update();
+            notifyChanged();
+            notifyUndoStateChanged();
+            updateStatus(QStringLiteral("Selection moved to %1,%2").arg(x).arg(y));
+            return;
+        }
+
+        if (m_toolMode == ToolMode::Line || m_toolMode == ToolMode::Rect || m_toolMode == ToolMode::FilledRect || m_toolMode == ToolMode::Ellipse || m_toolMode == ToolMode::FilledEllipse) {
+            if (firstPress) {
+                m_shapeDragging = true;
+                m_shapeAnchor = QPoint(x, y);
+            }
+
+            m_shapeCurrent = QPoint(x, y);
+            m_shapePreviewRect = makeSelectionRect(m_shapeAnchor, m_shapeCurrent);
+            update();
+            updateStatus(QStringLiteral("Shape %1,%2  %3x%4")
+                             .arg(m_shapePreviewRect.left())
+                             .arg(m_shapePreviewRect.top())
+                             .arg(m_shapePreviewRect.width())
+                             .arg(m_shapePreviewRect.height()));
+            return;
+        }
+
+        if (m_toolMode == ToolMode::Select) {
+            if (firstPress) {
+                m_selecting = true;
+                m_selectionAnchor = QPoint(x, y);
+            }
+
+            if (m_selecting) {
+                m_selection = makeSelectionRect(m_selectionAnchor, QPoint(x, y));
+                update();
+                updateStatus(QString("Selection %1,%2  %3x%4")
+                                 .arg(m_selection.left())
+                                 .arg(m_selection.top())
+                                 .arg(m_selection.width())
+                                 .arg(m_selection.height()));
+            }
+            return;
+        }
+
+        if (m_toolMode == ToolMode::Pipette) {
+            if (firstPress) {
+                m_colorIndex = pixelAt(x, y);
+                if (onColorPicked)
+                    onColorPicked(m_colorIndex);
+                updateStatus(QString("Picked color %1 at %2,%3").arg(m_colorIndex).arg(x).arg(y));
+            }
+            return;
+        }
+
+        int drawColor = m_colorIndex;
+        if (m_toolMode == ToolMode::Eraser)
+            drawColor = m_backgroundColorIndex;
+
+        if (m_toolMode == ToolMode::Fill) {
+            if (firstPress && pixelAt(x, y) != drawColor) {
+                ensureUndoSnapshotForStroke();
+                floodFill(x, y, drawColor);
+                update();
+                notifyChanged();
+                notifyUndoStateChanged();
+                updateStatus(QString("Fill color %1 at %2,%3").arg(drawColor).arg(x).arg(y));
+            }
+            return;
+        }
+
+        ensureUndoSnapshotForStroke();
+        drawBrushAt(x, y, drawColor);
+        update();
+        notifyChanged();
+        notifyUndoStateChanged();
+        updateStatus(QString("X=%1 Y=%2 COLOR=%3 BRUSH=%4").arg(x).arg(y).arg(drawColor).arg(m_brushSize));
+    }
+
+    void updateHoverStatus(const QPoint& pos)
+    {
+        int x = 0;
+        int y = 0;
+        if (widgetToPixel(pos, &x, &y)) {
+            m_lastCanvasPixel = QPoint(x, y);
+            updateStatus(QString("X=%1 Y=%2 TILE=%3,%4 COLOR=%5").arg(x).arg(y).arg(x / 8).arg(y / 8).arg(pixelAt(x, y)));
+        }
+    }
+
+    void notifyChanged()
+    {
+        if (onChanged)
+            onChanged();
+    }
+
+    void updateStatus(const QString& text)
+    {
+        if (onStatus)
+            onStatus(text);
+    }
+
+private:
+    QVector<quint8> m_pixels;
+    QVector<QVector<quint8>> m_undoStack;
+    QVector<QVector<quint8>> m_redoStack;
+    int m_colorIndex = 15;
+    int m_backgroundColorIndex = 0;
+    int m_brushSize = 1;
+    bool m_transparentPaste = true;
+    int m_zoomScale = 2;
+    int m_referenceOpacity = 45;
+    bool m_gridVisible = true;
+    bool m_pixelGridVisible = false;
+    bool m_showTmsConflicts = false;
+    bool m_referenceVisible = true;
+    bool m_snapSelectionToTile = false;
+    int m_lastTmsConflictIndex = -1;
+    QImage m_referenceImage;
+    QPoint m_referenceOffset;
+    QPoint m_lastCanvasPixel = QPoint(-1, -1);
+    QSize m_pendingTileSelection;
+    bool m_stampPlacementArmed = false;
+    bool m_moveSelectionArmed = false;
+    bool m_pendingTextArmed = false;
+    bool m_pendingTextDragging = false;
+    QPoint m_pendingTextPos = QPoint(0, 0);
+    QImage m_pendingTextMask;
+    int m_pendingTextColor = 15;
+    QVector<int> m_pendingTextGradientColors;
+    bool m_shapeDragging = false;
+    QPoint m_shapeAnchor;
+    QPoint m_shapeCurrent;
+    QRect m_shapePreviewRect;
+    bool m_strokeUndoCaptured = false;
+    bool m_selecting = false;
+    QPoint m_selectionAnchor;
+    QRect m_selection;
+    QVector<quint8> m_clipboardPixels;
+    QSize m_clipboardSize;
+    ToolMode m_toolMode = ToolMode::Pen;
+};
+
+class CvBasicPaintEditorPage final : public QWidget
+{
+public:
+    explicit CvBasicPaintEditorPage(QWidget* parent = nullptr)
+        : QWidget(parent)
+    {
+        setupUi();
+    }
+
+    std::function<void(const QString&)> onInsertRequested;
+    std::function<void(const QString&)> onStatusRequested;
+    std::function<void(const QString&)> onTitleChanged;
+
+    void refreshPaintProjectTitle()
+    {
+        updatePaintProjectStatus();
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (event && event->type() == QEvent::Wheel && m_canvas) {
+            const bool fromPaintArea =
+                watched == m_canvas ||
+                watched == m_canvasScroll ||
+                (m_canvasScroll && watched == m_canvasScroll->viewport());
+
+            if (fromPaintArea) {
+                QWheelEvent* wheelEvent = static_cast<QWheelEvent*>(event);
+                const int delta = wheelEvent->angleDelta().y();
+                if (delta != 0) {
+                    const int oldZoom = m_canvas->zoomScale();
+                    const int newZoom = qBound(1, oldZoom + (delta > 0 ? 1 : -1), 4);
+
+                    if (newZoom != oldZoom)
+                        setPaintZoom(newZoom);
+
+                    wheelEvent->accept();
+                    return true;
+                }
+            }
+        }
+
+        return QWidget::eventFilter(watched, event);
+    }
+
+private:
+    QColor colecoColor(int idx) const
+    {
+        static const QColor pal[16] = {
+            QColor("#000000"), QColor("#000000"), QColor("#21C842"), QColor("#5EDC78"),
+            QColor("#5455ED"), QColor("#7D76FC"), QColor("#D4524D"), QColor("#42EBF5"),
+            QColor("#FC5554"), QColor("#FF7978"), QColor("#D4C154"), QColor("#E6CE80"),
+            QColor("#21B03B"), QColor("#C95BBA"), QColor("#CCCCCC"), QColor("#FFFFFF")
+        };
+        return pal[qBound(0, idx, 15)];
+    }
+
+    QPushButton* makeToolButton(const QString& text, const QString& tooltip)
+    {
+        QPushButton* b = new QPushButton(text, this);
+        b->setCheckable(true);
+        b->setToolTip(tooltip);
+        b->setMinimumHeight(28);
+        return b;
+    }
+
+    QPushButton* makeSideButton(const QString& text, const QString& tooltip = QString())
+    {
+        QPushButton* b = new QPushButton(text, this);
+        b->setMinimumHeight(28);
+        b->setToolTip(tooltip);
+        return b;
+    }
+
+    QGroupBox* makeSideGroup(const QString& title, QVBoxLayout** outLayout)
+    {
+        QGroupBox* box = new QGroupBox(title, this);
+        QVBoxLayout* layout = new QVBoxLayout(box);
+        layout->setContentsMargins(8, 8, 8, 8);
+        layout->setSpacing(6);
+        if (outLayout)
+            *outLayout = layout;
+        return box;
+    }
+
+    void setupUi()
+    {
+        setObjectName(QStringLiteral("cvBasicPaintEditorPage"));
+        setStyleSheet(
+            "#cvBasicPaintEditorPage { background-color:#3A3A3A; color:#FFFFFF; }"
+            "QFrame#paintCard { background-color:#3A3A3A; border:1px solid #555555; border-radius:0px; }"
+            "QLabel { background-color:#3A3A3A; color:#FFFFFF; }"
+            "QGroupBox { background-color:#3A3A3A; color:#FFFFFF; border:1px solid #555555; margin-top:8px; font-weight:bold; }"
+            "QGroupBox::title { subcontrol-origin: margin; left:8px; padding:0 4px; }"
+            "QScrollArea#paintSidePanel { background-color:#303030; border:1px solid #555555; }"
+            "QWidget#paintSidePanelContents { background-color:#303030; }"
+            "QTabWidget#paintSideTabs::pane { background-color:#303030; border:1px solid #555555; }"
+            "QTabWidget#paintSideTabs QTabBar::tab { background-color:#242424; color:#FFFFFF; border:1px solid #555555; padding:8px 5px; min-height:54px; min-width:28px; font-weight:normal; }"
+            "QTabWidget#paintSideTabs QTabBar::tab:selected { background-color:#4A4A4A; }"
+            "QTabWidget#paintSideTabs QTabBar::tab:hover { background-color:#3A3A3A; }"
+            "QWidget#paintSidePanelContents QPushButton { font-weight:normal; }"
+            "QToolBar#paintPageToolbar { background-color:#3A3A3A; border:1px solid #555555; spacing:4px; padding:4px; }"
+            "QToolBar#paintEditToolbar { background-color:#3A3A3A; border:1px solid #555555; spacing:4px; padding:4px; }"
+            "QToolButton { background-color:#242424; color:#FFFFFF; border:1px solid #5C5C5C; padding:4px 8px; }"
+            "QToolButton:hover { background-color:#4A4A4A; }"
+            "QToolButton:pressed { background-color:#5A5A5A; padding-top:5px; padding-left:9px; }"
+            "QPushButton { background-color:#242424; color:#FFFFFF; border:1px solid #666666; padding:4px 8px; font-weight:bold; }"
+            "QPushButton:hover { background-color:#4A4A4A; }"
+            "QPushButton:checked { background-color:#555555; color:#FFFFFF; border:1px solid #888888; }"
+            "QPushButton#dangerButton { color:#FF8A8A; }"
+        );
+
+        QVBoxLayout* root = new QVBoxLayout(this);
+        root->setContentsMargins(8, 8, 8, 8);
+        root->setSpacing(6);
+
+        QToolBar* paintToolbar = new QToolBar(tr("Paint"), this);
+        paintToolbar->setObjectName(QStringLiteral("paintPageToolbar"));
+        paintToolbar->setMovable(false);
+        paintToolbar->setFloatable(false);
+        paintToolbar->setIconSize(QSize(20, 20));
+
+        QAction* actNewPaint = paintToolbar->addAction(tr("New"));
+        QAction* actOpenPaint = paintToolbar->addAction(tr("Open"));
+        QAction* actSavePaint = paintToolbar->addAction(tr("Save"));
+        QAction* actSaveAsPaint = paintToolbar->addAction(tr("Save As"));
+        QAction* actRevertPaint = paintToolbar->addAction(tr("Revert"));
+        QAction* actImportPng = paintToolbar->addAction(tr("Import PNG"));
+        QAction* actImportPngDither = paintToolbar->addAction(tr("Import Dither"));
+        QAction* actImportPngTms = paintToolbar->addAction(tr("Import TMS"));
+        actImportPngTms->setToolTip(tr("Import image using TMS/Coleco 2-colors-per-8-pixel-row conversion"));
+        paintToolbar->addSeparator();
+        QAction* actInsertData = paintToolbar->addAction(tr("Insert Bitmap DATA"));
+        paintToolbar->addSeparator();
+        QAction* actClearCanvas = paintToolbar->addAction(tr("Clear"));
+
+        QWidget* paintToolbarSpacer = new QWidget(this);
+        paintToolbarSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        paintToolbar->addWidget(paintToolbarSpacer);
+
+        QAction* actUndoPaint = paintToolbar->addAction(tr("Undo"));
+        QAction* actRedoPaint = paintToolbar->addAction(tr("Redo"));
+        actUndoPaint->setEnabled(false);
+        actRedoPaint->setEnabled(false);
+        m_undoAction = actUndoPaint;
+        m_redoAction = actRedoPaint;
+        root->addWidget(paintToolbar);
+
+        QFrame* card = new QFrame(this);
+        card->setObjectName(QStringLiteral("paintCard"));
+        QVBoxLayout* cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(10, 10, 10, 10);
+        cardLayout->setSpacing(8);
+        root->addWidget(card, 1);
+
+        QHBoxLayout* workLayout = new QHBoxLayout();
+        workLayout->setSpacing(8);
+
+        QWidget* paletteWidget = new QWidget(this);
+        QVBoxLayout* paletteLayout = new QVBoxLayout(paletteWidget);
+        paletteLayout->setContentsMargins(0, 0, 0, 0);
+        paletteLayout->setSpacing(3);
+        QLabel* palLabel = new QLabel(tr("PAL"), this);
+        palLabel->setAlignment(Qt::AlignCenter);
+        paletteLayout->addWidget(palLabel);
+
+        for (int i = 0; i < 16; ++i) {
+            QPushButton* sw = new QPushButton(QString::number(i), this);
+            sw->setFixedSize(34, 24);
+            sw->setToolTip(tr("Color %1").arg(i));
+            sw->setCheckable(true);
+
+            const QColor color = colecoColor(i);
+            const int luma = (color.red() * 299 + color.green() * 587 + color.blue() * 114) / 1000;
+            const QString textColor = (luma < 128) ? QStringLiteral("#FFFFFF") : QStringLiteral("#000000");
+
+            sw->setStyleSheet(QString("QPushButton { background-color: %1; color: %2; border: 1px solid #333; border-radius: 3px; font-weight: bold; } QPushButton:checked { border: 3px solid #FFFFFF; }")
+                                  .arg(color.name(), textColor));
+            if (i == 15)
+                sw->setChecked(true);
+            m_paletteButtons.append(sw);
+            paletteLayout->addWidget(sw);
+
+            connect(sw, &QPushButton::clicked, this, [this, i]() { setSelectedColor(i); });
+            sw->setContextMenuPolicy(Qt::CustomContextMenu);
+            connect(sw, &QPushButton::customContextMenuRequested, this, [this, i](const QPoint&) { setBackgroundColor(i); });
+        }
+
+        paletteLayout->addSpacing(10);
+
+        QWidget* fgBgWidget = new QWidget(this);
+        QHBoxLayout* fgBgLayout = new QHBoxLayout(fgBgWidget);
+        fgBgLayout->setContentsMargins(0, 0, 0, 0);
+        fgBgLayout->setSpacing(6);
+
+        m_selectedColorLabel = new QLabel(tr("FG 15"), this);
+        m_selectedColorLabel->setAlignment(Qt::AlignCenter);
+        m_selectedColorLabel->setFixedSize(42, 24);
+        m_selectedColorLabel->setStyleSheet(QStringLiteral("QLabel { background-color:#202020; color:#FFFFFF; border:1px solid #333333; border-radius:3px; font-weight:bold; }"));
+        fgBgLayout->addWidget(m_selectedColorLabel);
+
+        m_backgroundColorLabel = new QLabel(tr("BG 0"), this);
+        m_backgroundColorLabel->setAlignment(Qt::AlignCenter);
+        m_backgroundColorLabel->setFixedSize(42, 24);
+        m_backgroundColorLabel->setStyleSheet(QStringLiteral("QLabel { background-color:#000000; color:#FFFFFF; border:1px solid #333333; border-radius:3px; font-weight:bold; }"));
+        fgBgLayout->addWidget(m_backgroundColorLabel);
+
+        paletteLayout->addWidget(fgBgWidget, 0, Qt::AlignHCenter);
+
+        QPushButton* swapFgBgBtn = new QPushButton(tr("Swap"), this);
+        swapFgBgBtn->setToolTip(tr("Swap FG and BG colors"));
+        swapFgBgBtn->setMinimumHeight(24);
+        swapFgBgBtn->setStyleSheet(QStringLiteral("QPushButton { background:#2E2E2E; color:#FFFFFF; border:1px solid #555555; border-radius:3px; font-weight:bold; } QPushButton:hover { background:#3A3A3A; }"));
+        paletteLayout->addWidget(swapFgBgBtn);
+        connect(swapFgBgBtn, &QPushButton::clicked, this, [this]() { swapForegroundBackgroundColors(); });
+
+        QLabel* bgHelpLabel = new QLabel(tr("Right click palette = BG"), this);
+        bgHelpLabel->setAlignment(Qt::AlignCenter);
+        bgHelpLabel->setWordWrap(true);
+        bgHelpLabel->setStyleSheet(QStringLiteral("QLabel { color:#BBBBBB; font-size:10px; }"));
+        paletteLayout->addWidget(bgHelpLabel);
+
+        paletteLayout->addStretch(1);
+        workLayout->addWidget(paletteWidget, 0);
+
+        m_canvas = new CvBasicPaintCanvas(this);
+
+        m_canvasScroll = new QScrollArea(this);
+        m_canvasScroll->setWidget(m_canvas);
+        m_canvasScroll->setWidgetResizable(false);
+        m_canvasScroll->setFrameShape(QFrame::NoFrame);
+        m_canvasScroll->setAlignment(Qt::AlignCenter);
+        m_canvasScroll->setStyleSheet(QStringLiteral("QScrollArea { background-color:#242424; border:1px solid #555555; } QScrollBar { background:#2F2F2F; }"));
+
+        m_canvas->installEventFilter(this);
+        m_canvasScroll->installEventFilter(this);
+        m_canvasScroll->viewport()->installEventFilter(this);
+
+        workLayout->addWidget(m_canvasScroll, 1);
+
+        QTabWidget* sideTabs = new QTabWidget(this);
+        sideTabs->setObjectName(QStringLiteral("paintSideTabs"));
+        sideTabs->setTabPosition(QTabWidget::East);
+        sideTabs->setDocumentMode(false);
+        sideTabs->setUsesScrollButtons(true);
+        sideTabs->setMinimumWidth(320);
+        sideTabs->setMaximumWidth(350);
+
+        QWidget* tabTools = new QWidget(sideTabs);
+        tabTools->setObjectName(QStringLiteral("paintSidePanelContents"));
+        QVBoxLayout* tabToolsLayout = new QVBoxLayout(tabTools);
+        tabToolsLayout->setContentsMargins(8, 8, 8, 8);
+        tabToolsLayout->setSpacing(8);
+
+        QWidget* tabReference = new QWidget(sideTabs);
+        tabReference->setObjectName(QStringLiteral("paintSidePanelContents"));
+        QVBoxLayout* tabReferenceLayout = new QVBoxLayout(tabReference);
+        tabReferenceLayout->setContentsMargins(8, 8, 8, 8);
+        tabReferenceLayout->setSpacing(8);
+
+        QWidget* tabTransform = new QWidget(sideTabs);
+        tabTransform->setObjectName(QStringLiteral("paintSidePanelContents"));
+        QVBoxLayout* tabTransformLayout = new QVBoxLayout(tabTransform);
+        tabTransformLayout->setContentsMargins(8, 8, 8, 8);
+        tabTransformLayout->setSpacing(8);
+
+        QWidget* tabTile = new QWidget(sideTabs);
+        tabTile->setObjectName(QStringLiteral("paintSidePanelContents"));
+        QVBoxLayout* tabTileLayout = new QVBoxLayout(tabTile);
+        tabTileLayout->setContentsMargins(8, 8, 8, 8);
+        tabTileLayout->setSpacing(8);
+
+        QWidget* tabShape = new QWidget(sideTabs);
+        tabShape->setObjectName(QStringLiteral("paintSidePanelContents"));
+        QVBoxLayout* tabShapeLayout = new QVBoxLayout(tabShape);
+        tabShapeLayout->setContentsMargins(8, 8, 8, 8);
+        tabShapeLayout->setSpacing(8);
+
+        QWidget* tabColor = new QWidget(sideTabs);
+        tabColor->setObjectName(QStringLiteral("paintSidePanelContents"));
+        QVBoxLayout* tabColorLayout = new QVBoxLayout(tabColor);
+        tabColorLayout->setContentsMargins(8, 8, 8, 8);
+        tabColorLayout->setSpacing(8);
+
+        QWidget* tabStamp = new QWidget(sideTabs);
+        tabStamp->setObjectName(QStringLiteral("paintSidePanelContents"));
+        QVBoxLayout* tabStampLayout = new QVBoxLayout(tabStamp);
+        tabStampLayout->setContentsMargins(8, 8, 8, 8);
+        tabStampLayout->setSpacing(8);
+
+        QWidget* tabExport = new QWidget(sideTabs);
+        tabExport->setObjectName(QStringLiteral("paintSidePanelContents"));
+        QVBoxLayout* tabExportLayout = new QVBoxLayout(tabExport);
+        tabExportLayout->setContentsMargins(8, 8, 8, 8);
+        tabExportLayout->setSpacing(8);
+
+        QVBoxLayout* toolsGroupLayout = nullptr;
+        QGroupBox* toolsGroup = makeSideGroup(tr("Tools"), &toolsGroupLayout);
+        QPushButton* penBtn = makeToolButton(tr("Pen"), tr("Draw with selected color"));
+        QPushButton* eraserBtn = makeToolButton(tr("Eraser"), tr("Erase to transparent/black color 0"));
+        QPushButton* fillBtn = makeToolButton(tr("Fill"), tr("Flood fill"));
+        QPushButton* pipetteBtn = makeToolButton(tr("Pipette"), tr("Pick color from canvas"));
+        QPushButton* selectBtn = makeToolButton(tr("Select"), tr("Select a block for copy/cut/paste"));
+        m_toolButtons = { penBtn, eraserBtn, fillBtn, pipetteBtn, selectBtn };
+        penBtn->setChecked(true);
+
+        QGridLayout* toolsGrid = new QGridLayout();
+        toolsGrid->setSpacing(6);
+        toolsGrid->addWidget(penBtn, 0, 0);
+        toolsGrid->addWidget(eraserBtn, 0, 1);
+        toolsGrid->addWidget(fillBtn, 1, 0);
+        toolsGrid->addWidget(pipetteBtn, 1, 1);
+        toolsGrid->addWidget(selectBtn, 2, 0, 1, 2);
+        toolsGroupLayout->addLayout(toolsGrid);
+
+        QLabel* brushLabel = new QLabel(tr("Brush Size"), this);
+        toolsGroupLayout->addWidget(brushLabel);
+
+        QHBoxLayout* brushSizeLayout = new QHBoxLayout();
+        brushSizeLayout->setSpacing(4);
+        QPushButton* brush1Btn = makeSideButton(tr("1"), tr("Brush size 1 pixel"));
+        QPushButton* brush2Btn = makeSideButton(tr("2"), tr("Brush size 2 pixels"));
+        QPushButton* brush4Btn = makeSideButton(tr("4"), tr("Brush size 4 pixels"));
+        QPushButton* brush8Btn = makeSideButton(tr("8"), tr("Brush size 8 pixels"));
+        m_brushSizeButtons = { brush1Btn, brush2Btn, brush4Btn, brush8Btn };
+        for (QPushButton* b : std::as_const(m_brushSizeButtons))
+            b->setCheckable(true);
+        brush1Btn->setChecked(true);
+        brushSizeLayout->addWidget(brush1Btn);
+        brushSizeLayout->addWidget(brush2Btn);
+        brushSizeLayout->addWidget(brush4Btn);
+        brushSizeLayout->addWidget(brush8Btn);
+        toolsGroupLayout->addLayout(brushSizeLayout);
+
+        tabToolsLayout->addWidget(toolsGroup);
+
+        QVBoxLayout* viewGroupLayout = nullptr;
+        QGroupBox* viewGroup = makeSideGroup(tr("View"), &viewGroupLayout);
+        QPushButton* gridBtn = makeSideButton(tr("Tile Grid"), tr("Show/hide 8x8 tile grid"));
+        gridBtn->setCheckable(true);
+        gridBtn->setChecked(true);
+
+        QPushButton* pixelGridBtn = makeSideButton(tr("Pixel Grid"), tr("Show/hide 1x1 pixel grid, visible from zoom 3x"));
+        pixelGridBtn->setCheckable(true);
+        pixelGridBtn->setChecked(false);
+
+        QHBoxLayout* zoomLayout = new QHBoxLayout();
+        zoomLayout->setSpacing(4);
+        QPushButton* zoom1Btn = makeSideButton(tr("1x"), tr("Canvas zoom 1x"));
+        QPushButton* zoom2Btn = makeSideButton(tr("2x"), tr("Canvas zoom 2x"));
+        QPushButton* zoom3Btn = makeSideButton(tr("3x"), tr("Canvas zoom 3x"));
+        QPushButton* zoom4Btn = makeSideButton(tr("4x"), tr("Canvas zoom 4x"));
+        m_zoomButtons = { zoom1Btn, zoom2Btn, zoom3Btn, zoom4Btn };
+        for (QPushButton* b : std::as_const(m_zoomButtons))
+            b->setCheckable(true);
+        zoom2Btn->setChecked(true);
+        zoomLayout->addWidget(zoom1Btn);
+        zoomLayout->addWidget(zoom2Btn);
+        zoomLayout->addWidget(zoom3Btn);
+        zoomLayout->addWidget(zoom4Btn);
+
+        viewGroupLayout->addWidget(gridBtn);
+        viewGroupLayout->addWidget(pixelGridBtn);
+        viewGroupLayout->addLayout(zoomLayout);
+        tabToolsLayout->addWidget(viewGroup);
+
+        QVBoxLayout* referenceGroupLayout = nullptr;
+        QGroupBox* referenceGroup = makeSideGroup(tr("Reference"), &referenceGroupLayout);
+        QPushButton* refVisibleBtn = makeSideButton(tr("Show Reference"), tr("Show/hide reference image"));
+        refVisibleBtn->setCheckable(true);
+        refVisibleBtn->setChecked(true);
+
+        QSlider* refOpacitySlider = new QSlider(Qt::Horizontal, this);
+        refOpacitySlider->setRange(0, 100);
+        refOpacitySlider->setValue(45);
+        refOpacitySlider->setToolTip(tr("Reference image opacity"));
+
+        QGridLayout* refMoveGrid = new QGridLayout();
+        refMoveGrid->setSpacing(4);
+        QPushButton* refUpBtn = makeSideButton(tr("R↑"), tr("Move reference image up 1 pixel"));
+        QPushButton* refDownBtn = makeSideButton(tr("R↓"), tr("Move reference image down 1 pixel"));
+        QPushButton* refLeftBtn = makeSideButton(tr("R←"), tr("Move reference image left 1 pixel"));
+        QPushButton* refRightBtn = makeSideButton(tr("R→"), tr("Move reference image right 1 pixel"));
+        refMoveGrid->addWidget(refUpBtn, 0, 1);
+        refMoveGrid->addWidget(refLeftBtn, 1, 0);
+        refMoveGrid->addWidget(refRightBtn, 1, 2);
+        refMoveGrid->addWidget(refDownBtn, 2, 1);
+
+        QPushButton* loadRefBtn = makeSideButton(tr("Load Ref"), tr("Load reference image"));
+        QPushButton* clearRefBtn = makeSideButton(tr("Clear Ref"), tr("Clear reference image"));
+        referenceGroupLayout->addWidget(refVisibleBtn);
+        referenceGroupLayout->addWidget(new QLabel(tr("Opacity"), this));
+        referenceGroupLayout->addWidget(refOpacitySlider);
+        referenceGroupLayout->addLayout(refMoveGrid);
+        referenceGroupLayout->addWidget(loadRefBtn);
+        referenceGroupLayout->addWidget(clearRefBtn);
+        tabReferenceLayout->addWidget(referenceGroup);
+
+        QVBoxLayout* transformGroupLayout = nullptr;
+        QGroupBox* transformGroup = makeSideGroup(tr("Transform"), &transformGroupLayout);
+        QGridLayout* scrollGrid = new QGridLayout();
+        scrollGrid->setSpacing(4);
+        QPushButton* scrollUpBtn = makeSideButton(tr("↑8"), tr("Scroll canvas up 1 tile (8 pixels)"));
+        QPushButton* scrollDownBtn = makeSideButton(tr("↓8"), tr("Scroll canvas down 1 tile (8 pixels)"));
+        QPushButton* scrollLeftBtn = makeSideButton(tr("←8"), tr("Scroll canvas left 1 tile (8 pixels)"));
+        QPushButton* scrollRightBtn = makeSideButton(tr("→8"), tr("Scroll canvas right 1 tile (8 pixels)"));
+        scrollGrid->addWidget(scrollUpBtn, 0, 1);
+        scrollGrid->addWidget(scrollLeftBtn, 1, 0);
+        scrollGrid->addWidget(scrollRightBtn, 1, 2);
+        scrollGrid->addWidget(scrollDownBtn, 2, 1);
+
+        QPushButton* mirrorHBtn = makeSideButton(tr("Mirror H"), tr("Mirror the full canvas horizontally"));
+        QPushButton* mirrorVBtn = makeSideButton(tr("Mirror V"), tr("Mirror the full canvas vertically"));
+        QPushButton* flipSelHBtn = makeSideButton(tr("Flip Selection H"), tr("Flip only the current selection horizontally"));
+        QPushButton* flipSelVBtn = makeSideButton(tr("Flip Selection V"), tr("Flip only the current selection vertically"));
+        QPushButton* rotateSelLeftBtn = makeSideButton(tr("Rotate Selection L"), tr("Rotate current selection 90 degrees left"));
+        QPushButton* rotateSelRightBtn = makeSideButton(tr("Rotate Selection R"), tr("Rotate current selection 90 degrees right"));
+        QPushButton* moveSelBtn = makeSideButton(tr("Move Selection"), tr("Cut current selection and place it by clicking the canvas"));
+
+        QGridLayout* nudgeGrid = new QGridLayout();
+        nudgeGrid->setSpacing(4);
+        QPushButton* nudgeUpBtn = makeSideButton(tr("S↑"), tr("Move selection up 1 pixel"));
+        QPushButton* nudgeDownBtn = makeSideButton(tr("S↓"), tr("Move selection down 1 pixel"));
+        QPushButton* nudgeLeftBtn = makeSideButton(tr("S←"), tr("Move selection left 1 pixel"));
+        QPushButton* nudgeRightBtn = makeSideButton(tr("S→"), tr("Move selection right 1 pixel"));
+        nudgeGrid->addWidget(nudgeUpBtn, 0, 1);
+        nudgeGrid->addWidget(nudgeLeftBtn, 1, 0);
+        nudgeGrid->addWidget(nudgeRightBtn, 1, 2);
+        nudgeGrid->addWidget(nudgeDownBtn, 2, 1);
+
+        transformGroupLayout->addLayout(scrollGrid);
+        transformGroupLayout->addWidget(mirrorHBtn);
+        transformGroupLayout->addWidget(mirrorVBtn);
+        transformGroupLayout->addWidget(flipSelHBtn);
+        transformGroupLayout->addWidget(flipSelVBtn);
+        transformGroupLayout->addWidget(rotateSelLeftBtn);
+        transformGroupLayout->addWidget(rotateSelRightBtn);
+        transformGroupLayout->addWidget(moveSelBtn);
+        transformGroupLayout->addWidget(new QLabel(tr("Nudge Selection"), this));
+        transformGroupLayout->addLayout(nudgeGrid);
+        tabTransformLayout->addWidget(transformGroup);
+
+        QVBoxLayout* shapeGroupLayout = nullptr;
+        QGroupBox* shapeGroup = makeSideGroup(tr("Shape Tools"), &shapeGroupLayout);
+
+        QPushButton* lineBtn = makeToolButton(tr("Line"), tr("Draw a straight line"));
+        QPushButton* rectBtn = makeToolButton(tr("Rect"), tr("Draw a rectangle outline"));
+        QPushButton* filledRectBtn = makeToolButton(tr("Filled Rect"), tr("Draw a filled rectangle"));
+        QPushButton* ellipseBtn = makeToolButton(tr("Ellipse"), tr("Draw an ellipse outline"));
+        QPushButton* filledEllipseBtn = makeToolButton(tr("Filled Ellipse"), tr("Draw a filled ellipse"));
+        m_toolButtons.append(lineBtn);
+        m_toolButtons.append(rectBtn);
+        m_toolButtons.append(filledRectBtn);
+        m_toolButtons.append(ellipseBtn);
+        m_toolButtons.append(filledEllipseBtn);
+
+        shapeGroupLayout->addWidget(lineBtn);
+        shapeGroupLayout->addWidget(rectBtn);
+        shapeGroupLayout->addWidget(filledRectBtn);
+        shapeGroupLayout->addWidget(ellipseBtn);
+        shapeGroupLayout->addWidget(filledEllipseBtn);
+
+        QLabel* textLabel = new QLabel(tr("Text"), this);
+        QLineEdit* textInput = new QLineEdit(this);
+        textInput->setPlaceholderText(tr("Enter text..."));
+        textInput->setClearButtonEnabled(true);
+
+        QLabel* fontLabel = new QLabel(tr("Font"), this);
+        QFontComboBox* textFontCombo = new QFontComboBox(this);
+        textFontCombo->setCurrentFont(QFont(QStringLiteral("Arial")));
+        textFontCombo->setToolTip(tr("Choose the font used for text drawing and CVBasic text font export"));
+        m_textFontCombo = textFontCombo;
+
+        QHBoxLayout* textSizeLayout = new QHBoxLayout();
+        textSizeLayout->setSpacing(4);
+        QLabel* textSizeLabel = new QLabel(tr("Size"), this);
+        QSpinBox* textSizeSpin = new QSpinBox(this);
+        textSizeSpin->setRange(6, 48);
+        textSizeSpin->setValue(12);
+        m_textSizeSpin = textSizeSpin;
+        textSizeLayout->addWidget(textSizeLabel);
+        textSizeLayout->addWidget(textSizeSpin, 1);
+
+        QHBoxLayout* textSpacingLayout = new QHBoxLayout();
+        textSpacingLayout->setSpacing(4);
+        QLabel* textSpacingLabel = new QLabel(tr("Spacing"), this);
+        QSpinBox* textSpacingSpin = new QSpinBox(this);
+        textSpacingSpin->setRange(-4, 24);
+        textSpacingSpin->setValue(0);
+        textSpacingSpin->setToolTip(tr("Letter spacing: negative = closer, positive = wider"));
+        m_textSpacingSpin = textSpacingSpin;
+        textSpacingLayout->addWidget(textSpacingLabel);
+        textSpacingLayout->addWidget(textSpacingSpin, 1);
+
+        auto gradientComboColor = [](int idx) -> QColor {
+            static const QColor pal[16] = {
+                QColor("#000000"), QColor("#000000"), QColor("#21C842"), QColor("#5EDC78"),
+                QColor("#5455ED"), QColor("#7D76FC"), QColor("#D4524D"), QColor("#42EBF5"),
+                QColor("#FC5554"), QColor("#FF7978"), QColor("#D4C154"), QColor("#E6CE80"),
+                QColor("#21B03B"), QColor("#C95BBA"), QColor("#CCCCCC"), QColor("#FFFFFF")
+            };
+            return pal[qBound(0, idx, 15)];
+        };
+
+        auto updateGradientComboColor = [gradientComboColor](QComboBox* combo) {
+            if (!combo)
+                return;
+
+            const int idx = qBound(0, combo->currentData().toInt(), 15);
+            const QColor color = gradientComboColor(idx);
+            const int brightness = (color.red() * 299 + color.green() * 587 + color.blue() * 114) / 1000;
+            const QString textColor = brightness > 140 ? QStringLiteral("#000000") : QStringLiteral("#FFFFFF");
+
+            combo->setStyleSheet(QStringLiteral(
+                "QComboBox { background:%1; color:%2; border:1px solid #777777; padding-left:4px; }"
+                "QComboBox::drop-down { border-left:1px solid #777777; width:12px; }"
+                "QComboBox QAbstractItemView { background:#202020; color:#FFFFFF; selection-background-color:#444444; }")
+                                     .arg(color.name())
+                                     .arg(textColor));
+        };
+
+        auto makeGradientColorCombo = [this, gradientComboColor, updateGradientComboColor](int defaultColor) {
+            QComboBox* combo = new QComboBox(this);
+            for (int c = 0; c < 16; ++c) {
+                combo->addItem(QStringLiteral("%1").arg(c), c);
+                combo->setItemData(c, gradientComboColor(c), Qt::DecorationRole);
+            }
+
+            combo->setCurrentIndex(qBound(0, defaultColor, 15));
+            combo->setMinimumWidth(46);
+            combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            combo->setToolTip(tr("Text color"));
+            updateGradientComboColor(combo);
+
+            connect(combo, qOverload<int>(&QComboBox::currentIndexChanged), combo, [combo, updateGradientComboColor](int) {
+                updateGradientComboColor(combo);
+            });
+
+            return combo;
+        };
+
+        QComboBox* textGradColor1 = makeGradientColorCombo(15);
+        QComboBox* textGradColor2 = makeGradientColorCombo(14);
+        QComboBox* textGradColor3 = makeGradientColorCombo(7);
+        QComboBox* textGradColor4 = makeGradientColorCombo(8);
+        m_textGradColor1Combo = textGradColor1;
+        m_textGradColor2Combo = textGradColor2;
+        m_textGradColor3Combo = textGradColor3;
+        m_textGradColor4Combo = textGradColor4;
+
+        QLabel* textPreviewLabel = new QLabel(tr("Preview"), this);
+        textPreviewLabel->setMinimumHeight(34);
+        textPreviewLabel->setAlignment(Qt::AlignCenter);
+        textPreviewLabel->setWordWrap(true);
+        textPreviewLabel->setStyleSheet(QStringLiteral(
+            "QLabel { background:#151515; color:#FFFFFF; border:1px solid #555555; border-radius:4px; padding:4px; }"));
+
+        auto previewColecoColor = [](int idx) -> QColor {
+            static const QColor pal[16] = {
+                QColor("#000000"), QColor("#000000"), QColor("#21C842"), QColor("#5EDC78"),
+                QColor("#5455ED"), QColor("#7D76FC"), QColor("#D4524D"), QColor("#42EBF5"),
+                QColor("#FC5554"), QColor("#FF7978"), QColor("#D4C154"), QColor("#E6CE80"),
+                QColor("#21B03B"), QColor("#C95BBA"), QColor("#CCCCCC"), QColor("#FFFFFF")
+            };
+            return pal[qBound(0, idx, 15)];
+        };
+
+        auto updateTextPreview = [textInput, textFontCombo, textSizeSpin, textSpacingSpin, textPreviewLabel,
+                                  textGradColor1, textGradColor2, textGradColor3, textGradColor4,
+                                  previewColecoColor]() {
+            QFont previewFont = textFontCombo->currentFont();
+            previewFont.setPixelSize(qBound(6, textSizeSpin->value(), 48));
+            previewFont.setLetterSpacing(QFont::AbsoluteSpacing, qBound(-4, textSpacingSpin->value(), 24));
+
+            const QString previewText = textInput->text().isEmpty()
+                ? QStringLiteral("Preview")
+                : textInput->text();
+
+            const QVector<int> gradColors = {
+                textGradColor1->currentData().toInt(),
+                textGradColor2->currentData().toInt(),
+                textGradColor3->currentData().toInt(),
+                textGradColor4->currentData().toInt()
+            };
+
+            QFontMetrics fm(previewFont);
+            const QRect bounds = fm.boundingRect(previewText).adjusted(-4, -4, 8, 8);
+            const int w = qMax(210, bounds.width() + 12);
+            const int h = qMax(52, bounds.height() + 14);
+
+            QImage mask(w, h, QImage::Format_ARGB32);
+            mask.fill(Qt::transparent);
+
+            QPainter maskPainter(&mask);
+            maskPainter.setFont(previewFont);
+            maskPainter.setPen(Qt::white);
+            maskPainter.drawText(6 - bounds.left(), 7 - bounds.top(), previewText);
+            maskPainter.end();
+
+            QImage preview(w, h, QImage::Format_ARGB32);
+            preview.fill(QColor("#151515"));
+
+            QPainter bgPainter(&preview);
+            bgPainter.setPen(QColor("#555555"));
+            bgPainter.drawRect(preview.rect().adjusted(0, 0, -1, -1));
+            bgPainter.end();
+
+            QVector<int> inkRowIndex(h, -1);
+            int inkRows = 0;
+            for (int y = 0; y < h; ++y) {
+                bool hasInk = false;
+                for (int x = 0; x < w; ++x) {
+                    if (qAlpha(mask.pixel(x, y)) >= 96) {
+                        hasInk = true;
+                        break;
+                    }
+                }
+
+                if (hasInk)
+                    inkRowIndex[y] = inkRows++;
+            }
+
+            for (int y = 0; y < h; ++y) {
+                int gradIdx = 0;
+                if (inkRows > 1) {
+                    const int rowIdx = qBound(0, inkRowIndex.value(y, 0), inkRows - 1);
+                    gradIdx = qBound(0, (rowIdx * gradColors.size()) / inkRows, gradColors.size() - 1);
+                }
+
+                const QColor lineColor = previewColecoColor(gradColors.at(gradIdx));
+
+                for (int x = 0; x < w; ++x) {
+                    const QRgb mp = mask.pixel(x, y);
+                    if (qAlpha(mp) < 96)
+                        continue;
+                    preview.setPixelColor(x, y, lineColor);
+                }
+            }
+
+            textPreviewLabel->setText(QString());
+            textPreviewLabel->setPixmap(QPixmap::fromImage(preview));
+            textPreviewLabel->setMinimumHeight(h + 4);
+            textPreviewLabel->setToolTip(QStringLiteral("Vertical preview: C1=%1 C2=%2 C3=%3 C4=%4")
+                                             .arg(gradColors.at(0))
+                                             .arg(gradColors.at(1))
+                                             .arg(gradColors.at(2))
+                                             .arg(gradColors.at(3)));
+        };
+        updateTextPreview();
+
+        QPushButton* gradText1Btn = makeSideButton(tr("T1"), tr("Use Color 1 for text"));
+        QPushButton* gradText2Btn = makeSideButton(tr("T2"), tr("Use Color 1 and 2 for vertical text gradient"));
+        QPushButton* gradText3Btn = makeSideButton(tr("T3"), tr("Use Color 1, 2 and 3 for vertical text gradient"));
+        QPushButton* gradText4Btn = makeSideButton(tr("T4"), tr("Use Color 1, 2, 3 and 4 for vertical text gradient"));
+
+        for (QPushButton* b : { gradText1Btn, gradText2Btn, gradText3Btn, gradText4Btn }) {
+            b->setMinimumWidth(46);
+            b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        }
+
+        QHBoxLayout* gradColorRow = new QHBoxLayout();
+        gradColorRow->setSpacing(4);
+        gradColorRow->addWidget(textGradColor1, 1);
+        gradColorRow->addWidget(textGradColor2, 1);
+        gradColorRow->addWidget(textGradColor3, 1);
+        gradColorRow->addWidget(textGradColor4, 1);
+
+        QHBoxLayout* gradButtonRow = new QHBoxLayout();
+        gradButtonRow->setSpacing(4);
+        gradButtonRow->addWidget(gradText1Btn, 1);
+        gradButtonRow->addWidget(gradText2Btn, 1);
+        gradButtonRow->addWidget(gradText3Btn, 1);
+        gradButtonRow->addWidget(gradText4Btn, 1);
+
+        shapeGroupLayout->addWidget(textLabel);
+        shapeGroupLayout->addWidget(textInput);
+        shapeGroupLayout->addWidget(fontLabel);
+        shapeGroupLayout->addWidget(textFontCombo);
+        shapeGroupLayout->addLayout(textSizeLayout);
+        shapeGroupLayout->addLayout(textSpacingLayout);
+        shapeGroupLayout->addWidget(textPreviewLabel);
+        shapeGroupLayout->addLayout(gradColorRow);
+        shapeGroupLayout->addLayout(gradButtonRow);
+
+        QLabel* shapeHelp = new QLabel(tr("Click and drag on the canvas. Shape uses the selected palette color. Press Gradient Text 1..4, then click/drag on the canvas and release to place the text."), this);
+        shapeHelp->setWordWrap(true);
+        shapeGroupLayout->addWidget(shapeHelp);
+        tabShapeLayout->addWidget(shapeGroup);
+
+        QVBoxLayout* tileGroupLayout = nullptr;
+        QGroupBox* tileGroup = makeSideGroup(tr("Tile Tools"), &tileGroupLayout);
+
+        QPushButton* snapTileBtn = makeSideButton(tr("Snap selection 8x8"), tr("Snap selection rectangles to tile boundaries"));
+        snapTileBtn->setCheckable(true);
+
+        QPushButton* selectTileBtn = makeSideButton(tr("Select 1x1 Tile"), tr("Click this, then click the canvas to select one 8x8 tile"));
+        QPushButton* select2x2TileBtn = makeSideButton(tr("Select 2x2 Tiles"), tr("Click this, then click the canvas to select a 16x16 tile block"));
+        QPushButton* select4x3TileBtn = makeSideButton(tr("Select 4x3 Tiles"), tr("Click this, then click the canvas to select a 32x24 tile block"));
+
+        QLabel* tileHelp = new QLabel(tr("Choose a tile block button, then click on the canvas where the selection should start. Copy/Cut/Paste stays under right-click."), this);
+        tileHelp->setWordWrap(true);
+
+        tileGroupLayout->addWidget(snapTileBtn);
+        tileGroupLayout->addWidget(selectTileBtn);
+        tileGroupLayout->addWidget(select2x2TileBtn);
+        tileGroupLayout->addWidget(select4x3TileBtn);
+        tileGroupLayout->addWidget(tileHelp);
+        tabTileLayout->addWidget(tileGroup);
+
+        QVBoxLayout* colorGroupLayout = nullptr;
+        QGroupBox* colorGroup = makeSideGroup(tr("Color Remap"), &colorGroupLayout);
+
+        QHBoxLayout* fromToLayout = new QHBoxLayout();
+        fromToLayout->setSpacing(6);
+
+        QComboBox* fromColorCombo = new QComboBox(this);
+        QComboBox* toColorCombo = new QComboBox(this);
+        for (int i = 0; i < 16; ++i) {
+            const QString label = tr("Color %1").arg(i);
+            fromColorCombo->addItem(label, i);
+            toColorCombo->addItem(label, i);
+        }
+        toColorCombo->setCurrentIndex(15);
+
+        QVBoxLayout* fromLayout = new QVBoxLayout();
+        fromLayout->addWidget(new QLabel(tr("From"), this));
+        fromLayout->addWidget(fromColorCombo);
+
+        QVBoxLayout* toLayout = new QVBoxLayout();
+        toLayout->addWidget(new QLabel(tr("To"), this));
+        toLayout->addWidget(toColorCombo);
+
+        fromToLayout->addLayout(fromLayout);
+        fromToLayout->addLayout(toLayout);
+
+        QPushButton* replaceColorBtn = makeSideButton(tr("Replace Color"), tr("Replace all pixels from one color to another"));
+        QPushButton* clearColorBtn = makeSideButton(tr("Clear From Color"), tr("Replace selected From color with BG color"));
+        QPushButton* replaceSelectionColorBtn = makeSideButton(tr("Replace In Selection"), tr("Replace From color with To color only inside selection"));
+        QPushButton* clearSelectionColorBtn = makeSideButton(tr("Clear In Selection"), tr("Replace From color with BG color only inside selection"));
+        QPushButton* swapFgBgPixelsBtn = makeSideButton(tr("Swap FG/BG Canvas"), tr("Swap all pixels using current FG and BG colors"));
+        QPushButton* swapFgBgSelectionBtn = makeSideButton(tr("Swap FG/BG Selection"), tr("Swap FG and BG pixels only inside selection"));
+        QPushButton* fillSelectionFgBtn = makeSideButton(tr("Fill Selection FG"), tr("Fill current selection with FG color"));
+        QPushButton* fillSelectionBgBtn = makeSideButton(tr("Fill Selection BG"), tr("Fill current selection with BG color"));
+        QPushButton* outlineSelectionFgBtn = makeSideButton(tr("Outline Selection FG"), tr("Draw selection border with FG color"));
+        QPushButton* outlineSelectionBgBtn = makeSideButton(tr("Outline Selection BG"), tr("Draw selection border with BG color"));
+
+        QLabel* colorHelp = new QLabel(tr("Useful after PNG import: remap one Coleco color without repainting the whole image."), this);
+        colorHelp->setWordWrap(true);
+
+        colorGroupLayout->addLayout(fromToLayout);
+        colorGroupLayout->addWidget(replaceColorBtn);
+        colorGroupLayout->addWidget(clearColorBtn);
+        colorGroupLayout->addWidget(replaceSelectionColorBtn);
+        colorGroupLayout->addWidget(clearSelectionColorBtn);
+        colorGroupLayout->addWidget(swapFgBgPixelsBtn);
+        colorGroupLayout->addWidget(swapFgBgSelectionBtn);
+        colorGroupLayout->addWidget(fillSelectionFgBtn);
+        colorGroupLayout->addWidget(fillSelectionBgBtn);
+        colorGroupLayout->addWidget(outlineSelectionFgBtn);
+        colorGroupLayout->addWidget(outlineSelectionBgBtn);
+        colorGroupLayout->addWidget(colorHelp);
+        tabColorLayout->addWidget(colorGroup);
+
+        QVBoxLayout* stampGroupLayout = nullptr;
+        QGroupBox* stampGroup = makeSideGroup(tr("Stamp"), &stampGroupLayout);
+
+        QPushButton* makeStampBtn = makeSideButton(tr("Make Stamp from Selection"), tr("Copy current selection as reusable stamp"));
+        QPushButton* placeStampBtn = makeSideButton(tr("Place Stamp"), tr("Click this, then click canvas to place the stamp"));
+        QPushButton* saveStampBtn = makeSideButton(tr("Save Stamp"), tr("Save current stamp to .cvstamp"));
+        QPushButton* loadStampBtn = makeSideButton(tr("Load Stamp"), tr("Load a .cvstamp file"));
+
+        QCheckBox* transparentPasteCheck = new QCheckBox(tr("Transparent color 0"), this);
+        transparentPasteCheck->setChecked(true);
+        transparentPasteCheck->setToolTip(tr("When pasting stamps/selections, color 0 will not overwrite the canvas"));
+
+        QLabel* stampHelp = new QLabel(tr("Select an area first. Make Stamp stores it. Place Stamp lets you click the canvas to reuse it. Stamps can also be saved as .cvstamp."), this);
+        stampHelp->setWordWrap(true);
+
+        stampGroupLayout->addWidget(makeStampBtn);
+        stampGroupLayout->addWidget(placeStampBtn);
+        stampGroupLayout->addWidget(saveStampBtn);
+        stampGroupLayout->addWidget(loadStampBtn);
+        stampGroupLayout->addWidget(transparentPasteCheck);
+        stampGroupLayout->addWidget(stampHelp);
+        tabStampLayout->addWidget(stampGroup);
+
+        QVBoxLayout* exportGroupLayout = nullptr;
+        QGroupBox* exportGroup = makeSideGroup(tr("Export Files"), &exportGroupLayout);
+
+        QPushButton* analyzeTmsBtn = makeSideButton(tr("Analyze TMS Colors"), tr("Check rows that use more than 2 colors"));
+        QPushButton* showTmsConflictsBtn = makeSideButton(tr("Show TMS Conflicts"), tr("Show/hide red overlay on rows with more than 2 colors"));
+        showTmsConflictsBtn->setCheckable(true);
+        QPushButton* findTmsBtn = makeSideButton(tr("Find First TMS Conflict"), tr("Select the first 8-pixel row with more than 2 colors"));
+        QPushButton* nextTmsBtn = makeSideButton(tr("Find Next TMS Conflict"), tr("Select the next 8-pixel row with more than 2 colors"));
+        QPushButton* reduceSelectedTmsBtn = makeSideButton(tr("Reduce Selected TMS Row"), tr("Reduce only the selected 8-pixel TMS row to 2 colors"));
+        QPushButton* reduceSelectedNextTmsBtn = makeSideButton(tr("Reduce Selected + Next"), tr("Reduce selected TMS row and jump to the next conflict"));
+        QPushButton* reduceTmsBtn = makeSideButton(tr("Reduce to TMS Colors"), tr("Modify canvas to match exported TMS 2-color rows"));
+        QGroupBox* routinesGroup = new QGroupBox(tr("Routines"), this);
+        QVBoxLayout* routinesLayout = new QVBoxLayout(routinesGroup);
+        routinesLayout->setContentsMargins(8, 8, 8, 8);
+        routinesLayout->setSpacing(4);
+
+        m_addViewerRoutineCheck = new QCheckBox(tr("With viewer / example"), routinesGroup);
+        m_addViewerRoutineCheck->setChecked(false);
+        m_addViewerRoutineCheck->setToolTip(tr("When enabled, Insert Bitmap DATA adds a small runnable/example viewer for the selected routine."));
+
+        m_routineFontMode0Radio = new QRadioButton(tr("Font routine MODE 0"), routinesGroup);
+        m_routineFontMode0Radio->setToolTip(tr("Insert generated 8x8 text font plus MODE 0 PRINT example."));
+
+        m_routineFontMode1Radio = new QRadioButton(tr("Font routine MODE 1"), routinesGroup);
+        m_routineFontMode1Radio->setToolTip(tr("Insert generated 8x8 text font plus MODE 1 color DATA using the selected text gradient colors."));
+
+        m_routineBitmapScreenRadio = new QRadioButton(tr("Bitmap screen"), routinesGroup);
+        m_routineBitmapScreenRadio->setToolTip(tr("Insert bitmap/color DATA for the paint canvas."));
+        m_routineBitmapScreenRadio->setChecked(true);
+
+        routinesLayout->addWidget(m_addViewerRoutineCheck);
+        routinesLayout->addWidget(m_routineFontMode0Radio);
+        routinesLayout->addWidget(m_routineFontMode1Radio);
+        routinesLayout->addWidget(m_routineBitmapScreenRadio);
+
+        QPushButton* exportPngBtn = makeSideButton(tr("Export PNG"), tr("Export the current paint canvas as PNG"));
+        QPushButton* savePatternBtn = makeSideButton(tr("Save .pattern"), tr("Save TMS bitmap pattern table"));
+        QPushButton* saveColorBtn = makeSideButton(tr("Save .color"), tr("Save TMS bitmap color table"));
+
+        QLabel* exportHelp = new QLabel(tr("File exports only. Insert Bitmap DATA stays in the top toolbar because it inserts directly into the CVBasic editor. In Routines choose Bitmap screen, Font routine MODE 0, or Font routine MODE 1. Enable With viewer / example only when you want a standalone test main. Leave it off when you use your own main."), this);
+        exportHelp->setWordWrap(true);
+
+        exportGroupLayout->addWidget(analyzeTmsBtn);
+        exportGroupLayout->addWidget(showTmsConflictsBtn);
+        exportGroupLayout->addWidget(findTmsBtn);
+        exportGroupLayout->addWidget(nextTmsBtn);
+        exportGroupLayout->addWidget(reduceSelectedTmsBtn);
+        exportGroupLayout->addWidget(reduceSelectedNextTmsBtn);
+        exportGroupLayout->addWidget(reduceTmsBtn);
+        exportGroupLayout->addWidget(routinesGroup);
+        exportGroupLayout->addWidget(exportPngBtn);
+        exportGroupLayout->addWidget(savePatternBtn);
+        exportGroupLayout->addWidget(saveColorBtn);
+        exportGroupLayout->addWidget(exportHelp);
+        tabExportLayout->addWidget(exportGroup);
+
+        tabToolsLayout->addStretch(1);
+        tabReferenceLayout->addStretch(1);
+        tabTransformLayout->addStretch(1);
+        tabTileLayout->addStretch(1);
+        tabShapeLayout->addStretch(1);
+        tabColorLayout->addStretch(1);
+        tabStampLayout->addStretch(1);
+        tabExportLayout->addStretch(1);
+
+        QScrollArea* tabHelp = new QScrollArea(sideTabs);
+        tabHelp->setWidgetResizable(true);
+        tabHelp->setFrameShape(QFrame::NoFrame);
+        tabHelp->setStyleSheet(QStringLiteral("QScrollArea { background:transparent; border:0px; }"));
+
+        QWidget* tabHelpContents = new QWidget(tabHelp);
+        tabHelpContents->setObjectName(QStringLiteral("paintSidePanelContents"));
+        QVBoxLayout* tabHelpLayout = new QVBoxLayout(tabHelpContents);
+        tabHelpLayout->setContentsMargins(8, 8, 8, 8);
+        tabHelpLayout->setSpacing(6);
+
+        QLabel* shortcutsHelp = new QLabel(
+            tr("<b>Paint Shortcuts</b><br><br>"
+               "<b>Tools</b><br>"
+               "P = Pen<br>"
+               "E = Eraser<br>"
+               "F = Fill<br>"
+               "I = Pipette<br>"
+               "S = Select<br><br>"
+               "<b>Palette</b><br>"
+               "Left click palette color = FG<br>"
+               "Right click palette color = BG<br>"
+               "X = Swap active FG/BG colors<br>"
+               "Shift+X = Swap FG/BG pixels in selection<br>"
+               "Alt+X = Swap FG/BG pixels on canvas<br>"
+               "Canvas right click = popup menu<br><br>"
+               "<b>Brush</b><br>"
+               "1 = 1 px<br>"
+               "2 = 2 px<br>"
+               "3 = 4 px<br>"
+               "4 = 8 px<br><br>"
+               "<b>Zoom</b><br>"
+               "+ = Zoom in<br>"
+               "- = Zoom out<br>"
+               "0 = Zoom 2x<br>"
+               "Mouse wheel = Zoom 1x..4x<br><br>"
+               "<b>Text</b><br>"
+               "Shape tab: enter text and press Draw Text or Enter<br>"
+               "Text position = selection top-left or last mouse position<br><br>"
+               "<b>Selection</b><br>"
+               "Ctrl+C = Copy<br>"
+               "Ctrl+X = Cut<br>"
+               "Ctrl+V = Paste<br>"
+               "Ctrl+A = Select All<br>"
+               "Delete = Cut<br>"
+               "Esc = Clear Selection<br>"
+               "Arrow keys = Move selection 1 px<br>"
+               "Shift + Arrow = Move selection 8 px<br>"
+               "Shift+F = Fill selection with FG<br>"
+               "Shift+B = Fill selection with BG<br>"
+               "Shift+O = Outline selection with FG<br>"
+               "Ctrl+Shift+O = Outline selection with BG<br>"
+               "Color tab can replace/clear/swap colors inside selection<br><br>"
+               "<b>Undo</b><br>"
+               "Ctrl+Z = Undo<br>"
+               "Ctrl+Y = Redo<br><br>"
+               "<b>Project / Export</b><br>"
+               "Ctrl+N = New Paint<br>"
+               "Ctrl+O = Open Paint<br>"
+               "Ctrl+S = Save Paint<br>"
+               "Ctrl+Shift+S = Save Paint As<br>"
+               "Ctrl+R = Revert Paint<br>"
+               "Ctrl+I = Import PNG<br>"
+               "Ctrl+Shift+I = Import Dither<br>"
+               "Ctrl+B = Insert Bitmap DATA<br>"
+               "Export tab: Add viewer routine = runnable display code"),
+            tabHelpContents);
+        shortcutsHelp->setWordWrap(true);
+        shortcutsHelp->setTextFormat(Qt::RichText);
+        shortcutsHelp->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+        shortcutsHelp->setStyleSheet(QStringLiteral("QLabel { color:#EAEAEA; background:transparent; }"));
+        tabHelpLayout->addWidget(shortcutsHelp);
+        tabHelpLayout->addStretch(1);
+        tabHelp->setWidget(tabHelpContents);
+
+        sideTabs->addTab(tabTools, tr("TOOLS"));
+        sideTabs->addTab(tabTile, tr("TILE"));
+        sideTabs->addTab(tabShape, tr("SHAPE"));
+        sideTabs->addTab(tabColor, tr("COLOR"));
+        sideTabs->addTab(tabStamp, tr("STAMP"));
+        sideTabs->addTab(tabReference, tr("REF"));
+        sideTabs->addTab(tabTransform, tr("MOVE"));
+        sideTabs->addTab(tabExport, tr("EXPORT"));
+        sideTabs->addTab(tabHelp, tr("HELP"));
+
+        workLayout->addWidget(sideTabs, 0);
+
+        cardLayout->addLayout(workLayout, 1);
+
+        auto addPaintShortcut = [this](const QKeySequence& key, const std::function<void()>& fn) {
+            QAction* action = new QAction(this);
+            action->setShortcut(key);
+            action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+            addAction(action);
+            connect(action, &QAction::triggered, this, fn);
+        };
+
+        addPaintShortcut(QKeySequence(Qt::Key_P), [this, penBtn]() {
+            selectToolButton(penBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::Pen);
+            setStatus(tr("Tool: Pen"));
+        });
+        addPaintShortcut(QKeySequence(Qt::Key_E), [this, eraserBtn]() {
+            selectToolButton(eraserBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::Eraser);
+            setStatus(tr("Tool: Eraser"));
+        });
+        addPaintShortcut(QKeySequence(Qt::Key_F), [this, fillBtn]() {
+            selectToolButton(fillBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::Fill);
+            setStatus(tr("Tool: Fill"));
+        });
+        addPaintShortcut(QKeySequence(Qt::Key_I), [this, pipetteBtn]() {
+            selectToolButton(pipetteBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::Pipette);
+            setStatus(tr("Tool: Pipette"));
+        });
+        addPaintShortcut(QKeySequence(Qt::Key_S), [this, selectBtn]() {
+            selectToolButton(selectBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::Select);
+            setStatus(tr("Tool: Select - drag a block on the canvas"));
+        });
+
+        addPaintShortcut(QKeySequence(Qt::Key_1), [this]() { setPaintBrushSize(1); });
+        addPaintShortcut(QKeySequence(Qt::Key_2), [this]() { setPaintBrushSize(2); });
+        addPaintShortcut(QKeySequence(Qt::Key_3), [this]() { setPaintBrushSize(4); });
+        addPaintShortcut(QKeySequence(Qt::Key_4), [this]() { setPaintBrushSize(8); });
+        addPaintShortcut(QKeySequence(Qt::Key_X), [this]() { swapForegroundBackgroundColors(); });
+        addPaintShortcut(QKeySequence(Qt::SHIFT | Qt::Key_X), [this]() {
+            if (m_canvas)
+                m_canvas->swapColorsInSelection(m_canvas->colorIndex(), m_canvas->backgroundColorIndex());
+        });
+        addPaintShortcut(QKeySequence(Qt::ALT | Qt::Key_X), [this]() {
+            if (m_canvas)
+                m_canvas->swapColors(m_canvas->colorIndex(), m_canvas->backgroundColorIndex());
+        });
+        addPaintShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F), [this]() {
+            if (m_canvas)
+                m_canvas->fillSelectionWithColor(m_canvas->colorIndex());
+        });
+        addPaintShortcut(QKeySequence(Qt::SHIFT | Qt::Key_B), [this]() {
+            if (m_canvas)
+                m_canvas->fillSelectionWithColor(m_canvas->backgroundColorIndex());
+        });
+        addPaintShortcut(QKeySequence(Qt::SHIFT | Qt::Key_O), [this]() {
+            if (m_canvas)
+                m_canvas->outlineSelectionWithColor(m_canvas->colorIndex());
+        });
+        addPaintShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O), [this]() {
+            if (m_canvas)
+                m_canvas->outlineSelectionWithColor(m_canvas->backgroundColorIndex());
+        });
+
+        addPaintShortcut(QKeySequence(Qt::Key_Plus), [this]() { setPaintZoom(m_canvas->zoomScale() + 1); });
+        addPaintShortcut(QKeySequence(Qt::Key_Minus), [this]() { setPaintZoom(m_canvas->zoomScale() - 1); });
+        addPaintShortcut(QKeySequence(Qt::Key_0), [this]() { setPaintZoom(2); });
+
+        addPaintShortcut(QKeySequence::Undo, [this]() { m_canvas->undo(); });
+        addPaintShortcut(QKeySequence::Redo, [this]() { m_canvas->redo(); });
+        addPaintShortcut(QKeySequence::Copy, [this]() { m_canvas->copySelection(); });
+        addPaintShortcut(QKeySequence::Cut, [this]() { m_canvas->cutSelection(); });
+        addPaintShortcut(QKeySequence::Paste, [this]() { m_canvas->pasteSelection(); });
+        addPaintShortcut(QKeySequence::SelectAll, [this]() { m_canvas->selectAll(); });
+        addPaintShortcut(QKeySequence(Qt::Key_Escape), [this]() { m_canvas->clearSelection(); });
+        addPaintShortcut(QKeySequence(Qt::Key_Delete), [this]() { m_canvas->cutSelection(); });
+
+        addPaintShortcut(QKeySequence(Qt::Key_Left), [this]() { m_canvas->nudgeSelection(-1, 0); });
+        addPaintShortcut(QKeySequence(Qt::Key_Right), [this]() { m_canvas->nudgeSelection(1, 0); });
+        addPaintShortcut(QKeySequence(Qt::Key_Up), [this]() { m_canvas->nudgeSelection(0, -1); });
+        addPaintShortcut(QKeySequence(Qt::Key_Down), [this]() { m_canvas->nudgeSelection(0, 1); });
+
+        addPaintShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Left), [this]() { m_canvas->nudgeSelection(-8, 0); });
+        addPaintShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Right), [this]() { m_canvas->nudgeSelection(8, 0); });
+        addPaintShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Up), [this]() { m_canvas->nudgeSelection(0, -8); });
+        addPaintShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Down), [this]() { m_canvas->nudgeSelection(0, 8); });
+
+        addPaintShortcut(QKeySequence::New, [this]() { newPaintProject(); });
+        addPaintShortcut(QKeySequence::Open, [this]() { openPaintProject(); });
+        addPaintShortcut(QKeySequence::Save, [this]() { savePaintProject(); });
+        addPaintShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S), [this]() { savePaintProjectAs(); });
+        addPaintShortcut(QKeySequence(Qt::CTRL | Qt::Key_R), [this]() { revertPaintProject(); });
+        addPaintShortcut(QKeySequence(Qt::CTRL | Qt::Key_I), [this]() { importPng(); });
+        addPaintShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I), [this]() { importPngDithered(); });
+        addPaintShortcut(QKeySequence(Qt::CTRL | Qt::Key_B), [this]() { insertBitmapDataInEditor(); });
+
+        connect(penBtn, &QPushButton::clicked, this, [this, penBtn]() {
+            selectToolButton(penBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::Pen);
+            setStatus(tr("Tool: Pen"));
+        });
+        connect(eraserBtn, &QPushButton::clicked, this, [this, eraserBtn]() {
+            selectToolButton(eraserBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::Eraser);
+            setStatus(tr("Tool: Eraser"));
+        });
+        connect(fillBtn, &QPushButton::clicked, this, [this, fillBtn]() {
+            selectToolButton(fillBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::Fill);
+            setStatus(tr("Tool: Fill"));
+        });
+        connect(pipetteBtn, &QPushButton::clicked, this, [this, pipetteBtn]() {
+            selectToolButton(pipetteBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::Pipette);
+            setStatus(tr("Tool: Pipette"));
+        });
+        connect(selectBtn, &QPushButton::clicked, this, [this, selectBtn]() {
+            selectToolButton(selectBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::Select);
+            setStatus(tr("Tool: Select - drag a block on the canvas"));
+        });
+        connect(lineBtn, &QPushButton::clicked, this, [this, lineBtn]() {
+            selectToolButton(lineBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::Line);
+            setStatus(tr("Tool: Line"));
+        });
+        connect(rectBtn, &QPushButton::clicked, this, [this, rectBtn]() {
+            selectToolButton(rectBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::Rect);
+            setStatus(tr("Tool: Rectangle"));
+        });
+        connect(filledRectBtn, &QPushButton::clicked, this, [this, filledRectBtn]() {
+            selectToolButton(filledRectBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::FilledRect);
+            setStatus(tr("Tool: Filled Rectangle"));
+        });
+        connect(ellipseBtn, &QPushButton::clicked, this, [this, ellipseBtn]() {
+            selectToolButton(ellipseBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::Ellipse);
+            setStatus(tr("Tool: Ellipse"));
+        });
+        connect(filledEllipseBtn, &QPushButton::clicked, this, [this, filledEllipseBtn]() {
+            selectToolButton(filledEllipseBtn);
+            m_canvas->setToolMode(CvBasicPaintCanvas::ToolMode::FilledEllipse);
+            setStatus(tr("Tool: Filled Ellipse"));
+        });
+        connect(textInput, &QLineEdit::textChanged, this, updateTextPreview);
+        connect(textFontCombo, &QFontComboBox::currentFontChanged, this, updateTextPreview);
+        connect(textSizeSpin, qOverload<int>(&QSpinBox::valueChanged), this, updateTextPreview);
+        connect(textSpacingSpin, qOverload<int>(&QSpinBox::valueChanged), this, updateTextPreview);
+        connect(textGradColor1, qOverload<int>(&QComboBox::currentIndexChanged), this, updateTextPreview);
+        connect(textGradColor2, qOverload<int>(&QComboBox::currentIndexChanged), this, updateTextPreview);
+        connect(textGradColor3, qOverload<int>(&QComboBox::currentIndexChanged), this, updateTextPreview);
+        connect(textGradColor4, qOverload<int>(&QComboBox::currentIndexChanged), this, updateTextPreview);
+
+        auto armGradientText = [this, textInput, textSizeSpin, textFontCombo, textSpacingSpin,
+                                textGradColor1, textGradColor2, textGradColor3, textGradColor4](int colorCount) {
+            if (!m_canvas)
+                return;
+
+            QVector<int> colors;
+            if (colorCount >= 1) colors.append(textGradColor1->currentData().toInt());
+            if (colorCount >= 2) colors.append(textGradColor2->currentData().toInt());
+            if (colorCount >= 3) colors.append(textGradColor3->currentData().toInt());
+            if (colorCount >= 4) colors.append(textGradColor4->currentData().toInt());
+
+            m_canvas->armTextPlacement(textInput->text(),
+                                       textSizeSpin->value(),
+                                       textFontCombo->currentFont().family(),
+                                       textSpacingSpin->value(),
+                                       colors);
+        };
+
+        connect(gradText1Btn, &QPushButton::clicked, this, [armGradientText]() { armGradientText(1); });
+        connect(gradText2Btn, &QPushButton::clicked, this, [armGradientText]() { armGradientText(2); });
+        connect(gradText3Btn, &QPushButton::clicked, this, [armGradientText]() { armGradientText(3); });
+        connect(gradText4Btn, &QPushButton::clicked, this, [armGradientText]() { armGradientText(4); });
+        connect(textInput, &QLineEdit::returnPressed, this, [armGradientText]() { armGradientText(1); });
+        connect(brush1Btn, &QPushButton::clicked, this, [this]() { setPaintBrushSize(1); });
+        connect(brush2Btn, &QPushButton::clicked, this, [this]() { setPaintBrushSize(2); });
+        connect(brush4Btn, &QPushButton::clicked, this, [this]() { setPaintBrushSize(4); });
+        connect(brush8Btn, &QPushButton::clicked, this, [this]() { setPaintBrushSize(8); });
+        connect(gridBtn, &QPushButton::toggled, this, [this](bool checked) {
+            m_canvas->setGridVisible(checked);
+            setStatus(checked ? tr("Tile grid on") : tr("Tile grid off"));
+        });
+        connect(pixelGridBtn, &QPushButton::toggled, this, [this](bool checked) {
+            m_canvas->setPixelGridVisible(checked);
+            setStatus(checked ? tr("Pixel grid on") : tr("Pixel grid off"));
+        });
+        connect(zoom1Btn, &QPushButton::clicked, this, [this]() { setPaintZoom(1); });
+        connect(zoom2Btn, &QPushButton::clicked, this, [this]() { setPaintZoom(2); });
+        connect(zoom3Btn, &QPushButton::clicked, this, [this]() { setPaintZoom(3); });
+        connect(zoom4Btn, &QPushButton::clicked, this, [this]() { setPaintZoom(4); });
+        connect(refVisibleBtn, &QPushButton::toggled, this, [this](bool checked) { m_canvas->setReferenceVisible(checked); });
+        connect(refOpacitySlider, &QSlider::valueChanged, this, [this](int value) { m_canvas->setReferenceOpacity(value); });
+        connect(refUpBtn, &QPushButton::clicked, this, [this]() { m_canvas->moveReference(0, -1); });
+        connect(refDownBtn, &QPushButton::clicked, this, [this]() { m_canvas->moveReference(0, 1); });
+        connect(refLeftBtn, &QPushButton::clicked, this, [this]() { m_canvas->moveReference(-1, 0); });
+        connect(refRightBtn, &QPushButton::clicked, this, [this]() { m_canvas->moveReference(1, 0); });
+        connect(snapTileBtn, &QPushButton::toggled, this, [this](bool checked) { m_canvas->setSelectionSnapToTile(checked); });
+        connect(selectTileBtn, &QPushButton::clicked, this, [this]() { m_canvas->armTileBlockSelection(1, 1); });
+        connect(select2x2TileBtn, &QPushButton::clicked, this, [this]() { m_canvas->armTileBlockSelection(2, 2); });
+        connect(select4x3TileBtn, &QPushButton::clicked, this, [this]() { m_canvas->armTileBlockSelection(4, 3); });
+        connect(replaceColorBtn, &QPushButton::clicked, this, [this, fromColorCombo, toColorCombo]() {
+            const int fromColor = fromColorCombo->currentData().toInt();
+            const int toColor = toColorCombo->currentData().toInt();
+            m_canvas->replaceColor(fromColor, toColor);
+        });
+        connect(clearColorBtn, &QPushButton::clicked, this, [this, fromColorCombo]() {
+            const int fromColor = fromColorCombo->currentData().toInt();
+            m_canvas->clearColor(fromColor);
+        });
+        connect(replaceSelectionColorBtn, &QPushButton::clicked, this, [this, fromColorCombo, toColorCombo]() {
+            const int fromColor = fromColorCombo->currentData().toInt();
+            const int toColor = toColorCombo->currentData().toInt();
+            m_canvas->replaceColorInSelection(fromColor, toColor);
+        });
+        connect(clearSelectionColorBtn, &QPushButton::clicked, this, [this, fromColorCombo]() {
+            const int fromColor = fromColorCombo->currentData().toInt();
+            m_canvas->clearColorInSelection(fromColor);
+        });
+        connect(swapFgBgPixelsBtn, &QPushButton::clicked, this, [this]() {
+            if (m_canvas)
+                m_canvas->swapColors(m_canvas->colorIndex(), m_canvas->backgroundColorIndex());
+        });
+        connect(swapFgBgSelectionBtn, &QPushButton::clicked, this, [this]() {
+            if (m_canvas)
+                m_canvas->swapColorsInSelection(m_canvas->colorIndex(), m_canvas->backgroundColorIndex());
+        });
+        connect(fillSelectionFgBtn, &QPushButton::clicked, this, [this]() {
+            if (m_canvas)
+                m_canvas->fillSelectionWithColor(m_canvas->colorIndex());
+        });
+        connect(fillSelectionBgBtn, &QPushButton::clicked, this, [this]() {
+            if (m_canvas)
+                m_canvas->fillSelectionWithColor(m_canvas->backgroundColorIndex());
+        });
+        connect(outlineSelectionFgBtn, &QPushButton::clicked, this, [this]() {
+            if (m_canvas)
+                m_canvas->outlineSelectionWithColor(m_canvas->colorIndex());
+        });
+        connect(outlineSelectionBgBtn, &QPushButton::clicked, this, [this]() {
+            if (m_canvas)
+                m_canvas->outlineSelectionWithColor(m_canvas->backgroundColorIndex());
+        });
+        connect(makeStampBtn, &QPushButton::clicked, this, [this]() { m_canvas->makeStampFromSelection(); });
+        connect(placeStampBtn, &QPushButton::clicked, this, [this]() { m_canvas->armStampPlacement(); });
+        connect(saveStampBtn, &QPushButton::clicked, this, [this]() { saveStamp(); });
+        connect(loadStampBtn, &QPushButton::clicked, this, [this]() { loadStamp(); });
+        connect(transparentPasteCheck, &QCheckBox::toggled, this, [this](bool checked) { m_canvas->setTransparentPaste(checked); });
+        connect(loadRefBtn, &QPushButton::clicked, this, [this]() { loadReferenceImage(); });
+        connect(clearRefBtn, &QPushButton::clicked, this, [this]() {
+            m_canvas->clearReferenceImage();
+            setStatus(tr("Reference image cleared"));
+        });
+        m_canvas->onContextMenuRequested = [this](const QPoint& globalPos) {
+            QMenu menu(this);
+            QAction* actCopy = menu.addAction(tr("Copy"));
+            QAction* actCut = menu.addAction(tr("Cut"));
+            QAction* actPaste = menu.addAction(tr("Paste"));
+            menu.addSeparator();
+            QAction* actSelectAll = menu.addAction(tr("All"));
+            QAction* actClearSelection = menu.addAction(tr("No Sel"));
+
+            actCopy->setEnabled(m_canvas->hasSelection());
+            actCut->setEnabled(m_canvas->hasSelection());
+            actPaste->setEnabled(m_canvas->hasClipboardSelection());
+            actClearSelection->setEnabled(m_canvas->hasSelection());
+
+            QAction* chosen = menu.exec(globalPos);
+            if (chosen == actCopy)
+                m_canvas->copySelection();
+            else if (chosen == actCut)
+                m_canvas->cutSelection();
+            else if (chosen == actPaste)
+                m_canvas->pasteSelection();
+            else if (chosen == actSelectAll)
+                m_canvas->selectAll();
+            else if (chosen == actClearSelection)
+                m_canvas->clearSelection();
+        };
+        connect(scrollUpBtn, &QPushButton::clicked, this, [this]() {
+            m_canvas->shiftCanvas(0, -8);
+            setStatus(tr("Canvas scrolled up 1 tile"));
+        });
+        connect(scrollDownBtn, &QPushButton::clicked, this, [this]() {
+            m_canvas->shiftCanvas(0, 8);
+            setStatus(tr("Canvas scrolled down 1 tile"));
+        });
+        connect(scrollLeftBtn, &QPushButton::clicked, this, [this]() {
+            m_canvas->shiftCanvas(-8, 0);
+            setStatus(tr("Canvas scrolled left 1 tile"));
+        });
+        connect(scrollRightBtn, &QPushButton::clicked, this, [this]() {
+            m_canvas->shiftCanvas(8, 0);
+            setStatus(tr("Canvas scrolled right 1 tile"));
+        });
+        connect(mirrorHBtn, &QPushButton::clicked, this, [this]() {
+            m_canvas->mirrorHorizontal();
+            setStatus(tr("Canvas mirrored horizontally"));
+        });
+        connect(mirrorVBtn, &QPushButton::clicked, this, [this]() {
+            m_canvas->mirrorVertical();
+            setStatus(tr("Canvas mirrored vertically"));
+        });
+        connect(flipSelHBtn, &QPushButton::clicked, this, [this]() {
+            m_canvas->flipSelectionHorizontal();
+        });
+        connect(flipSelVBtn, &QPushButton::clicked, this, [this]() {
+            m_canvas->flipSelectionVertical();
+        });
+        connect(rotateSelLeftBtn, &QPushButton::clicked, this, [this]() {
+            m_canvas->rotateSelection90(false);
+        });
+        connect(rotateSelRightBtn, &QPushButton::clicked, this, [this]() {
+            m_canvas->rotateSelection90(true);
+        });
+        connect(moveSelBtn, &QPushButton::clicked, this, [this]() {
+            m_canvas->armMoveSelection();
+        });
+        connect(nudgeUpBtn, &QPushButton::clicked, this, [this]() { m_canvas->nudgeSelection(0, -1); });
+        connect(nudgeDownBtn, &QPushButton::clicked, this, [this]() { m_canvas->nudgeSelection(0, 1); });
+        connect(nudgeLeftBtn, &QPushButton::clicked, this, [this]() { m_canvas->nudgeSelection(-1, 0); });
+        connect(nudgeRightBtn, &QPushButton::clicked, this, [this]() { m_canvas->nudgeSelection(1, 0); });
+        connect(actUndoPaint, &QAction::triggered, this, [this]() {
+            m_canvas->undo();
+            setStatus(tr("Undo"));
+        });
+        connect(actRedoPaint, &QAction::triggered, this, [this]() {
+            m_canvas->redo();
+            setStatus(tr("Redo"));
+        });
+        connect(actClearCanvas, &QAction::triggered, this, [this]() {
+            if (QMessageBox::question(this, tr("Clear canvas"), tr("Clear the complete 256x192 paint canvas to the current BG color?")) != QMessageBox::Yes)
+                return;
+            m_canvas->clearCanvasToBackground();
+            setStatus(tr("Canvas cleared to BG color"));
+        });
+        connect(actNewPaint, &QAction::triggered, this, [this]() { newPaintProject(); });
+        connect(actOpenPaint, &QAction::triggered, this, [this]() { openPaintProject(); });
+        connect(actSavePaint, &QAction::triggered, this, [this]() { savePaintProject(); });
+        connect(actSaveAsPaint, &QAction::triggered, this, [this]() { savePaintProjectAs(); });
+        connect(actRevertPaint, &QAction::triggered, this, [this]() { revertPaintProject(); });
+        connect(actImportPng, &QAction::triggered, this, [this]() { importPng(); });
+        connect(actImportPngDither, &QAction::triggered, this, [this]() { importPngDithered(); });
+        connect(actImportPngTms, &QAction::triggered, this, [this]() { importPngTmsConverted(); });
+        connect(actInsertData, &QAction::triggered, this, [this]() { insertBitmapDataInEditor(); });
+        connect(analyzeTmsBtn, &QPushButton::clicked, this, [this]() { analyzeTmsColors(); });
+        connect(showTmsConflictsBtn, &QPushButton::toggled, this, [this](bool checked) { m_canvas->setShowTmsConflicts(checked); });
+        connect(findTmsBtn, &QPushButton::clicked, this, [this]() { findFirstTmsConflict(); });
+        connect(nextTmsBtn, &QPushButton::clicked, this, [this]() { findNextTmsConflict(); });
+        connect(reduceSelectedTmsBtn, &QPushButton::clicked, this, [this]() { reduceSelectedTmsRow(); });
+        connect(reduceSelectedNextTmsBtn, &QPushButton::clicked, this, [this]() { reduceSelectedTmsRowAndNext(); });
+        connect(reduceTmsBtn, &QPushButton::clicked, this, [this]() { reduceToTmsColors(); });
+        connect(exportPngBtn, &QPushButton::clicked, this, [this]() { exportPng(); });
+        connect(savePatternBtn, &QPushButton::clicked, this, [this]() { savePatternFile(); });
+        connect(saveColorBtn, &QPushButton::clicked, this, [this]() { saveColorFile(); });
+
+        m_canvas->onColorPicked = [this](int color) { setSelectedColor(color); };
+        m_canvas->onChanged = [this]() { setPaintModified(true); };
+        m_canvas->onUndoStateChanged = [this](bool canUndo, bool canRedo) {
+            if (m_undoAction)
+                m_undoAction->setEnabled(canUndo);
+            if (m_redoAction)
+                m_redoAction->setEnabled(canRedo);
+        };
+        m_canvas->onStatus = [this](const QString& text) { setStatus(text); };
+    }
+
+    QString paintProjectDisplayName() const
+    {
+        if (m_currentPaintProjectPath.isEmpty())
+            return tr("Untitled");
+        return QFileInfo(m_currentPaintProjectPath).fileName();
+    }
+
+    void updatePaintProjectStatus()
+    {
+        const QString marker = m_paintModified ? QStringLiteral("*") : QString();
+        const QString display = tr("%1%2").arg(paintProjectDisplayName(), marker);
+        setStatus(tr("Paint project: %1").arg(display));
+
+        if (onTitleChanged)
+            onTitleChanged(display);
+    }
+
+    void setPaintModified(bool modified)
+    {
+        if (m_paintModified == modified)
+            return;
+
+        m_paintModified = modified;
+        updatePaintProjectStatus();
+    }
+
+    void selectToolButton(QPushButton* active)
+    {
+        for (QPushButton* b : std::as_const(m_toolButtons))
+            b->setChecked(b == active);
+    }
+
+    void selectButtonInGroup(const QVector<QPushButton*>& buttons, QPushButton* active)
+    {
+        for (QPushButton* b : buttons)
+            b->setChecked(b == active);
+    }
+
+    void setPaintBrushSize(int size)
+    {
+        size = qBound(1, size, 8);
+        if (m_canvas)
+            m_canvas->setBrushSize(size);
+
+        QPushButton* active = nullptr;
+        if (size == 1 && m_brushSizeButtons.size() > 0)
+            active = m_brushSizeButtons[0];
+        else if (size == 2 && m_brushSizeButtons.size() > 1)
+            active = m_brushSizeButtons[1];
+        else if (size == 4 && m_brushSizeButtons.size() > 2)
+            active = m_brushSizeButtons[2];
+        else if (size == 8 && m_brushSizeButtons.size() > 3)
+            active = m_brushSizeButtons[3];
+
+        selectButtonInGroup(m_brushSizeButtons, active);
+        setStatus(tr("Brush size %1").arg(size));
+    }
+
+    void setPaintZoom(int zoom)
+    {
+        zoom = qBound(1, zoom, 4);
+        if (m_canvas)
+            m_canvas->setZoomScale(zoom);
+
+        QPushButton* active = nullptr;
+        if (zoom >= 1 && zoom <= m_zoomButtons.size())
+            active = m_zoomButtons[zoom - 1];
+
+        selectButtonInGroup(m_zoomButtons, active);
+        setStatus(tr("Zoom %1x").arg(zoom));
+    }
+
+    void setSelectedColor(int color)
+    {
+        color = qBound(0, color, 15);
+        for (int i = 0; i < m_paletteButtons.size(); ++i)
+            m_paletteButtons[i]->setChecked(i == color);
+
+        if (m_selectedColorLabel) {
+            const QColor c = colecoColor(color);
+            const int luma = (c.red() * 299 + c.green() * 587 + c.blue() * 114) / 1000;
+            const QString textColor = (luma < 128) ? QStringLiteral("#FFFFFF") : QStringLiteral("#000000");
+            m_selectedColorLabel->setText(tr("FG %1").arg(color));
+            m_selectedColorLabel->setStyleSheet(QString("QLabel { background-color:%1; color:%2; border:1px solid #555555; border-radius:3px; font-weight:bold; }")
+                                                    .arg(c.name(), textColor));
+        }
+
+        if (m_canvas)
+            m_canvas->setColorIndex(color);
+        setStatus(tr("Selected FG color %1").arg(color));
+    }
+
+    void setBackgroundColor(int color)
+    {
+        color = qBound(0, color, 15);
+
+        if (m_backgroundColorLabel) {
+            const QColor c = colecoColor(color);
+            const int luma = (c.red() * 299 + c.green() * 587 + c.blue() * 114) / 1000;
+            const QString textColor = (luma < 128) ? QStringLiteral("#FFFFFF") : QStringLiteral("#000000");
+            m_backgroundColorLabel->setText(tr("BG %1").arg(color));
+            m_backgroundColorLabel->setStyleSheet(QString("QLabel { background-color:%1; color:%2; border:1px solid #555555; border-radius:3px; font-weight:bold; }")
+                                                      .arg(c.name(), textColor));
+        }
+
+        if (m_canvas)
+            m_canvas->setBackgroundColorIndex(color);
+        setStatus(tr("Selected BG color %1").arg(color));
+    }
+
+    void swapForegroundBackgroundColors()
+    {
+        if (!m_canvas)
+            return;
+
+        const int oldFg = m_canvas->colorIndex();
+        const int oldBg = m_canvas->backgroundColorIndex();
+
+        setSelectedColor(oldBg);
+        setBackgroundColor(oldFg);
+        setStatus(tr("Swapped FG/BG: FG %1, BG %2").arg(oldBg).arg(oldFg));
+    }
+
+    void setStatus(const QString& text)
+    {
+        if (onStatusRequested)
+            onStatusRequested(text);
+    }
+
+    bool maybeSavePaintChanges()
+    {
+        if (!m_paintModified)
+            return true;
+
+        const QMessageBox::StandardButton answer =
+            QMessageBox::question(this,
+                                  tr("Unsaved Paint Changes"),
+                                  tr("The current paint project has unsaved changes.\n\nDo you want to save them first?"),
+                                  QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+                                  QMessageBox::Save);
+
+        if (answer == QMessageBox::Cancel)
+            return false;
+
+        if (answer == QMessageBox::Save) {
+            savePaintProject();
+            return !m_paintModified;
+        }
+
+        return true;
+    }
+
+    void newPaintProject()
+    {
+        if (!maybeSavePaintChanges())
+            return;
+
+        m_canvas->clearCanvas();
+        m_currentPaintProjectPath.clear();
+        m_paintModified = false;
+        setStatus(tr("New paint project created"));
+        updatePaintProjectStatus();
+    }
+
+    bool loadPaintProjectFromFile(const QString& filePath)
+    {
+        if (filePath.isEmpty())
+            return false;
+
+        QFile f(filePath);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QMessageBox::warning(this, tr("Open Paint Project"), f.errorString());
+            return false;
+        }
+
+        const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+        if (!doc.isObject() || !m_canvas->fromJson(doc.object())) {
+            QMessageBox::warning(this, tr("Open Paint Project"), tr("This is not a valid ADAM+ Paint project."));
+            return false;
+        }
+
+        setSelectedColor(m_canvas->colorIndex());
+        m_currentPaintProjectPath = filePath;
+        m_paintModified = false;
+        setStatus(tr("Loaded %1").arg(QFileInfo(filePath).fileName()));
+        updatePaintProjectStatus();
+        return true;
+    }
+
+    void openPaintProject()
+    {
+        if (!maybeSavePaintChanges())
+            return;
+
+        const QString filePath = QFileDialog::getOpenFileName(this, tr("Open Paint Project"), QString(), tr("ADAM+ Paint Project (*.cvpaint);;JSON files (*.json);;All files (*.*)"));
+        if (filePath.isEmpty())
+            return;
+
+        loadPaintProjectFromFile(filePath);
+    }
+
+    void revertPaintProject()
+    {
+        if (m_currentPaintProjectPath.isEmpty()) {
+            QMessageBox::information(this,
+                                     tr("Revert Paint Project"),
+                                     tr("This paint project has not been saved yet."));
+            return;
+        }
+
+        const int answer = QMessageBox::question(this,
+                                                 tr("Revert Paint Project"),
+                                                 tr("Reload the last saved version of:\n\n%1\n\nAll unsaved paint changes will be lost.")
+                                                     .arg(QFileInfo(m_currentPaintProjectPath).fileName()),
+                                                 QMessageBox::Yes | QMessageBox::No,
+                                                 QMessageBox::No);
+
+        if (answer != QMessageBox::Yes)
+            return;
+
+        loadPaintProjectFromFile(m_currentPaintProjectPath);
+    }
+
+    QString ensurePaintProjectExtension(const QString& filePath) const
+    {
+        return ensureFileExtension(filePath, QStringLiteral("cvpaint"));
+    }
+
+    QString ensureFileExtension(const QString& filePath, const QString& extension) const
+    {
+        if (filePath.isEmpty())
+            return filePath;
+
+        QFileInfo info(filePath);
+        if (!info.suffix().isEmpty())
+            return filePath;
+
+        QString normalizedExtension = extension;
+        if (normalizedExtension.startsWith(QLatin1Char('.')))
+            normalizedExtension.remove(0, 1);
+
+        return filePath + QLatin1Char('.') + normalizedExtension;
+    }
+
+    bool writePaintProjectToFile(const QString& filePath)
+    {
+        const QString normalizedPath = ensurePaintProjectExtension(filePath);
+        if (normalizedPath.isEmpty())
+            return false;
+
+        QFile f(normalizedPath);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+            QMessageBox::warning(this, tr("Save Paint Project"), f.errorString());
+            return false;
+        }
+
+        f.write(QJsonDocument(m_canvas->toJson()).toJson(QJsonDocument::Indented));
+        m_currentPaintProjectPath = normalizedPath;
+        m_paintModified = false;
+        setStatus(tr("Saved %1").arg(QFileInfo(normalizedPath).fileName()));
+        updatePaintProjectStatus();
+        return true;
+    }
+
+    void savePaintProject()
+    {
+        if (m_currentPaintProjectPath.isEmpty()) {
+            savePaintProjectAs();
+            return;
+        }
+
+        writePaintProjectToFile(m_currentPaintProjectPath);
+    }
+
+    void savePaintProjectAs()
+    {
+        const QString startPath = m_currentPaintProjectPath.isEmpty() ? QString() : m_currentPaintProjectPath;
+        const QString filePath = QFileDialog::getSaveFileName(this, tr("Save Paint Project As"), startPath, tr("ADAM+ Paint Project (*.cvpaint);;JSON files (*.json);;All files (*.*)"));
+        if (filePath.isEmpty())
+            return;
+
+        writePaintProjectToFile(filePath);
+    }
+
+    void reduceToTmsColors()
+    {
+        const int conflicts = m_canvas->tmsConflictRowCount();
+        if (conflicts <= 0) {
+            QMessageBox::information(this,
+                                     tr("Reduce to TMS Colors"),
+                                     tr("No TMS bitmap color conflicts found. Nothing to reduce."));
+            setStatus(tr("Reduce TMS: no color conflicts"));
+            return;
+        }
+
+        const QString msg = tr("%1 TMS bitmap rows use more than 2 colors.\n\n"
+                               "This will permanently reduce the canvas to the same 2-color-per-row result used by .pattern/.color export.\n"
+                               "You can still use Undo after this operation.\n\n"
+                               "Continue?")
+                                .arg(conflicts);
+
+        if (QMessageBox::question(this, tr("Reduce to TMS Colors"), msg) != QMessageBox::Yes)
+            return;
+
+        m_canvas->reduceToTmsBitmapColors();
+    }
+
+    void findFirstTmsConflict()
+    {
+        if (!m_canvas->selectFirstTmsConflict()) {
+            QMessageBox::information(this,
+                                     tr("Find First TMS Conflict"),
+                                     tr("No TMS bitmap color conflicts found."));
+            setStatus(tr("Find TMS conflict: none"));
+            return;
+        }
+
+        setStatus(tr("First TMS color conflict selected"));
+    }
+
+    void findNextTmsConflict()
+    {
+        if (!m_canvas->selectNextTmsConflict()) {
+            QMessageBox::information(this,
+                                     tr("Find Next TMS Conflict"),
+                                     tr("No more TMS bitmap color conflicts found."));
+            setStatus(tr("Next TMS conflict: none"));
+            return;
+        }
+
+        setStatus(tr("Next TMS color conflict selected"));
+    }
+
+    void reduceSelectedTmsRow()
+    {
+        if (!m_canvas->reduceSelectedTmsRow()) {
+            setStatus(tr("Selected TMS row was not reduced"));
+            return;
+        }
+
+        setStatus(tr("Selected TMS row reduced"));
+    }
+
+    void reduceSelectedTmsRowAndNext()
+    {
+        if (!m_canvas->reduceSelectedTmsRow()) {
+            setStatus(tr("Selected TMS row was not reduced"));
+            return;
+        }
+
+        if (!m_canvas->selectNextTmsConflict()) {
+            QMessageBox::information(this,
+                                     tr("Reduce Selected + Next"),
+                                     tr("Selected TMS row was reduced. No more TMS bitmap color conflicts found."));
+            setStatus(tr("Selected TMS row reduced - no more conflicts"));
+            return;
+        }
+
+        setStatus(tr("Selected TMS row reduced - next conflict selected"));
+    }
+
+    void analyzeTmsColors()
+    {
+        const int conflicts = m_canvas->tmsConflictRowCount();
+        const int totalRows = 32 * 24 * 8;
+
+        if (conflicts <= 0) {
+            QMessageBox::information(this,
+                                     tr("TMS Color Analyzer"),
+                                     tr("Perfect. No TMS bitmap color conflicts found.\n\nAll %1 tile rows use maximum 2 colors.")
+                                         .arg(totalRows));
+            setStatus(tr("TMS analyzer: no color conflicts"));
+            return;
+        }
+
+        QMessageBox::information(this,
+                                 tr("TMS Color Analyzer"),
+                                 tr("%1 of %2 TMS bitmap rows use more than 2 colors.\n\n"
+                                    "During .pattern/.color export these rows will be reduced to the two most used colors in that row.")
+                                     .arg(conflicts)
+                                     .arg(totalRows));
+        setStatus(tr("TMS analyzer: %1 color-conflict rows").arg(conflicts));
+    }
+
+    void saveStamp()
+    {
+        if (!m_canvas->hasClipboardSelection()) {
+            QMessageBox::information(this, tr("Save Stamp"), tr("No stamp available. Select an area and use Make Stamp first."));
+            return;
+        }
+
+        const QString selectedPath = QFileDialog::getSaveFileName(this, tr("Save Stamp"), QString(), tr("ADAM+ Paint Stamp (*.cvstamp);;JSON files (*.json);;All files (*.*)"));
+        const QString filePath = ensureFileExtension(selectedPath, QStringLiteral("cvstamp"));
+        if (filePath.isEmpty())
+            return;
+
+        QFile f(filePath);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+            QMessageBox::warning(this, tr("Save Stamp"), f.errorString());
+            return;
+        }
+
+        f.write(QJsonDocument(m_canvas->stampToJson()).toJson(QJsonDocument::Indented));
+        setStatus(tr("Saved stamp %1").arg(QFileInfo(filePath).fileName()));
+    }
+
+    void loadStamp()
+    {
+        const QString filePath = QFileDialog::getOpenFileName(this, tr("Load Stamp"), QString(), tr("ADAM+ Paint Stamp (*.cvstamp);;JSON files (*.json);;All files (*.*)"));
+        if (filePath.isEmpty())
+            return;
+
+        QFile f(filePath);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QMessageBox::warning(this, tr("Load Stamp"), f.errorString());
+            return;
+        }
+
+        const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+        if (!doc.isObject() || !m_canvas->stampFromJson(doc.object())) {
+            QMessageBox::warning(this, tr("Load Stamp"), tr("This is not a valid ADAM+ Paint stamp."));
+            return;
+        }
+
+        setStatus(tr("Loaded stamp %1").arg(QFileInfo(filePath).fileName()));
+    }
+
+    void loadReferenceImage()
+    {
+        const QString filePath = QFileDialog::getOpenFileName(this, tr("Load Reference Image"), QString(), tr("Images (*.png *.bmp *.jpg *.jpeg);;All files (*.*)"));
+        if (filePath.isEmpty())
+            return;
+
+        if (!m_canvas->loadReferenceImage(filePath)) {
+            QMessageBox::warning(this, tr("Load Reference Image"), tr("Could not load reference image."));
+            return;
+        }
+
+        setStatus(tr("Loaded reference %1").arg(QFileInfo(filePath).fileName()));
+    }
+
+    void importPng()
+    {
+        const QString filePath = QFileDialog::getOpenFileName(this, tr("Import PNG"), QString(), tr("Images (*.png *.bmp *.jpg *.jpeg);;All files (*.*)"));
+        if (filePath.isEmpty())
+            return;
+
+        QImage img(filePath);
+        if (img.isNull() || !m_canvas->importImage(img)) {
+            QMessageBox::warning(this, tr("Import PNG"), tr("Could not import image file."));
+            return;
+        }
+
+        setStatus(tr("Imported %1 and converted to Coleco palette").arg(QFileInfo(filePath).fileName()));
+    }
+
+    void importPngDithered()
+    {
+        const QString filePath = QFileDialog::getOpenFileName(this, tr("Import PNG Dithered"), QString(), tr("Images (*.png *.bmp *.jpg *.jpeg);;All files (*.*)"));
+        if (filePath.isEmpty())
+            return;
+
+        QImage img(filePath);
+        if (img.isNull() || !m_canvas->importImageDithered(img)) {
+            QMessageBox::warning(this, tr("Import PNG Dithered"), tr("Could not import image file."));
+            return;
+        }
+
+        setStatus(tr("Imported %1 with checker dither").arg(QFileInfo(filePath).fileName()));
+    }
+
+    void importPngTmsConverted()
+    {
+        const QString filePath = QFileDialog::getOpenFileName(this, tr("Import PNG TMS/Coleco"), QString(), tr("Images (*.png *.bmp *.jpg *.jpeg);;All files (*.*)"));
+        if (filePath.isEmpty())
+            return;
+
+        QImage img(filePath);
+        if (img.isNull() || !m_canvas->importImageTmsConverted(img)) {
+            QMessageBox::warning(this, tr("Import PNG TMS/Coleco"), tr("Could not import image file."));
+            return;
+        }
+
+        setStatus(tr("Imported %1 with TMS/Coleco 2-color row conversion").arg(QFileInfo(filePath).fileName()));
+    }
+
+
+    void exportPng()
+    {
+        const QString selectedPath = QFileDialog::getSaveFileName(this, tr("Export PNG"), QString(), tr("PNG image (*.png);;All files (*.*)"));
+        const QString filePath = ensureFileExtension(selectedPath, QStringLiteral("png"));
+        if (filePath.isEmpty())
+            return;
+
+        if (!m_canvas->toImage().save(filePath, "PNG")) {
+            QMessageBox::warning(this, tr("Export PNG"), tr("Could not save PNG file."));
+            return;
+        }
+
+        setStatus(tr("Exported %1").arg(QFileInfo(filePath).fileName()));
+    }
+
+    void savePatternFile()
+    {
+        saveBinaryFile(tr("Save Pattern Data"), tr("Pattern data (*.pattern);;Binary files (*.bin);;All files (*.*)"), m_canvas->bitmapPatternBytes(), QStringLiteral("pattern"));
+    }
+
+    void saveColorFile()
+    {
+        saveBinaryFile(tr("Save Color Data"), tr("Color data (*.color);;Binary files (*.bin);;All files (*.*)"), m_canvas->bitmapColorBytes(), QStringLiteral("color"));
+    }
+
+    void saveBinaryFile(const QString& title, const QString& filter, const QByteArray& bytes, const QString& defaultExtension)
+    {
+        const QString selectedPath = QFileDialog::getSaveFileName(this, title, QString(), filter);
+        const QString filePath = ensureFileExtension(selectedPath, defaultExtension);
+        if (filePath.isEmpty())
+            return;
+
+        QFile f(filePath);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            QMessageBox::warning(this, title, f.errorString());
+            return;
+        }
+
+        f.write(bytes);
+        setStatus(tr("Saved %1 (%2 bytes)").arg(QFileInfo(filePath).fileName()).arg(bytes.size()));
+    }
+
+    QByteArray buildCvBasicTextFontBytes() const
+    {
+        QByteArray bytes;
+        bytes.reserve(96 * 8);
+
+        QFont font = m_textFontCombo ? m_textFontCombo->currentFont() : QFont(QStringLiteral("Arial"));
+
+        // TMS character patterns are always 8x8. We keep the selected family,
+        // but clamp the pixel size so normal ASCII characters fit inside 8 rows.
+        const int requestedSize = m_textSizeSpin ? m_textSizeSpin->value() : 8;
+        font.setPixelSize(qBound(6, requestedSize, 9));
+
+        if (m_textSpacingSpin)
+            font.setLetterSpacing(QFont::AbsoluteSpacing, qBound(-2, m_textSpacingSpin->value(), 2));
+
+        font.setBold(false);
+        font.setItalic(false);
+
+        QFontMetrics fm(font);
+
+        for (int ch = 32; ch <= 127; ++ch) {
+            const QString s = QString(QChar(ch));
+            QImage glyph(8, 8, QImage::Format_ARGB32);
+            glyph.fill(Qt::transparent);
+
+            QRect br = fm.boundingRect(s);
+            if (!s.trimmed().isEmpty()) {
+                QPainter gp(&glyph);
+                gp.setRenderHint(QPainter::TextAntialiasing, false);
+                gp.setFont(font);
+                gp.setPen(Qt::white);
+
+                const int x = (8 - br.width()) / 2 - br.left();
+                const int y = (8 - br.height()) / 2 - br.top();
+                gp.drawText(QPoint(x, y), s);
+                gp.end();
+            }
+
+            for (int y = 0; y < 8; ++y) {
+                quint8 row = 0;
+                for (int x = 0; x < 8; ++x) {
+                    if (qAlpha(glyph.pixel(x, y)) >= 96)
+                        row |= static_cast<quint8>(0x80 >> x);
+                }
+                bytes.append(static_cast<char>(row));
+            }
+        }
+
+        return bytes;
+    }
+
+    QVector<int> selectedTextGradientColors(int colorCount = 4) const
+    {
+        QVector<int> colors;
+        if (colorCount >= 1)
+            colors.append(m_textGradColor1Combo ? m_textGradColor1Combo->currentData().toInt() : 15);
+        if (colorCount >= 2)
+            colors.append(m_textGradColor2Combo ? m_textGradColor2Combo->currentData().toInt() : 14);
+        if (colorCount >= 3)
+            colors.append(m_textGradColor3Combo ? m_textGradColor3Combo->currentData().toInt() : 7);
+        if (colorCount >= 4)
+            colors.append(m_textGradColor4Combo ? m_textGradColor4Combo->currentData().toInt() : 8);
+
+        for (int& c : colors)
+            c = qBound(0, c, 15);
+
+        return colors;
+    }
+
+    QByteArray buildCvBasicMode1TextColorBytes() const
+    {
+        // Graphics II / MODE 1 color table byte:
+        // high nibble = foreground color, low nibble = background color.
+        // ASCII 32..127 = 96 characters * 8 rows = 768 bytes.
+        QByteArray bytes;
+        bytes.reserve(96 * 8);
+
+        const QVector<int> colors = selectedTextGradientColors(4);
+        const int bg = qBound(0, m_canvas ? m_canvas->backgroundColorIndex() : 0, 15);
+
+        for (int ch = 32; ch <= 127; ++ch) {
+            Q_UNUSED(ch);
+            for (int row = 0; row < 8; ++row) {
+                const int idx = qBound(0, (row * colors.size()) / 8, colors.size() - 1);
+                const int fg = qBound(0, colors.at(idx), 15);
+                bytes.append(static_cast<char>((fg << 4) | bg));
+            }
+        }
+
+        return bytes;
+    }
+
+
+    QString cvBasicTextFontRoutine(const QString& labelPrefix, bool addViewerRoutine, int mode) const
+    {
+        const QByteArray fontBytes = buildCvBasicTextFontBytes();
+        const QByteArray mode1ColorBytes = (mode == 1) ? buildCvBasicMode1TextColorBytes() : QByteArray();
+
+        QString out;
+        QTextStream ts(&out);
+
+        const QString family = m_textFontCombo ? m_textFontCombo->currentFont().family() : QStringLiteral("Arial");
+        const int sourceSize = m_textSizeSpin ? m_textSizeSpin->value() : 8;
+        const int sourceSpacing = m_textSpacingSpin ? m_textSpacingSpin->value() : 0;
+
+        auto appendLocalByteData = [](QTextStream& stream, const QString& label, const QByteArray& bytes) {
+            stream << label << ":\n";
+            for (int i = 0; i < bytes.size(); i += 16) {
+                stream << "\tDATA BYTE ";
+                const int count = qMin(16, bytes.size() - i);
+                for (int j = 0; j < count; ++j) {
+                    if (j > 0)
+                        stream << ",";
+                    const int value = static_cast<unsigned char>(bytes.at(i + j));
+                    stream << "$" << QStringLiteral("%1").arg(value, 2, 16, QLatin1Char('0')).toUpper();
+                }
+                stream << "\n";
+            }
+        };
+
+        ts << "\n";
+        ts << "REM --- ADAM+ generated CVBasic text font ---\n";
+        ts << "REM Source font: " << family << ", UI size=" << sourceSize << ", spacing=" << sourceSpacing << "\n";
+        ts << "REM TMS/CVBasic character patterns are 8x8; original direct 8x8 rendering.\n";
+        ts << "REM ASCII 32..127, 96 characters, 768 bytes.\n";
+        ts << "REM MODE 0 uses PAINT_TEXT_FONT. MODE 1 uses PAINT_TEXT_FONT_BANK0/1/2 and PAINT_TEXT_COLOR_BANK0/1/2.\n";
+        if (mode == 1) {
+            const QVector<int> colors = selectedTextGradientColors(4);
+            ts << "REM MODE 1 color DATA included as 3 separate pattern/color bank labels.\n";
+            ts << "REM Text gradient colors top-to-bottom: "
+               << colors.value(0, 15) << ","
+               << colors.value(1, 14) << ","
+               << colors.value(2, 7) << ","
+               << colors.value(3, 8) << "\n";
+        }
+        ts << "\n";
+
+        ts << "REM Selected routine: MODE " << mode << "\n";
+        ts << "REM MODE 0 uses PAINT_TEXT_FONT. MODE 1 uses PAINT_TEXT_FONT_BANK0/1/2 and PAINT_TEXT_COLOR_BANK0/1/2.\n\n";
+
+        if (addViewerRoutine) {
+            ts << "REM --- Small runnable text font example, only generated when With viewer / example is ON ---\n";
+            ts << "MODE " << mode << "\n";
+            ts << "SCREEN DISABLE\n";
+            if (mode == 1) {
+                ts << "REM MODE 1 / Graphics II uses 3 pattern/color banks for rows 0..7, 8..15, 16..23\n";
+                ts << "REM You can edit or replace each bank label separately.\n";
+                ts << "DEFINE VRAM $0100,$0300," << labelPrefix << "_TEXT_FONT_BANK0\n";
+                ts << "DEFINE VRAM $0900,$0300," << labelPrefix << "_TEXT_FONT_BANK1\n";
+                ts << "DEFINE VRAM $1100,$0300," << labelPrefix << "_TEXT_FONT_BANK2\n";
+                ts << "DEFINE VRAM $2100,$0300," << labelPrefix << "_TEXT_COLOR_BANK0\n";
+                ts << "DEFINE VRAM $2900,$0300," << labelPrefix << "_TEXT_COLOR_BANK1\n";
+                ts << "DEFINE VRAM $3100,$0300," << labelPrefix << "_TEXT_COLOR_BANK2\n";
+            } else {
+                ts << "DEFINE VRAM $0100,$0300," << labelPrefix << "_TEXT_FONT\n";
+            }
+            ts << "SCREEN ENABLE\n";
+            ts << "CLS\n";
+
+            if (mode == 1) {
+                ts << "REM MODE 1 full text-screen example: 32 columns x 24 rows\n";
+                ts << "PRINT AT 0,\" !\\\"#$%&'()*+,-./0123456789:;<=>?\"\n";
+                ts << "PRINT AT 32,\"@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\\\]^_\"\n";
+                ts << "PRINT AT 64,\"`abcdefghijklmnopqrstuvwxyz{|}~\"\n";
+                ts << "PRINT AT 640,\"ADAM+ TEXT FONT\"\n";
+                ts << "PRINT AT 672,\"STRING PRINT TEST\"\n";
+            } else {
+                ts << "REM MODE 0 text example\n";
+                ts << "PRINT AT 96,\"ADAM+ TEXT FONT\"\n";
+                ts << "PRINT AT 128,\"STRING PRINT TEST\"\n";
+            }
+
+            ts << "WHILE 1: WEND\n\n";
+        } else {
+            ts << "REM Data only: use these DEFINE VRAM lines inside your own main program.\n";
+            if (mode == 1) {
+                ts << "REM BANK0 rows 0..7   : DEFINE VRAM $0100,$0300," << labelPrefix << "_TEXT_FONT_BANK0\n";
+                ts << "REM BANK0 colors      : DEFINE VRAM $2100,$0300," << labelPrefix << "_TEXT_COLOR_BANK0\n";
+                ts << "REM BANK1 rows 8..15  : DEFINE VRAM $0900,$0300," << labelPrefix << "_TEXT_FONT_BANK1\n";
+                ts << "REM BANK1 colors      : DEFINE VRAM $2900,$0300," << labelPrefix << "_TEXT_COLOR_BANK1\n";
+                ts << "REM BANK2 rows 16..23 : DEFINE VRAM $1100,$0300," << labelPrefix << "_TEXT_FONT_BANK2\n";
+                ts << "REM BANK2 colors      : DEFINE VRAM $3100,$0300," << labelPrefix << "_TEXT_COLOR_BANK2\n";
+                ts << "REM Example for your own main, lines 20 and 21:\n";
+                ts << "REM   SCREEN DISABLE\n";
+                ts << "REM   DEFINE VRAM $1100,$0300," << labelPrefix << "_TEXT_FONT_BANK2\n";
+                ts << "REM   DEFINE VRAM $3100,$0300," << labelPrefix << "_TEXT_COLOR_BANK2\n";
+                ts << "REM   SCREEN ENABLE\n";
+                ts << "REM   PRINT AT 640,\"ADAM+ TEXT FONT\"\n";
+                ts << "REM   PRINT AT 672,\"STRING PRINT TEST\"\n\n";
+            } else {
+                ts << "REM MODE 0 font       : DEFINE VRAM $0100,$0300," << labelPrefix << "_TEXT_FONT\n";
+                ts << "REM Example for your own main:\n";
+                ts << "REM   SCREEN DISABLE\n";
+                ts << "REM   DEFINE VRAM $0100,$0300," << labelPrefix << "_TEXT_FONT\n";
+                ts << "REM   SCREEN ENABLE\n";
+                ts << "REM   PRINT AT 96,\"ADAM+ TEXT FONT\"\n";
+                ts << "REM   PRINT AT 128,\"STRING PRINT TEST\"\n\n";
+            }
+        }
+
+        if (mode == 1) {
+            ts << "REM --- MODE 1 bank 0: screen rows 0..7 ---\n";
+            appendLocalByteData(ts, labelPrefix + QStringLiteral("_TEXT_FONT_BANK0"), fontBytes);
+            ts << "\n";
+            appendLocalByteData(ts, labelPrefix + QStringLiteral("_TEXT_COLOR_BANK0"), mode1ColorBytes);
+
+            ts << "\nREM --- MODE 1 bank 1: screen rows 8..15 ---\n";
+            appendLocalByteData(ts, labelPrefix + QStringLiteral("_TEXT_FONT_BANK1"), fontBytes);
+            ts << "\n";
+            appendLocalByteData(ts, labelPrefix + QStringLiteral("_TEXT_COLOR_BANK1"), mode1ColorBytes);
+
+            ts << "\nREM --- MODE 1 bank 2: screen rows 16..23 ---\n";
+            appendLocalByteData(ts, labelPrefix + QStringLiteral("_TEXT_FONT_BANK2"), fontBytes);
+            ts << "\n";
+            appendLocalByteData(ts, labelPrefix + QStringLiteral("_TEXT_COLOR_BANK2"), mode1ColorBytes);
+        } else {
+            appendLocalByteData(ts, labelPrefix + QStringLiteral("_TEXT_FONT"), fontBytes);
+        }
+        return out;
+    }
+
+    void insertBitmapDataInEditor()
+    {
+        const bool addViewerRoutine = m_addViewerRoutineCheck && m_addViewerRoutineCheck->isChecked();
+
+        QString data;
+        QString routineName;
+
+        if (m_routineFontMode0Radio && m_routineFontMode0Radio->isChecked()) {
+            data = cvBasicTextFontRoutine(QStringLiteral("PAINT"), addViewerRoutine, 0);
+            routineName = tr("font MODE 0");
+        } else if (m_routineFontMode1Radio && m_routineFontMode1Radio->isChecked()) {
+            data = cvBasicTextFontRoutine(QStringLiteral("PAINT"), addViewerRoutine, 1);
+            routineName = tr("font MODE 1");
+        } else {
+            data = m_canvas->exportCvBasicBitmapData(QStringLiteral("PAINT"), addViewerRoutine);
+            routineName = tr("bitmap screen");
+        }
+
+        if (onInsertRequested)
+            onInsertRequested(data);
+
+        const int conflicts = m_canvas->tmsConflictRowCount();
+        if ((m_routineBitmapScreenRadio && m_routineBitmapScreenRadio->isChecked()) && conflicts > 0) {
+            setStatus(tr("Paint %1 inserted - viewer/example=%2 - %3 TMS rows had more than 2 colors and were reduced")
+                          .arg(routineName)
+                          .arg(addViewerRoutine ? tr("ON") : tr("OFF"))
+                          .arg(conflicts));
+        } else {
+            setStatus(tr("Paint %1 inserted - viewer/example=%2")
+                          .arg(routineName)
+                          .arg(addViewerRoutine ? tr("ON") : tr("OFF")));
+        }
+    }
+
+private:
+    CvBasicPaintCanvas* m_canvas = nullptr;
+    QScrollArea* m_canvasScroll = nullptr;
+    QString m_currentPaintProjectPath;
+    bool m_paintModified = false;
+    QVector<QPushButton*> m_paletteButtons;
+    QLabel* m_selectedColorLabel = nullptr;
+    QLabel* m_backgroundColorLabel = nullptr;
+    QVector<QPushButton*> m_toolButtons;
+    QVector<QPushButton*> m_brushSizeButtons;
+    QVector<QPushButton*> m_zoomButtons;
+    QCheckBox* m_addViewerRoutineCheck = nullptr;
+    QRadioButton* m_routineFontMode0Radio = nullptr;
+    QRadioButton* m_routineFontMode1Radio = nullptr;
+    QRadioButton* m_routineBitmapScreenRadio = nullptr;
+    QFontComboBox* m_textFontCombo = nullptr;
+    QSpinBox* m_textSizeSpin = nullptr;
+    QSpinBox* m_textSpacingSpin = nullptr;
+    QComboBox* m_textGradColor1Combo = nullptr;
+    QComboBox* m_textGradColor2Combo = nullptr;
+    QComboBox* m_textGradColor3Combo = nullptr;
+    QComboBox* m_textGradColor4Combo = nullptr;
+    QAction* m_undoAction = nullptr;
+    QAction* m_redoAction = nullptr;
+};
 
 // ============================================================================
 // Integrated CVBasic sprite editor
@@ -9969,6 +14343,46 @@ void CvBasicEditorWindow::setupUi()
     m_soundPage = soundWidget;
     m_mainPages->addTab(m_soundPage, tr("SOUND"));
 
+    CvBasicPaintEditorPage* paintWidget = new CvBasicPaintEditorPage(m_mainPages);
+    paintWidget->onInsertRequested = [this](const QString& text) {
+        const QString data = text.trimmed();
+        QPlainTextEdit* ed = activeEditor();
+        if (!data.isEmpty() && ed) {
+            QTextCursor cursor = ed->textCursor();
+
+            if (!cursor.atBlockStart())
+                cursor.insertText("\n");
+
+            cursor.insertText(data + "\n");
+            ed->setTextCursor(cursor);
+
+            refreshBasicEditorLayout();
+            ed->setFocus(Qt::OtherFocusReason);
+
+            m_dirty = true;
+            updateWindowTitle();
+            updateSidePanels();
+            updateStatusText(tr("Paint DATA inserted"));
+        }
+
+        if (m_mainPages && m_basicPage)
+            m_mainPages->setCurrentWidget(m_basicPage);
+
+        refreshBasicEditorLayout();
+    };
+    paintWidget->onStatusRequested = [this](const QString& text) {
+        updateStatusText(text);
+    };
+    paintWidget->onTitleChanged = [this, paintWidget](const QString& title) {
+        const int index = m_mainPages ? m_mainPages->indexOf(paintWidget) : -1;
+        if (index >= 0)
+            m_mainPages->setTabText(index, tr("PAINT - %1").arg(title));
+    };
+
+    m_paintPage = paintWidget;
+    m_mainPages->addTab(m_paintPage, tr("PAINT"));
+    paintWidget->refreshPaintProjectTitle();
+
     setCentralWidget(m_mainPages);
 
     m_highlighter = nullptr; // Source tabs create their own highlighter per document.
@@ -10205,7 +14619,7 @@ void CvBasicEditorWindow::setupActions()
     m_actCompileRun->setShortcut(QKeySequence(Qt::Key_F5));
     connect(m_actCompileRun, &QAction::triggered, this, &CvBasicEditorWindow::compileAndRun);
 
-    m_actBasicEditor = new QAction(tr("BASIC Editor"), this);
+    m_actBasicEditor = new QAction(tr("Basic Editor"), this);
     connect(m_actBasicEditor, &QAction::triggered, this, &CvBasicEditorWindow::showBasicEditor);
 
     m_actSpriteEditor = new QAction(tr("Sprite Editor"), this);
@@ -10213,6 +14627,9 @@ void CvBasicEditorWindow::setupActions()
 
     m_actSoundEditor = new QAction(tr("Sound Editor"), this);
     connect(m_actSoundEditor, &QAction::triggered, this, &CvBasicEditorWindow::showSoundEditor);
+
+    m_actPaintEditor = new QAction(tr("Graphics Editor"), this);
+    connect(m_actPaintEditor, &QAction::triggered, this, &CvBasicEditorWindow::showPaintEditor);
 
     #if defined(Q_OS_WIN)
     m_actChooseCvBasic = new QAction(tr("Set cvbasic.exe..."), this);
@@ -10242,8 +14659,12 @@ void CvBasicEditorWindow::setupMenusAndToolbar()
 
     QMenu* toolsMenu = menuBar()->addMenu(tr("PLUG-INS"));
     toolsMenu->addAction(m_actBasicEditor);
+    toolsMenu->addSeparator();
     toolsMenu->addAction(m_actSpriteEditor);
+    toolsMenu->addSeparator();
     toolsMenu->addAction(m_actSoundEditor);
+    toolsMenu->addSeparator();
+    toolsMenu->addAction(m_actPaintEditor);
 
     QMenu* helpMenu = menuBar()->addMenu(tr("Help"));
     helpMenu->addAction(m_actAbout);
@@ -10843,6 +15264,14 @@ void CvBasicEditorWindow::showSoundEditor()
     updateStatusText(tr("Sound editor"));
 }
 
+void CvBasicEditorWindow::showPaintEditor()
+{
+    if (m_mainPages && m_paintPage)
+        m_mainPages->setCurrentWidget(m_paintPage);
+
+    updateStatusText(tr("Paint editor"));
+}
+
 
 void CvBasicEditorWindow::toggleFoldLines(bool checked)
 {
@@ -11421,10 +15850,9 @@ void CvBasicEditorWindow::startCvBasic()
     QStringList args;
     args << m_buildSourcePath << m_asmPath;
 
-    appendOutput("> " + quotedNativePath(m_cvbasicExePath) + " "
+    appendOutput("> " + quotedNativePath(m_cvbasicExePath) + " --sgm "
                  + quotedNativePath(m_buildSourcePath) + " "
                  + quotedNativePath(m_asmPath) + "\n\n");
-
     m_process->start(m_cvbasicExePath, args);
 }
 
