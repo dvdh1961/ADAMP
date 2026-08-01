@@ -29,6 +29,7 @@
 #include <QIODevice>
 #include <QFileInfo>
 #include <QDir>
+#include <QCoreApplication>
 
 #include "cv.h"
 #include "cvbank.h"
@@ -62,6 +63,180 @@ static int g_cpm_trace = 0;
 #endif
 static bool g_cpm_protection_active = false;
 static int  g_cleanup_phase = 0; // 0=Wachten, 1=Injectie DB, 2=Injectie BF, 3=Klaar
+
+static void adamp_vdp_trace(const char *event, unsigned value)
+{
+    static QFile traceFile(
+        QCoreApplication::applicationDirPath() + "/ADAMP_VDP_TRACE.log");
+    static unsigned count = 0;
+    if (count++ >= 250000) return;
+
+    if (!traceFile.isOpen())
+    {
+        if (!traceFile.open(QIODevice::WriteOnly |
+                            QIODevice::Text |
+                            QIODevice::Truncate))
+            return;
+    }
+
+    char line[512];
+    const int lineLength = std::snprintf(
+        line, sizeof(line),
+        "%s pc=%04X val=%02X key=%u addr=%04X mode=%u sr=%02X "
+        "r0=%02X r1=%02X r2=%02X r3=%02X r4=%02X r5=%02X r6=%02X r7=%02X\n",
+        event, (unsigned)Z80.pc.w.l, value & 0xFFu,
+        (unsigned)tms.VKey, (unsigned)tms.VAddr, (unsigned)tms.Mode,
+        (unsigned)tms.SR,
+        tms.VR[0], tms.VR[1], tms.VR[2], tms.VR[3],
+        tms.VR[4], tms.VR[5], tms.VR[6], tms.VR[7]);
+
+    if (lineLength > 0)
+        traceFile.write(line, lineLength < (int)sizeof(line) ? lineLength : (int)sizeof(line) - 1);
+    traceFile.flush();
+}
+
+// Diagnostic snapshots, refreshed once per second while the TMS VDP is active.
+// The files are written next to the emulator executable.
+static void adamp_dump_machine_state()
+{
+    const QString base = QCoreApplication::applicationDirPath();
+
+    QFile vramFile(base + "/ADAMP_VRAM.bin");
+    if (vramFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    {
+        vramFile.write(reinterpret_cast<const char *>(VDP_Memory), 0x4000);
+        vramFile.close();
+    }
+
+    QFile ramFile(base + "/ADAMP_RAM.bin");
+    if (ramFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    {
+        // Include both the 64 KiB intrinsic RAM and the 64 KiB expansion RAM.
+        ramFile.write(reinterpret_cast<const char *>(RAM_Memory),
+                      MAX_RAM_SIZE * 1024);
+        ramFile.close();
+    }
+
+    // Snapshot exactly what the Z80 sees, without using coleco_ReadByte()
+    // (which has AdamNet read side effects at PCB addresses).
+    QFile activeFile(base + "/ADAMP_ACTIVE_RAM.bin");
+    if (activeFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    {
+        for (unsigned page = 0; page < 8; ++page)
+            activeFile.write(
+                reinterpret_cast<const char *>(MemoryMap[page]), 0x2000);
+        activeFile.close();
+    }
+
+    QFile stateFile(base + "/ADAMP_STATE.txt");
+    if (stateFile.open(QIODevice::WriteOnly |
+                       QIODevice::Text |
+                       QIODevice::Truncate))
+    {
+        char state[1024];
+        const int length = std::snprintf(
+            state, sizeof(state),
+            "PC=%04X VDP_ADDR=%04X VDP_KEY=%u MODE=%u SR=%02X CUR_LINE=%u\n"
+            "PORT20=%02X PORT60=%02X RAM_PAGE=%u RAM_PAGES=%u\n"
+            "VR0=%02X VR1=%02X VR2=%02X VR3=%02X VR4=%02X VR5=%02X VR6=%02X VR7=%02X\n"
+            "NAME=%04X PATTERN=%04X COLOR=%04X SPR_ATTR=%04X SPR_PATTERN=%04X\n"
+            "MAP0=%p MAP1=%p MAP2=%p MAP3=%p MAP4=%p MAP5=%p MAP6=%p MAP7=%p\n",
+            (unsigned)Z80.pc.w.l, (unsigned)tms.VAddr, (unsigned)tms.VKey,
+            (unsigned)tms.Mode, (unsigned)tms.SR, (unsigned)tms.CurLine,
+            (unsigned)coleco_port20, (unsigned)coleco_port60,
+            (unsigned)RAMPage, (unsigned)RAMPages,
+            tms.VR[0], tms.VR[1], tms.VR[2], tms.VR[3],
+            tms.VR[4], tms.VR[5], tms.VR[6], tms.VR[7],
+            (unsigned)(tms.ChrTab - VDP_Memory),
+            (unsigned)(tms.ChrGen - VDP_Memory),
+            (unsigned)(tms.ColTab - VDP_Memory),
+            (unsigned)(tms.SprTab - VDP_Memory),
+            (unsigned)(tms.SprGen - VDP_Memory),
+            (void *)MemoryMap[0], (void *)MemoryMap[1],
+            (void *)MemoryMap[2], (void *)MemoryMap[3],
+            (void *)MemoryMap[4], (void *)MemoryMap[5],
+            (void *)MemoryMap[6], (void *)MemoryMap[7]);
+
+        if (length > 0)
+            stateFile.write(state,
+                length < (int)sizeof(state) ? length : (int)sizeof(state) - 1);
+        stateFile.close();
+    }
+}
+
+struct AdampCpuSample
+{
+    unsigned short pc;
+    unsigned short sp;
+    unsigned char bytes[4];
+};
+
+// Preserve the instruction history immediately before Recipe/SmartFILER
+// unexpectedly enters the directory buffer at page zero.
+static void adamp_cpu_crash_trace()
+{
+    static AdampCpuSample history[256];
+    static unsigned historyPos = 0;
+    static unsigned historyCount = 0;
+    static int postTrigger = -1;
+    static QFile traceFile;
+
+    AdampCpuSample sample;
+    sample.pc = Z80.pc.w.l;
+    sample.sp = Z80.sp.w.l;
+    for (unsigned i = 0; i < 4; ++i)
+    {
+        const unsigned address = (sample.pc + i) & 0xFFFFu;
+        sample.bytes[i] = *(MemoryMap[address >> 13] + (address & 0x1FFF));
+    }
+
+    history[historyPos] = sample;
+    historyPos = (historyPos + 1u) & 255u;
+    if (historyCount < 256u) ++historyCount;
+
+    // Restrict the trigger to the final Graphics-II application screen.
+    if (postTrigger < 0 &&
+        tms.Mode == 2 && tms.VR[1] == 0x48 && sample.pc < 0x0100)
+    {
+        traceFile.setFileName(
+            QCoreApplication::applicationDirPath() + "/ADAMP_CPU_CRASH.log");
+        if (traceFile.open(QIODevice::WriteOnly |
+                           QIODevice::Text |
+                           QIODevice::Truncate))
+        {
+            const unsigned start = (historyPos + 256u - historyCount) & 255u;
+            for (unsigned n = 0; n < historyCount; ++n)
+            {
+                const AdampCpuSample &s = history[(start + n) & 255u];
+                char line[96];
+                const int len = std::snprintf(
+                    line, sizeof(line),
+                    "%s PC=%04X SP=%04X BYTES=%02X %02X %02X %02X\n",
+                    (n + 1u == historyCount) ? "TRIGGER" : "BEFORE ",
+                    (unsigned)s.pc, (unsigned)s.sp,
+                    s.bytes[0], s.bytes[1], s.bytes[2], s.bytes[3]);
+                if (len > 0) traceFile.write(line, len);
+            }
+            traceFile.flush();
+            postTrigger = 512;
+        }
+    }
+    else if (postTrigger > 0 && traceFile.isOpen())
+    {
+        char line[96];
+        const int len = std::snprintf(
+            line, sizeof(line),
+            "AFTER   PC=%04X SP=%04X BYTES=%02X %02X %02X %02X\n",
+            (unsigned)sample.pc, (unsigned)sample.sp,
+            sample.bytes[0], sample.bytes[1], sample.bytes[2], sample.bytes[3]);
+        if (len > 0) traceFile.write(line, len);
+        if (--postTrigger == 0)
+        {
+            traceFile.flush();
+            traceFile.close();
+        }
+    }
+}
 
 int breakpoints[MAX_BREAKPOINTS];
 int breakpoint_count = 0;
@@ -209,7 +384,9 @@ static inline void vdp_writectrl_active(BYTE value)
         return;
     }
 
+    adamp_vdp_trace("CTRL-B", value);
     tms9918_writectrl(value);
+    adamp_vdp_trace("CTRL-A", value);
 }
 
 static inline BYTE vdp_readdata_active(void)
@@ -241,6 +418,7 @@ static inline BYTE vdp_readctrl_active(void)
     }
 
     value = tms9918_readctrl();
+    adamp_vdp_trace("STATUS", value);
 
     /*
      * Reading VDP status clears the VDP interrupt latch.
@@ -2161,7 +2339,8 @@ int coleco_do_scanline(void)
                     );
             }
 
-             ts = z80_do_opcode();
+            adamp_cpu_crash_trace();
+            ts = z80_do_opcode();
 
             CurScanLine_len -= ts;
             frametstates   += ts;
@@ -2177,6 +2356,13 @@ int coleco_do_scanline(void)
     // VDP scanline update
     // ------------------------------------------------------------
     vdp_loop_active();
+    if (!coleco_vdp_is_f18a() && tms.CurLine == TMS9918_END_LINE)
+    {
+        static unsigned diagnosticFrame = 0;
+        adamp_vdp_trace("FRAME", 0);
+        if ((++diagnosticFrame % 60u) == 0u)
+            adamp_dump_machine_state();
+    }
 
     const bool vdp_irq_level = vdp_irq_level_active();
 
@@ -2468,4 +2654,3 @@ int coleco_virtual_cpm_diskboot(const char* cpmTapeDdpPath,
 }
 // --- Einde extern C ----------------------------------------------------------------
 }
-
