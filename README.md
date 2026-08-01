@@ -80,6 +80,20 @@ From the moment we have a fully working hardware system, everything will be publ
 
 ## 🚀 Versions
 
+Version 1.2.08.26 x86_64 Windows & Linux
+
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/V1.2.08.png)
+
+- New tool added to CVBasic suite --> Graphic Editor
+- Smartfiller, Address book , Recipes now working!
+- Build a Injector *.txt or *.bas files inject into any application
+- Added Injector into Terminal
+- Minimize button added to application
+- Bugs fixed
+
+
+---
+
 Version 1.1.06.26 x86_64 Windows & Linux
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/CVBASIC_PLUGINS1.png)
