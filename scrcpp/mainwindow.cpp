@@ -110,7 +110,7 @@ MainWindow::MainWindow(QWidget *parent)
     QCoreApplication::setApplicationName("ADAMP_EMU");
 
     // Version
-    appVersion = "1.2.08.26";
+    appVersion = "1.3.08.26";
 
     setWindowTitle(QString("ADAM+ Emulator - v%1").arg(appVersion));
 
