@@ -82,6 +82,14 @@ From the moment we have a fully working hardware system, everything will be publ
 
 Version 1.2.08.26 x86_64 Windows & Linux
 
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/FullF18a.png)
+
+- This version has Full F18a support!
+
+---
+
+Version 1.2.08.26 x86_64 Windows & Linux
+
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/V1.2.08.png)
 
 - New tool added to CVBasic suite --> Graphic Editor
