@@ -227,6 +227,10 @@ unsigned char tms9918_readctrl(void) {
     //retval = tms.SR | 0x80;  // forceer bit7 (test)
 
     retval = tms.SR;
+
+    /* A status-port read resets the two-byte TMS9918A control latch. */
+   // tms.VKey = 1;
+
     tms.SR &= TMS9918_STAT_5THNUM|TMS9918_STAT_5THSPR;
 
 

@@ -1,4 +1,5 @@
 #include "f18a.h"
+#include "f18a_gpu.h"
 #include "f18a_term80.h"
 #include "video_bridge.h"
 
@@ -22,7 +23,7 @@
  * - basic 16x16 sprites
  */
 
-#define F18A_VRAM_SIZE       0x4000u   /* TMS-compatible 16 KiB for now */
+#define F18A_VRAM_SIZE       0x10000u  /* complete F18A/GPU address space */
 #define F18A_VRAM_MASK       0x3FFFu
 #define F18A_REGISTER_COUNT  64u       /* TMS regs 0-7 + F18A/extended regs */
 #define F18A_PALETTE_ENTRIES 64u       /* Infrastructure for later F18A palette RAM */
@@ -40,6 +41,7 @@
 #define F18A_NTSC_SCANLINES 262u
 #define F18A_PAL_SCANLINES  313u
 #define F18A_TIMING_ADJUST  0
+#define F18A_GPU_INSTRUCTIONS_PER_SCANLINE 400u
 
 #define F18A_80COL_WIDTH   480
 #define F18A_80COL_HEIGHT  192
@@ -74,6 +76,7 @@ static int g_80col_buffer_initialized = 0;
 
 static unsigned char  g_vram[F18A_VRAM_SIZE];
 static unsigned char  g_reg[F18A_REGISTER_COUNT];
+static F18aGpu g_gpu;
 
 /*
  * infrastructure only.
@@ -83,9 +86,26 @@ static unsigned char  g_reg[F18A_REGISTER_COUNT];
  */
 static unsigned short g_palette12[F18A_PALETTE_ENTRIES];
 static unsigned char  g_palette_dirty = 0;
+static unsigned char  g_palette_mode = 0;
+static unsigned char  g_palette_auto = 0;
+static unsigned char  g_palette_address = 0;
+static unsigned char  g_palette_first_byte = 0;
+static unsigned char  g_palette_byte_latch = 0;
 
 static unsigned char g_status = 0;
 static unsigned char g_read_buffer = 0;
+
+/*
+ * Enhanced Register Mode (ERM).
+ *
+ * The real F18A powers up locked for compatibility with software that writes
+ * register numbers above 7 on a TMS9918A.  ERM is enabled only by two
+ * consecutive writes of >1C to VR57.  VR15 then selects the status register
+ * returned by a control-port read.
+ */
+static unsigned char g_erm_unlocked = 0;
+static unsigned char g_unlock_stage = 0;
+static unsigned char g_status_select = 0;
 
 static unsigned int  g_address = 0;
 static unsigned char g_first_ctrl_byte = 0;
@@ -93,11 +113,50 @@ static int           g_ctrl_latch = 0;
 
 static unsigned int g_scanlines = F18A_NTSC_SCANLINES;
 
-static int g_logged_reset = 0;
-static int g_logged_loop = 0;
 static unsigned int g_loop_counter = 0;
-static unsigned int g_frame_counter = 0;
 
+static void f18a_gpu_prepare_mapped_memory(int blanking_override)
+{
+    unsigned int i;
+    const unsigned int active_lines = (g_reg[49] & 0x40u) ? 240u : 192u;
+
+    memcpy(&g_vram[0x6000u], g_reg, F18A_REGISTER_COUNT);
+    for (i = 0u; i < F18A_PALETTE_ENTRIES; ++i) {
+        const unsigned short color = g_palette12[i] & 0x0FFFu;
+        g_vram[0x5000u + i * 2u] = (unsigned char)(color >> 8);
+        g_vram[0x5001u + i * 2u] = (unsigned char)color;
+    }
+    g_vram[0x7000u] = (unsigned char)((g_loop_counter < 256u) ? g_loop_counter : 255u);
+    g_vram[0x7001u] = (blanking_override >= 0)
+                    ? (unsigned char)(blanking_override != 0)
+                    : ((g_loop_counter >= active_lines) ? 1u : 0u);
+    g_vram[0xB000u] = g_status;
+    g_vram[0xB002u] |= 0x80u;
+}
+
+static void f18a_gpu_commit_mapped_memory(void)
+{
+    unsigned int i;
+    memcpy(g_reg, &g_vram[0x6000u], F18A_REGISTER_COUNT);
+    for (i = 0u; i < F18A_PALETTE_ENTRIES; ++i) {
+        const unsigned short color = (unsigned short)(
+            ((unsigned short)(g_vram[0x5000u + i * 2u] & 0x0Fu) << 8) |
+            g_vram[0x5001u + i * 2u]);
+        if (g_palette12[i] != color) {
+            g_palette12[i] = color;
+            g_palette_dirty = 1u;
+        }
+    }
+    if (!g_gpu.running)
+        g_vram[0xB002u] &= (unsigned char)~0x80u;
+}
+
+static void f18a_gpu_run(unsigned int budget, int blanking_override)
+{
+    f18a_gpu_prepare_mapped_memory(blanking_override);
+    f18a_gpu_execute(&g_gpu, budget);
+    f18a_gpu_commit_mapped_memory();
+}
 static unsigned int f18a_apply_timing_adjust(unsigned int base_lines)
 {
     int adjusted = (int)base_lines + F18A_TIMING_ADJUST;
@@ -109,62 +168,6 @@ static unsigned int f18a_apply_timing_adjust(unsigned int base_lines)
     return (unsigned int)adjusted;
 }
 
-
-/*
- * debug logging
- * --------------------
- * Keep this at 1 while validating mode/register setup.
- * Set to 0 later to silence the register logs.
- */
-#define F18A_DEBUG_REG_WRITES 0
-
-#if F18A_DEBUG_REG_WRITES
-static unsigned char g_reg_last_logged[F18A_REGISTER_COUNT];
-static unsigned char g_reg_has_logged[F18A_REGISTER_COUNT];
-
-static void f18a_log_register_write(unsigned int reg, unsigned char value)
-{
-    if (reg >= F18A_REGISTER_COUNT)
-        return;
-
-    /* Avoid endless spam: only log when the value changed. */
-    if (g_reg_has_logged[reg] && g_reg_last_logged[reg] == value)
-        return;
-
-    g_reg_has_logged[reg] = 1;
-    g_reg_last_logged[reg] = value;
-
-    if (reg <= 7)
-    {
-        const unsigned int r0 = (reg == 0) ? value : g_reg[0];
-        const unsigned int r1 = (reg == 1) ? value : g_reg[1];
-        const int m1 = (r1 & F18A_MODE_M1) ? 1 : 0;
-        const int m2 = (r1 & F18A_MODE_M2) ? 1 : 0;
-        const int m3 = (r0 & F18A_MODE_M3) ? 1 : 0;
-
-        const char* mode = "Graphics I";
-        if (m1 && !m2 && !m3)      mode = "Text";
-        else if (!m1 && m2 && !m3) mode = "Multicolor";
-        else if (!m1 && !m2 && m3) mode = "Graphics II";
-
-        printf("[F18A] REG%u = %02X  mode=%s  R0=%02X R1=%02X R2=%02X R3=%02X R4=%02X R5=%02X R6=%02X R7=%02X\n",
-               reg, value, mode,
-               (unsigned)g_reg[0], (unsigned)g_reg[1], (unsigned)g_reg[2], (unsigned)g_reg[3],
-               (unsigned)g_reg[4], (unsigned)g_reg[5], (unsigned)g_reg[6], (unsigned)g_reg[7]);
-        fflush(stdout);
-    }
-    else if (reg < 16)
-    {
-        printf("[F18A] REG%u = %02X\n", reg, value);
-        fflush(stdout);
-    }
-    else
-    {
-        printf("[F18A] EXT REG%u = %02X stored, no visual effect yet\n", reg, value);
-        fflush(stdout);
-    }
-}
-#endif
 
 static const uint32_t s_tms_palette[16] = {
     0xFF000000u, /* 0 transparent -> black for now */
@@ -214,12 +217,11 @@ static void f18a_reset_palette(void)
 
 static inline uint32_t f18a_color(unsigned int idx)
 {
-    /*
-     * keep rendering on the stable TMS-compatible palette for now.
-     * Later we can switch this to g_palette12[] when F18A palette register
-     * writes are fully connected and validated.
-     */
-    return s_tms_palette[idx & 0x0Fu];
+    const unsigned short rgb = g_palette12[idx & 0x3Fu];
+    const unsigned int r = (rgb >> 8) & 0x0Fu;
+    const unsigned int g = (rgb >> 4) & 0x0Fu;
+    const unsigned int b = rgb & 0x0Fu;
+    return 0xFF000000u | (r * 17u << 16) | (g * 17u << 8) | (b * 17u);
 }
 
 static inline unsigned char f18a_vram_read(unsigned int addr)
@@ -246,126 +248,101 @@ void f18a_hide_current_sprites(void)
     g_vram[(attr_base + 3u) & F18A_VRAM_MASK] = 0x00u;
 }
 
-static void f18a_draw_sprites_on_line(int y, uint32_t* line)
+static void f18a_draw_sprites_on_line(int y, uint32_t* line,
+                                      const unsigned char* tile_priority)
 {
     const unsigned int attr_base = ((unsigned int)(g_reg[5] & 0x7Fu) << 7) & F18A_VRAM_MASK;
     const unsigned int patt_base = ((unsigned int)(g_reg[6] & 0x07u) << 11) & F18A_VRAM_MASK;
+    const unsigned int ecm = g_erm_unlocked ? (g_reg[49] & 0x03u) : 0u;
+    const unsigned int ecm_offset = 0x0800u >> ((g_reg[29] & 0xC0u) >> 6);
+    const int magnified = (g_reg[1] & F18A_REG1_SPRITE_MAG) ? 1 : 0;
+    const int row30 = g_erm_unlocked && (g_reg[49] & 0x40u);
+    int sprite_count = (g_reg[51] > 0u && g_reg[51] <= 32u) ? g_reg[51] : 32;
 
-    /*
-     * TMS9918A sprite list:
-     * Y = 0xD0 betekent EINDE VAN DE SPRITE LIJST.
-     * Dus eerst zoeken hoeveel sprites geldig zijn.
-     */
-    int sprite_count = 32;
-
-    for (int i = 0; i < 32; ++i)
+    for (int i = 0; i < sprite_count; ++i)
     {
         const unsigned int sa = attr_base + (unsigned int)i * 4u;
         const unsigned char sy_raw = f18a_vram_read(sa + 0u);
 
-        if (sy_raw == 0xD0u)
+        if (sy_raw == 0xD0u && !row30)
         {
             sprite_count = i;
             break;
         }
     }
 
-    /*
-     * Daarna tekenen van achter naar voor voor correcte prioriteit.
-     * Maar alleen de geldige sprites vóór de 0xD0 marker.
-     */
     for (int i = sprite_count - 1; i >= 0; --i)
     {
         const unsigned int sa = attr_base + (unsigned int)i * 4u;
         const unsigned char sy_raw = f18a_vram_read(sa + 0u);
-
-        const int sy = ((int)sy_raw + 1) & 0xFF;
-        const int sprite_16 = (g_reg[1] & F18A_REG1_SPRITE_16) ? 1 : 0;
-        const int sprite_size = sprite_16 ? 16 : 8;
-        const int rel_y = y - sy;
-
-        if (rel_y < 0 || rel_y >= sprite_size)
-            continue;
-
         int sx = (int)f18a_vram_read(sa + 1u);
-        unsigned char pattern = f18a_vram_read(sa + 2u);
+        const unsigned char pattern = f18a_vram_read(sa + 2u);
         const unsigned char color_byte = f18a_vram_read(sa + 3u);
-        const unsigned int color = color_byte & 0x0Fu;
+        int sprite_16 = (g_reg[1] & F18A_REG1_SPRITE_16) ? 1 : 0;
+        int sprite_size;
+        int sy;
+        int rel_y;
+        int source_y;
+        unsigned int palette_base;
 
-        if (color == 0)
+        if (g_erm_unlocked && !sprite_16 && (color_byte & 0x10u))
+            sprite_16 = 1;
+        sprite_size = sprite_16 ? 16 : 8;
+        sy = row30 ? (int)sy_raw : (((int)sy_raw + 1) & 0xFF);
+        if (sy > (row30 ? 0xF0 : 0xE0))
+            sy -= 256;
+        rel_y = y - sy;
+        if (rel_y < 0 || rel_y >= (sprite_size << magnified))
             continue;
+        source_y = rel_y >> magnified;
+        if (g_erm_unlocked && (color_byte & 0x20u))
+            source_y = sprite_size - source_y - 1;
 
         if (color_byte & 0x80u)
             sx -= 32;
 
-        const uint32_t argb = f18a_color(color);
-
-        if (!sprite_16)
-        {
-            const unsigned char bits =
-                f18a_vram_read(patt_base + ((unsigned int)pattern << 3) + (unsigned int)rel_y);
-
-            for (int bit = 0; bit < 8; ++bit)
-            {
-                if ((bits & (0x80u >> bit)) == 0)
-                    continue;
-
-                const int px = sx + bit;
-                if (px >= 0 && px < VB_WIDTH)
-                    line[px] = argb;
-            }
-        }
+        if (ecm == 1u)
+            palette_base = ((unsigned int)(color_byte & 0x0Fu) << 1) |
+                           (g_reg[24] & 0x20u);
+        else if (ecm == 2u)
+            palette_base = (unsigned int)(color_byte & 0x0Fu) << 2;
+        else if (ecm == 3u)
+            palette_base = (unsigned int)(color_byte & 0x0Eu) << 2;
         else
-        {
-            const unsigned int base_pattern = (unsigned int)(pattern & 0xFCu);
-            const unsigned int row = (unsigned int)(rel_y & 7);
+            palette_base = color_byte & 0x0Fu;
+        if (ecm == 0u && palette_base == 0u)
+            continue;
 
-            const unsigned int left_pattern  = base_pattern + ((rel_y >= 8) ? 1u : 0u);
-            const unsigned int right_pattern = base_pattern + ((rel_y >= 8) ? 3u : 2u);
+        for (int draw_x = 0; draw_x < sprite_size; ++draw_x) {
+            const int source_x = (g_erm_unlocked && (color_byte & 0x40u))
+                               ? sprite_size - draw_x - 1 : draw_x;
+            const unsigned int quadrant = (unsigned int)((source_y >= 8) ? 1 : 0) |
+                                          (unsigned int)((source_x >= 8) ? 2 : 0);
+            const unsigned int patt = sprite_16
+                                    ? ((unsigned int)(pattern & 0xFCu) + quadrant)
+                                    : (unsigned int)pattern;
+            const unsigned int bit = 0x80u >> (source_x & 7);
+            const unsigned int row = (unsigned int)(source_y & 7);
+            unsigned int pixel_value = 0u;
+            const unsigned int planes = ecm ? ecm : 1u;
 
-            const unsigned char left_bits =
-                f18a_vram_read(patt_base + (left_pattern << 3) + row);
+            for (unsigned int plane = 0u; plane < planes; ++plane) {
+                const unsigned char bits = f18a_vram_read(
+                    patt_base + (patt << 3) + row + plane * ecm_offset);
+                if (bits & bit)
+                    pixel_value |= 1u << plane;
+            }
+            if (pixel_value == 0u)
+                continue;
 
-            const unsigned char right_bits =
-                f18a_vram_read(patt_base + (right_pattern << 3) + row);
-
-            for (int bit = 0; bit < 8; ++bit)
-            {
-                if (left_bits & (0x80u >> bit))
-                {
-                    const int px = sx + bit;
-                    if (px >= 0 && px < VB_WIDTH)
-                        line[px] = argb;
-                }
-
-                if (right_bits & (0x80u >> bit))
-                {
-                    const int px = sx + 8 + bit;
-                    if (px >= 0 && px < VB_WIDTH)
-                        line[px] = argb;
-                }
+            for (int mx = 0; mx <= magnified; ++mx) {
+                const int px = sx + (draw_x << magnified) + mx;
+                if (px >= 0 && px < VB_WIDTH &&
+                    (!tile_priority || tile_priority[px] == 0u))
+                    line[px] = f18a_color((ecm ? palette_base + pixel_value
+                                               : palette_base) & 0x3Fu);
             }
         }
-    }
-}
-
-static void f18a_log_once_reset(void)
-{
-    if (!g_logged_reset)
-    {
-        //printf("[F18A] B3.2b reset/state active\n");
-        //fflush(stdout);
-        g_logged_reset = 1;
-    }
-}
-
-static void f18a_log_once_loop(void)
-{
-    if (!g_logged_loop)
-    {
-        //printf("[F18A] B3.2b loop active, 16x16 sprite pattern order fixed\n");
-        //fflush(stdout);
-        g_logged_loop = 1;
     }
 }
 
@@ -390,19 +367,87 @@ static void f18a_render_graphics1(void)
     const uint32_t border = f18a_color(g_reg[7] & 0x0Fu);
 
     uint32_t line[VB_WIDTH];
-
+    unsigned char tile_priority[VB_WIDTH];
     for (int y = 0; y < VB_HEIGHT; ++y)
     {
-        const int tile_y = y >> 3;
-        const int row    = y & 7;
+        const unsigned int max_y = (g_reg[49] & 0x40u) ? 240u : 192u;
+        unsigned int source_y = (unsigned int)y + (unsigned int)g_reg[28];
+        unsigned int vertical_page = 0u;
+
+        if (source_y >= max_y)
+        {
+            source_y %= max_y;
+            if (g_reg[29] & 0x01u)
+                vertical_page = 0x0800u;
+        }
+
+        const unsigned int tile_y = source_y >> 3;
+        const unsigned int row = source_y & 7u;
 
         for (int x = 0; x < VB_WIDTH; ++x)
-            line[x] = border;
-
-        for (int tile_x = 0; tile_x < 32; ++tile_x)
         {
-            const unsigned int name_addr = name_base + (unsigned int)(tile_y * 32 + tile_x);
+            line[x] = border;
+            tile_priority[x] = 0u;
+        }
+
+        for (int x = 0; x < VB_WIDTH; ++x)
+        {
+            const unsigned int source_x_full =
+                (unsigned int)x + (unsigned int)g_reg[27];
+            const unsigned int source_x = source_x_full & 0xFFu;
+            const unsigned int horizontal_page =
+                ((source_x_full & 0x100u) && (g_reg[29] & 0x02u)) ? 0x0400u : 0u;
+            const unsigned int tile_x = source_x >> 3;
+            const unsigned int bit = source_x & 7u;
+            const unsigned int row_offset = tile_y * 32u;
+            const unsigned int name_addr =
+                name_base + vertical_page + horizontal_page + row_offset + tile_x;
             const unsigned char chr = f18a_vram_read(name_addr);
+
+            /*
+             * F18A ECM3 uses an attribute byte and three pattern planes.
+             */
+            if (((g_reg[49] >> 4) & 0x03u) == 0x03u)
+            {
+                const unsigned int attr_index =
+                    (g_reg[50] & 0x02u)
+                        ? row_offset + tile_x
+                        : (unsigned int)chr;
+                unsigned int attr_base = color_base;
+                if (g_reg[50] & 0x02u)
+                {
+                    attr_base = (attr_base & ~0x0400u) |
+                                ((name_base + horizontal_page) & 0x0400u);
+                    attr_base += vertical_page;
+                }
+                const unsigned char attr =
+                    f18a_vram_read((attr_base + attr_index) & F18A_VRAM_MASK);
+                const unsigned int palette_base = ((unsigned int)attr & 0x0Eu) << 2;
+                const unsigned int row_ecm =
+                    (attr & 0x20u) ? (unsigned int)(7 - row) : (unsigned int)row;
+                const unsigned int plane_offset =
+                    0x0100u << (3u - (((unsigned int)g_reg[29] & 0x0Cu) >> 2));
+                const unsigned int plane_address =
+                    (pattern_base + ((unsigned int)chr << 3) + row_ecm) & F18A_VRAM_MASK;
+                const unsigned char plane0 = f18a_vram_read(plane_address);
+                const unsigned char plane1 = f18a_vram_read(plane_address + plane_offset);
+                const unsigned char plane2 = f18a_vram_read(plane_address + (plane_offset << 1));
+                const unsigned int bit_ecm =
+                    (attr & 0x40u) ? 7u - bit : bit;
+                const unsigned int mask = 0x80u >> bit_ecm;
+                const unsigned int pixel =
+                    ((plane0 & mask) ? 1u : 0u) |
+                    ((plane1 & mask) ? 2u : 0u) |
+                    ((plane2 & mask) ? 4u : 0u);
+
+                if (pixel != 0u || (attr & 0x10u) == 0u)
+                {
+                    line[x] = f18a_color(palette_base | pixel);
+                    tile_priority[x] = (attr & 0x80u) ? 1u : 0u;
+                }
+                continue;
+            }
+
             const unsigned char pat = f18a_vram_read(pattern_base + ((unsigned int)chr << 3) + (unsigned int)row);
             const unsigned char col = f18a_vram_read(color_base + (unsigned int)(chr >> 3));
 
@@ -413,13 +458,10 @@ static void f18a_render_graphics1(void)
 
             const uint32_t fg_argb = f18a_color(fg);
             const uint32_t bg_argb = f18a_color(bg);
-            const int px = tile_x << 3;
-
-            for (int bit = 0; bit < 8; ++bit)
-                line[px + bit] = (pat & (0x80u >> bit)) ? fg_argb : bg_argb;
+            line[x] = (pat & (0x80u >> bit)) ? fg_argb : bg_argb;
         }
 
-        f18a_draw_sprites_on_line(y, line);
+        f18a_draw_sprites_on_line(y, line, tile_priority);
         vb_present_scanline(y, line);
     }
 
@@ -499,6 +541,42 @@ static void f18a_render_graphics2(void)
             const unsigned char chr = f18a_vram_read(name_line + (unsigned int)tile_x);
             const unsigned int char_offset = ((unsigned int)chr << 3);
 
+            /*
+             * F18A Enhanced Color Mode 3 for tile layer 1 (VR49 ECMT=3).
+             * Three pattern planes form a 3-bit pixel value.  In ECM modes
+             * the color table expands to one attribute byte per screen
+             * position; its low three bits select one of eight 8-color
+             * palettes.  The default plane spacing is 2 KiB (VR29=0), which
+             * is the layout used by f18abitmap1.rom.
+             */
+            if (((g_reg[49] >> 4) & 0x03u) == 0x03u)
+            {
+                const unsigned int attr_index =
+                    (g_reg[50] & 0x02u)
+                        ? (unsigned int)((y >> 3) * 32 + tile_x)
+                        : (unsigned int)chr;
+                const unsigned int attr_address =
+                    (color_base0 + attr_index) & F18A_VRAM_MASK;
+                const unsigned char attr = f18a_vram_read(attr_address);
+                const unsigned int palette_base = ((unsigned int)attr & 0x07u) << 3;
+
+                const unsigned char plane0 = f18a_vram_read(pattern_base + char_offset);
+                const unsigned char plane1 = f18a_vram_read(pattern_base + char_offset + 0x0800u);
+                const unsigned char plane2 = f18a_vram_read(pattern_base + char_offset + 0x1000u);
+                const int px = tile_x << 3;
+
+                for (int bit = 0; bit < 8; ++bit)
+                {
+                    const unsigned int mask = 0x80u >> bit;
+                    const unsigned int pixel =
+                        ((plane0 & mask) ? 1u : 0u) |
+                        ((plane1 & mask) ? 2u : 0u) |
+                        ((plane2 & mask) ? 4u : 0u);
+                    line[px + bit] = f18a_color(palette_base | pixel);
+                }
+                continue;
+            }
+
             const unsigned char pat = f18a_vram_read(pattern_base + char_offset);
             const unsigned char col = f18a_vram_read(color_base + char_offset);
 
@@ -515,7 +593,7 @@ static void f18a_render_graphics2(void)
                 line[px + bit] = (pat & (0x80u >> bit)) ? fg_argb : bg_argb;
         }
 
-        f18a_draw_sprites_on_line(y, line);
+        f18a_draw_sprites_on_line(y, line, NULL);
 
         /*
          * CP/M 40-column centering correction. This is the F18A equivalent
@@ -581,6 +659,64 @@ static void f18a_render_text(void)
     video_set_dirty(1);
 }
 
+static void f18a_render_text80(void)
+{
+    const unsigned int name_base =
+        ((unsigned int)(g_reg[2] & 0x0Fu) << 10) & F18A_VRAM_MASK;
+    const unsigned int color_base =
+        ((unsigned int)g_reg[3] << 6) & F18A_VRAM_MASK;
+    const unsigned int pattern_base =
+        ((unsigned int)(g_reg[4] & 0x07u) << 11) & F18A_VRAM_MASK;
+    const int per_position_color = (g_reg[50] & 0x02u) != 0;
+
+    unsigned int main_fg = (g_reg[7] >> 4) & 0x0Fu;
+    const unsigned int main_bg = g_reg[7] & 0x0Fu;
+    if (main_fg == 0u)
+        main_fg = main_bg;
+
+    uint32_t line[F18A_80COL_WIDTH];
+
+    for (int screen_y = 0; screen_y < F18A_80COL_HEIGHT; ++screen_y)
+    {
+        const unsigned int source_y =
+            ((unsigned int)screen_y + (unsigned int)g_reg[28]) % 192u;
+        const unsigned int tile_y = source_y >> 3;
+        const unsigned int pattern_row = source_y & 7u;
+
+        for (unsigned int column = 0; column < F18A_80COL_COLS; ++column)
+        {
+            const unsigned int name_offset = tile_y * F18A_80COL_COLS + column;
+            const unsigned char chr = f18a_vram_read(name_base + name_offset);
+            const unsigned char pattern =
+                f18a_vram_read(pattern_base + ((unsigned int)chr << 3) + pattern_row);
+            unsigned int fg = main_fg;
+            unsigned int bg = main_bg;
+
+            if (per_position_color)
+            {
+                const unsigned char color = f18a_vram_read(color_base + name_offset);
+                const unsigned int attr_fg = (color >> 4) & 0x0Fu;
+                const unsigned int attr_bg = color & 0x0Fu;
+                fg = attr_fg ? attr_fg : main_bg;
+                bg = attr_bg ? attr_bg : main_bg;
+            }
+
+            const uint32_t fg_argb = f18a_color(fg);
+            const uint32_t bg_argb = f18a_color(bg);
+            const unsigned int x0 = column * 6u;
+
+            for (unsigned int bit = 0; bit < 6u; ++bit)
+                line[x0 + bit] =
+                    (pattern & (0x80u >> bit)) ? fg_argb : bg_argb;
+        }
+
+        vb_present_scanline_ex(screen_y, line, F18A_80COL_WIDTH);
+    }
+
+    vb_present_frame();
+    video_set_dirty(1);
+}
+
 static void f18a_render_multicolor(void)
 {
     const unsigned int name_base    = ((unsigned int)(g_reg[2] & 0x0Fu) << 10) & F18A_VRAM_MASK;
@@ -613,7 +749,7 @@ static void f18a_render_multicolor(void)
                 line[px + bit] = right;
         }
 
-        f18a_draw_sprites_on_line(y, line);
+        f18a_draw_sprites_on_line(y, line, NULL);
         vb_present_scanline(y, line);
     }
 
@@ -911,7 +1047,11 @@ static void f18a_render_frame(void)
     const int m2 = (g_reg[1] & F18A_MODE_M2) ? 1 : 0;
     const int m3 = (g_reg[0] & F18A_MODE_M3) ? 1 : 0;
 
-    if (m1 && !m2 && !m3)
+    if (!m3 && (g_reg[0] & 0x04u))
+    {
+        f18a_render_text80();
+    }
+    else if (m1 && !m2 && !m3)
     {
         f18a_render_text();
     }
@@ -972,7 +1112,6 @@ int f18a_is_80col_selftest_enabled(void)
 void f18a_set_enabled(int enabled)
 {
     g_f18a_enabled = enabled ? 1 : 0;
-    g_logged_loop = 0;
 }
 
 int f18a_is_enabled(void)
@@ -989,23 +1128,25 @@ void f18a_reset(void)
 {
     memset(g_vram, 0x00, sizeof(g_vram));
     memset(g_reg,  0x00, sizeof(g_reg));
+    f18a_gpu_init(&g_gpu, g_vram, sizeof(g_vram));
     f18a_reset_palette();
     g_80col_buffer_initialized = 0;
-#if F18A_DEBUG_REG_WRITES
-    memset(g_reg_last_logged, 0x00, sizeof(g_reg_last_logged));
-    memset(g_reg_has_logged,  0x00, sizeof(g_reg_has_logged));
-#endif
-
     g_status = 0;
     g_read_buffer = 0;
+    g_palette_mode = 0;
+    g_palette_auto = 0;
+    g_palette_address = 0;
+    g_palette_first_byte = 0;
+    g_palette_byte_latch = 0;
+    g_erm_unlocked = 0;
+    g_unlock_stage = 0;
+    g_status_select = 0;
 
     g_address = 0;
     g_first_ctrl_byte = 0;
     g_ctrl_latch = 0;
 
     g_loop_counter = 0;
-    g_frame_counter = 0;
-    g_logged_loop = 0;
 
     /*
      * Do not force timing during reset.
@@ -1022,7 +1163,6 @@ void f18a_reset(void)
     g_reg[7] = 0x01;
 
     f18a_present_solid(f18a_color(1));
-    f18a_log_once_reset();
 }
 
 void f18a_set_scanlines(unsigned int lines)
@@ -1036,7 +1176,16 @@ void f18a_set_scanlines(unsigned int lines)
 
 unsigned char f18a_loop(void)
 {
-    f18a_log_once_loop();
+    /* The F18A GPU runs alongside the host CPU, not only at its start write. */
+    if (g_gpu.running) {
+        const unsigned int active_lines = (g_reg[49] & 0x40u) ? 240u : 192u;
+        const int vertical_blanking = g_loop_counter >= active_lines;
+
+        /* Active display (or VBlank) followed by a short HBlank pulse. */
+        f18a_gpu_run(350u, vertical_blanking ? 1 : 0);
+        if (g_gpu.running && !vertical_blanking)
+            f18a_gpu_run(F18A_GPU_INSTRUCTIONS_PER_SCANLINE - 350u, 1);
+    }
 
     /*
      * Keep the IRQ line active as long as VBlank is pending.
@@ -1055,8 +1204,6 @@ unsigned char f18a_loop(void)
     if (g_loop_counter >= g_scanlines)
     {
         g_loop_counter = 0;
-        g_frame_counter++;
-
         /* Blink TERM80 cursor once per rendered frame, before presenting. */
         if (f18a_term80_is_enabled())
             f18a_term80_tick();
@@ -1074,6 +1221,32 @@ unsigned char f18a_loop(void)
 
 void f18a_writedata(unsigned char value)
 {
+    g_unlock_stage = 0;
+
+    if (g_palette_mode)
+    {
+        if (!g_palette_byte_latch)
+        {
+            g_palette_first_byte = value;
+            g_palette_byte_latch = 1;
+        }
+        else
+        {
+            g_palette12[g_palette_address & 0x3Fu] =
+                (unsigned short)(((unsigned short)(g_palette_first_byte & 0x0Fu) << 8) | value);
+            g_palette_dirty = 1;
+            g_palette_byte_latch = 0;
+
+            if (g_palette_auto && g_palette_address != 0x3Fu)
+                g_palette_address = (unsigned char)((g_palette_address + 1u) & 0x3Fu);
+            else
+                g_palette_mode = 0;
+        }
+
+        g_ctrl_latch = 0;
+        return;
+    }
+
     g_vram[g_address & F18A_VRAM_MASK] = value;
     g_address = (g_address + 1u) & F18A_VRAM_MASK;
     g_ctrl_latch = 0;
@@ -1081,6 +1254,7 @@ void f18a_writedata(unsigned char value)
 
 unsigned char f18a_readdata(void)
 {
+    g_unlock_stage = 0;
     unsigned char result = g_read_buffer;
 
     g_read_buffer = g_vram[g_address & F18A_VRAM_MASK];
@@ -1102,16 +1276,61 @@ unsigned char f18a_writectrl(unsigned char value)
     if (value & 0x80u)
     {
         const unsigned int reg = value & 0x3Fu;
-        if (reg < F18A_REGISTER_COUNT)
+
+        if (!g_erm_unlocked && reg == 57u && g_first_ctrl_byte == 0x1Cu)
         {
-            g_reg[reg] = g_first_ctrl_byte;
-#if F18A_DEBUG_REG_WRITES
-            f18a_log_register_write(reg, g_first_ctrl_byte);
-#endif
+            if (g_unlock_stage)
+            {
+                g_erm_unlocked = 1;
+                g_unlock_stage = 0;
+            }
+            else
+            {
+                g_unlock_stage = 1;
+            }
+        }
+        else if (g_erm_unlocked && reg == 57u)
+        {
+            /* Any write to VR57 while unlocked returns to compatibility mode. */
+            g_erm_unlocked = 0;
+            /*
+             * Treat >1C as the first write of a fresh unlock sequence too.
+             * Some F18A-aware runtimes initialize ERM before their own
+             * presence test and then issue the normal two-write sequence
+             * again.  This keeps that sequence deterministic while an
+             * unrelated VR57 value still performs a plain relock.
+             */
+            g_unlock_stage = (g_first_ctrl_byte == 0x1Cu) ? 1u : 0u;
+        }
+        else
+        {
+            const unsigned int effective_reg = g_erm_unlocked ? reg : (reg & 7u);
+            g_unlock_stage = 0;
+
+            if (effective_reg < F18A_REGISTER_COUNT)
+            {
+                g_reg[effective_reg] = g_first_ctrl_byte;
+                if (g_erm_unlocked && effective_reg == 15u)
+                    g_status_select = g_first_ctrl_byte & 0x0Fu;
+                else if (g_erm_unlocked && effective_reg == 47u)
+                {
+                    g_palette_mode = (g_first_ctrl_byte & 0x80u) ? 1u : 0u;
+                    g_palette_auto = (g_first_ctrl_byte & 0x40u) ? 1u : 0u;
+                    g_palette_address = g_first_ctrl_byte & 0x3Fu;
+                    g_palette_byte_latch = 0;
+                }
+                else if (g_erm_unlocked && effective_reg == 55u)
+                {
+                    f18a_gpu_start(&g_gpu,
+                        (unsigned short)(((unsigned int)g_reg[54] << 8) | g_reg[55]));
+                    f18a_gpu_run(1024u, -1);
+                }
+            }
         }
     }
     else
     {
+        g_unlock_stage = 0;
         g_address = (((unsigned int)(value & 0x3Fu)) << 8) | g_first_ctrl_byte;
         g_address &= F18A_VRAM_MASK;
 
@@ -1128,8 +1347,30 @@ unsigned char f18a_writectrl(unsigned char value)
 
 unsigned char f18a_readctrl(void)
 {
-    const unsigned char result = g_status;
-    g_status &= (unsigned char)~F18A_STATUS_VBLANK;
+    unsigned char result;
+
+    g_unlock_stage = 0;
+
+    if (!g_erm_unlocked || g_status_select == 0u)
+    {
+        result = g_status;
+        g_status &= (unsigned char)~F18A_STATUS_VBLANK;
+    }
+    else if (g_status_select == 1u)
+    {
+        /* F18A MK1 identity bits.  Low condition bits are zero for now. */
+        result = 0xE0u;
+    }
+    else if (g_status_select == 14u)
+    {
+        /* Report a compatible MK1 firmware revision (major 1, minor B). */
+        result = 0x1Bu;
+    }
+    else
+    {
+        result = 0x00u;
+    }
+
     g_ctrl_latch = 0;
     return result;
 }

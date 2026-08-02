@@ -70,7 +70,16 @@
 
 #define TMS9918_Mode            (((tms.VR[0]&0x02)>>1)|(((tms.VR[1]&0x18)>>2)))
 #define TMS9918_ExtVDP          (R[0]&TMS9918_REG0_EXTVDP)
-#define TMS9918_VRAMMask        (tms.VR[1]&TMS9918_REG1_RAM16K ? 0x3FFF:0x0FFF)
+/*
+ * ADAM and ColecoVision have 16 KiB of physical VDP RAM.  Do not fold table
+ * addresses into the first 4 KiB when register 1 bit 7 is clear: ADAM titles
+ * such as Recipe Filer deliberately use R1=0x48 while keeping the name table
+ * at 0x1800 and the Graphics-II colour table at 0x2000.
+ *
+ * The old conditional mask changed those addresses to 0x0800 and 0x0000,
+ * producing the characteristic fragmented/corrupt screen.
+ */
+#define TMS9918_VRAMMask        0x3FFF
 #define TMS9918_VBlankON        (tms.VR[1]&TMS9918_REG1_IRQ)
 #define TMS9918_Sprites16       (tms.VR[1]&TMS9918_REG1_SPR16)
 #define TMS9918_ScreenON        (tms.VR[1]&TMS9918_REG1_SCREEN)

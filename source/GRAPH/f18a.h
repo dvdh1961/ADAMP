@@ -33,7 +33,7 @@ unsigned char f18a_readctrl(void);
 
 unsigned char f18a_get_register(unsigned char reg);
 
-/* Optional debug/helpers for later steps */
+/* State access helpers */
 unsigned char f18a_peek_vram(unsigned int address);
 void          f18a_poke_vram(unsigned int address, unsigned char value);
 unsigned int  f18a_get_vram_address(void);
