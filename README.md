@@ -80,6 +80,15 @@ From the moment we have a fully working hardware system, everything will be publ
 
 ## 🚀 Versions
 
+Version 1.4.08.26 x86_64 Windows & Linux (SOON AVAILABLE)
+
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/Atari_ext_logo.png)
+
+- It’s finally here! We’ve successfully added the Atari 2600 extension to our ADAM+ emulator
+  even with a debugger! It will be available in our next release!
+
+---
+
 Version 1.3.08.26 x86_64 Windows & Linux
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/FullF18a.png)
