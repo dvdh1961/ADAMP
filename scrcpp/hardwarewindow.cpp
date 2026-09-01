@@ -203,6 +203,7 @@ void HardwareWindow::buildUi()
     m_cboVdp = new QComboBox(m_groupVideo);
     m_cboVdp->addItem("TMS9928A / TMS9918A", VDP_TMS);
     m_cboVdp->addItem("F18A", VDP_F18A);
+    m_cboVdp->addItem("PICO9918", VDP_PICO9918);
 
     //m_chkF18a80SelfTest = new QCheckBox("F18A 80-column self-test", m_groupVideo);
    // m_chkF18a80SelfTest->setToolTip("Shows the internal F18A 80-column diagnostic screen. Only useful when VDP is F18A.");
@@ -250,7 +251,7 @@ void HardwareWindow::buildUi()
 
     connect(m_cboVdp, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int){
-                const bool isF18A = (m_cboVdp->currentData().toInt() == VDP_F18A);
+                const bool isF18A = vdpHasF18A(m_cboVdp->currentData().toInt());
                 //m_chkF18a80SelfTest->setEnabled(isF18A);
                 //if (!isF18A)
                    // m_chkF18a80SelfTest->setChecked(false);
@@ -431,7 +432,7 @@ void HardwareWindow::loadFromConfig(const HardwareConfig& c)
     //m_cboDisplay->setCurrentIndex(qBound(0, c.renderMode, m_cboDisplay->count()-1));
     m_cboPalette->setCurrentIndex(qBound(0, c.palette,    m_cboPalette->count()-1));
 
-    const int vdpIdx = m_cboVdp->findData(c.vdpType == VDP_F18A ? VDP_F18A : VDP_TMS);
+    const int vdpIdx = m_cboVdp->findData(vdpHasF18A(c.vdpType) ? c.vdpType : VDP_TMS);
     m_cboVdp->setCurrentIndex(vdpIdx >= 0 ? vdpIdx : 0);
    // m_chkF18a80SelfTest->setChecked(c.f18a80SelfTest && c.vdpType == VDP_F18A);
    // m_chkF18a80SelfTest->setEnabled(c.vdpType == VDP_F18A);
@@ -448,7 +449,7 @@ void HardwareWindow::loadFromConfig(const HardwareConfig& c)
      * coleco_80col_enabled is cleared immediately. The saved HardwareConfig
      * can still contain c80Enabled=true, so do not blindly show the button ON.
      */
-    const bool isF18A = (c.vdpType == VDP_F18A);
+    const bool isF18A = vdpHasF18A(c.vdpType);
     const bool liveC80Enabled = (isF18A && c.c80Enabled && (coleco_80col_enabled != 0));
     HardwareWindow::m_c80SelectionState = liveC80Enabled;
     m_btn80C->setChecked(liveC80Enabled);
@@ -474,13 +475,13 @@ HardwareConfig HardwareWindow::readFromUi() const
     // Video
     c.palette = m_cboPalette->currentIndex();
     c.vdpType = m_cboVdp ? m_cboVdp->currentData().toInt() : VDP_TMS;
-    if (c.vdpType != VDP_F18A)
+    if (!vdpHasF18A(c.vdpType))
         c.vdpType = VDP_TMS;
    // c.f18a80SelfTest = (c.vdpType == VDP_F18A) && m_chkF18a80SelfTest && m_chkF18a80SelfTest->isChecked();
 
     // Additional hardware
     c.sgmEnabled  = !m_btnAdam->isChecked() && m_btnSGM->isChecked();
-    c.c80Enabled = (c.vdpType == VDP_F18A) && m_btn80C->isChecked();
+    c.c80Enabled = vdpHasF18A(c.vdpType) && m_btn80C->isChecked();
 
     // Real hardware
     c.Joys = m_btnJoys->isChecked();
@@ -497,7 +498,7 @@ void HardwareWindow::updateAvailability()
     }
 
     const bool isAdam = m_btnAdam->isChecked();
-    const bool isF18A = (m_cboVdp && m_cboVdp->currentData().toInt() == VDP_F18A);
+    const bool isF18A = (m_cboVdp && vdpHasF18A(m_cboVdp->currentData().toInt()));
     const bool c80Available = isAdam && isF18A;
 
     if (isAdam) {
@@ -552,7 +553,7 @@ void HardwareWindow::updateAvailability()
 
 void HardwareWindow::onToggleC80(bool checked)
 {
-    const bool isF18A = (m_cboVdp && m_cboVdp->currentData().toInt() == VDP_F18A);
+    const bool isF18A = (m_cboVdp && vdpHasF18A(m_cboVdp->currentData().toInt()));
     if (!isF18A) {
         m_c80SelectionState = false;
         if (m_btn80C)

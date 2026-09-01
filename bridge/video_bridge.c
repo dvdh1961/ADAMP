@@ -59,6 +59,21 @@ static inline int memcpy_s(void *dest, size_t dest_sz, const void *src, size_t c
 }
 #endif
 
+/* As vb_present_scanline_ex, but the caller states the frame height too - the
+   PICO9918 frame is taller than the 192 active lines. */
+void vb_present_scanline_size(int y, const uint32_t *argb32_line, int width, int height)
+{
+    if (y < 0 || y >= VB_MAX_HEIGHT || !argb32_line) return;
+    if (width <= 0 || width > VB_MAX_WIDTH) width = VB_WIDTH;
+
+    vb_set_frame_size(width, height);
+
+    memcpy_s(&g_video_frame[y * VB_MAX_WIDTH],
+             VB_MAX_WIDTH * sizeof(uint32_t),
+             argb32_line,
+             (size_t)width * sizeof(uint32_t));
+}
+
 void vb_present_scanline_ex(int y, const uint32_t *argb32_line, int width)
 {
     if (y < 0 || y >= VB_MAX_HEIGHT || !argb32_line) return;

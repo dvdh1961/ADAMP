@@ -1,6 +1,8 @@
 #include "f18a_term80.h"
 #include "f18a.h"
+#include "video_bridge.h"
 
+#include <stdint.h>
 #include <string.h>
 
 #define TERM80_DEFAULT_FG 15u
@@ -478,4 +480,369 @@ void f18a_term80_demo_screen(void)
     f18a_term80_write_at(13, 0, "CP/M TEXT AREA STARTS ON ROW 1. ROW 0 IS RESERVED FOR THE PNG/TITLE BAR.", 12, 1);
     f18a_term80_write_at(15, 0, "BACKSPACE IS DESTRUCTIVE. CURSOR IS AN OVERLAY AND SHOULD NOT EAT A>.", 9, 1);
     f18a_term80_write_at(23, 0, "TERM80 READY.", 10, 1);
+}
+
+
+/* =============================================================================
+ * The 80-column display
+ * =============================================================================
+ * Moved here from f18a.c. None of it is the VDP: the characters come from CP/M and
+ * T-DOS through the terminal above, never from VRAM, and the picture is presented
+ * straight to the video bridge. It lived in the renderer only because the renderer
+ * was the thing that used to draw it, which made f18a.c load-bearing for CP/M under
+ * any engine. The colours come from f18a.c's palette through the accessor the header
+ * already published, but only entries 0-15 - the cell attributes are masked to a
+ * nibble - and under pico9918-core nothing reprograms that palette, so in practice
+ * these are the sixteen TMS defaults f18a_reset_80col_overlay() puts there.
+ */
+
+#define F18A_80COL_WIDTH   480
+#define F18A_80COL_HEIGHT  192
+#define F18A_80COL_COLS    F18A_TERM80_COLS
+#define F18A_80COL_ROWS    F18A_TERM80_ROWS
+
+static int g_f18a_80col_enabled = 0;
+static int g_f18a_80col_selftest_enabled = 0;
+
+/*
+ * C7: internal 80x24 text buffer.
+ * This is independent from normal TMS-compatible VRAM rendering.
+ * CP/M/debug/terminal code writes here directly.
+ */
+static unsigned char g_80col_char[F18A_80COL_ROWS][F18A_80COL_COLS];
+static unsigned char g_80col_fg  [F18A_80COL_ROWS][F18A_80COL_COLS];
+static unsigned char g_80col_bg  [F18A_80COL_ROWS][F18A_80COL_COLS];
+static int g_80col_buffer_initialized = 0;
+
+/* The same 12-bit-to-ARGB expansion f18a.c's renderer does, over the same palette -
+   reached through f18a_get_palette_entry() so this file needs nothing private. */
+static inline uint32_t f18a_color(unsigned int idx)
+{
+    const unsigned short rgb = f18a_get_palette_entry(idx & 0x3Fu);
+    const unsigned int r = (rgb >> 8) & 0x0Fu;
+    const unsigned int g = (rgb >> 4) & 0x0Fu;
+    const unsigned int b = rgb & 0x0Fu;
+    return 0xFF000000u | (r * 17u << 16) | (g * 17u << 8) | (b * 17u);
+}
+
+static uint8_t f18a_font5x7(char ch, int row)
+{
+    /* compact built-in font, 5 pixels wide inside a 6-pixel cell */
+    static const uint8_t space[7]      = {0x00,0x00,0x00,0x00,0x00,0x00,0x00};
+    static const uint8_t excl[7]       = {0x04,0x04,0x04,0x04,0x04,0x00,0x04};
+    static const uint8_t quote[7]      = {0x0A,0x0A,0x0A,0x00,0x00,0x00,0x00};
+    static const uint8_t hash[7]       = {0x0A,0x1F,0x0A,0x0A,0x1F,0x0A,0x00};
+    static const uint8_t dollar[7]     = {0x04,0x0F,0x14,0x0E,0x05,0x1E,0x04};
+    static const uint8_t percent[7]    = {0x18,0x19,0x02,0x04,0x08,0x13,0x03};
+    static const uint8_t amp[7]        = {0x0C,0x12,0x14,0x08,0x15,0x12,0x0D};
+    static const uint8_t apost[7]      = {0x04,0x04,0x08,0x00,0x00,0x00,0x00};
+    static const uint8_t lparen[7]     = {0x02,0x04,0x08,0x08,0x08,0x04,0x02};
+    static const uint8_t rparen[7]     = {0x08,0x04,0x02,0x02,0x02,0x04,0x08};
+    static const uint8_t star[7]       = {0x00,0x15,0x0E,0x1F,0x0E,0x15,0x00};
+    static const uint8_t plus[7]       = {0x00,0x04,0x04,0x1F,0x04,0x04,0x00};
+    static const uint8_t comma[7]      = {0x00,0x00,0x00,0x00,0x0C,0x04,0x08};
+    static const uint8_t dash[7]       = {0x00,0x00,0x00,0x1F,0x00,0x00,0x00};
+    static const uint8_t dot[7]        = {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C};
+    static const uint8_t slash[7]      = {0x01,0x02,0x02,0x04,0x08,0x08,0x10};
+
+    static const uint8_t colon[7]      = {0x00,0x0C,0x0C,0x00,0x0C,0x0C,0x00};
+    static const uint8_t semicolon[7]  = {0x00,0x0C,0x0C,0x00,0x0C,0x04,0x08};
+    static const uint8_t less[7]       = {0x02,0x04,0x08,0x10,0x08,0x04,0x02};
+    static const uint8_t equal[7]      = {0x00,0x00,0x1F,0x00,0x1F,0x00,0x00};
+    static const uint8_t greater[7]    = {0x10,0x08,0x04,0x02,0x04,0x08,0x10};
+    static const uint8_t question[7]   = {0x0E,0x11,0x01,0x02,0x04,0x00,0x04};
+    static const uint8_t atsign[7]     = {0x0E,0x11,0x17,0x15,0x17,0x10,0x0E};
+
+    static const uint8_t lbrack[7]     = {0x0E,0x08,0x08,0x08,0x08,0x08,0x0E};
+    static const uint8_t backslash[7]  = {0x10,0x08,0x08,0x04,0x02,0x02,0x01};
+    static const uint8_t rbrack[7]     = {0x0E,0x02,0x02,0x02,0x02,0x02,0x0E};
+    static const uint8_t caret[7]      = {0x04,0x0A,0x11,0x00,0x00,0x00,0x00};
+    static const uint8_t underscore[7] = {0x00,0x00,0x00,0x00,0x00,0x00,0x1F};
+    static const uint8_t grave[7]      = {0x08,0x04,0x02,0x00,0x00,0x00,0x00};
+    static const uint8_t lbrace[7]     = {0x02,0x04,0x04,0x08,0x04,0x04,0x02};
+    static const uint8_t pipe[7]       = {0x04,0x04,0x04,0x00,0x04,0x04,0x04};
+    static const uint8_t rbrace[7]     = {0x08,0x04,0x04,0x02,0x04,0x04,0x08};
+    static const uint8_t tilde[7]      = {0x00,0x00,0x08,0x15,0x02,0x00,0x00};
+
+    static const uint8_t nums[10][7] = {
+        /* 0 */ {0x0E,0x11,0x13,0x15,0x19,0x11,0x0E},
+        /* 1 */ {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E},
+        /* 2 */ {0x0E,0x11,0x01,0x02,0x04,0x08,0x1F},
+        /* 3 */ {0x1F,0x02,0x04,0x02,0x01,0x11,0x0E},
+        /* 4 */ {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02},
+        /* 5 */ {0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E},
+        /* 6 */ {0x06,0x08,0x10,0x1E,0x11,0x11,0x0E},
+        /* 7 */ {0x1F,0x01,0x02,0x04,0x08,0x08,0x08},
+        /* 8 */ {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E},
+        /* 9 */ {0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C}
+    };
+
+    static const uint8_t upper[26][7] = {
+        /* A */ {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11},
+        /* B */ {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E},
+        /* C */ {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E},
+        /* D */ {0x1E,0x11,0x11,0x11,0x11,0x11,0x1E},
+        /* E */ {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F},
+        /* F */ {0x1F,0x10,0x10,0x1E,0x10,0x10,0x10},
+        /* G */ {0x0E,0x11,0x10,0x17,0x11,0x11,0x0F},
+        /* H */ {0x11,0x11,0x11,0x1F,0x11,0x11,0x11},
+        /* I */ {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E},
+        /* J */ {0x01,0x01,0x01,0x01,0x11,0x11,0x0E},
+        /* K */ {0x11,0x12,0x14,0x18,0x14,0x12,0x11},
+        /* L */ {0x10,0x10,0x10,0x10,0x10,0x10,0x1F},
+        /* M */ {0x11,0x1B,0x15,0x15,0x11,0x11,0x11},
+        /* N */ {0x11,0x19,0x15,0x13,0x11,0x11,0x11},
+        /* O */ {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E},
+        /* P */ {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10},
+        /* Q */ {0x0E,0x11,0x11,0x11,0x15,0x12,0x0D},
+        /* R */ {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11},
+        /* S */ {0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E},
+        /* T */ {0x1F,0x04,0x04,0x04,0x04,0x04,0x04},
+        /* U */ {0x11,0x11,0x11,0x11,0x11,0x11,0x0E},
+        /* V */ {0x11,0x11,0x11,0x11,0x11,0x0A,0x04},
+        /* W */ {0x11,0x11,0x11,0x15,0x15,0x1B,0x11},
+        /* X */ {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11},
+        /* Y */ {0x11,0x11,0x0A,0x04,0x04,0x04,0x04},
+        /* Z */ {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F}
+    };
+
+    static const uint8_t lower[26][7] = {
+        /* a */ {0x00,0x00,0x0E,0x01,0x0F,0x11,0x0F},
+        /* b */ {0x10,0x10,0x16,0x19,0x11,0x11,0x1E},
+        /* c */ {0x00,0x00,0x0E,0x10,0x10,0x11,0x0E},
+        /* d */ {0x01,0x01,0x0D,0x13,0x11,0x11,0x0F},
+        /* e */ {0x00,0x00,0x0E,0x11,0x1F,0x10,0x0E},
+        /* f */ {0x06,0x08,0x08,0x1E,0x08,0x08,0x08},
+        /* g */ {0x00,0x00,0x0F,0x11,0x0F,0x01,0x0E},
+        /* h */ {0x10,0x10,0x16,0x19,0x11,0x11,0x11},
+        /* i */ {0x04,0x00,0x0C,0x04,0x04,0x04,0x0E},
+        /* j */ {0x02,0x00,0x06,0x02,0x02,0x12,0x0C},
+        /* k */ {0x10,0x10,0x12,0x14,0x18,0x14,0x12},
+        /* l */ {0x0C,0x04,0x04,0x04,0x04,0x04,0x0E},
+        /* m */ {0x00,0x00,0x1A,0x15,0x15,0x11,0x11},
+        /* n */ {0x00,0x00,0x16,0x19,0x11,0x11,0x11},
+        /* o */ {0x00,0x00,0x0E,0x11,0x11,0x11,0x0E},
+        /* p */ {0x00,0x00,0x1E,0x11,0x1E,0x10,0x10},
+        /* q */ {0x00,0x00,0x0F,0x11,0x0F,0x01,0x01},
+        /* r */ {0x00,0x00,0x16,0x19,0x10,0x10,0x10},
+        /* s */ {0x00,0x00,0x0F,0x10,0x0E,0x01,0x1E},
+        /* t */ {0x08,0x08,0x1E,0x08,0x08,0x09,0x06},
+        /* u */ {0x00,0x00,0x11,0x11,0x11,0x13,0x0D},
+        /* v */ {0x00,0x00,0x11,0x11,0x11,0x0A,0x04},
+        /* w */ {0x00,0x00,0x11,0x11,0x15,0x15,0x0A},
+        /* x */ {0x00,0x00,0x11,0x0A,0x04,0x0A,0x11},
+        /* y */ {0x00,0x00,0x11,0x11,0x0F,0x01,0x0E},
+        /* z */ {0x00,0x00,0x1F,0x02,0x04,0x08,0x1F}
+    };
+
+    if (row < 0 || row >= 7)
+        return 0;
+
+    if (ch >= '0' && ch <= '9') return nums[ch - '0'][row];
+    if (ch >= 'A' && ch <= 'Z') return upper[ch - 'A'][row];
+    if (ch >= 'a' && ch <= 'z') return lower[ch - 'a'][row];
+
+    switch (ch) {
+        case ' ': return space[row];
+        case '!': return excl[row];
+        case '"': return quote[row];
+        case '#': return hash[row];
+        case '$': return dollar[row];
+        case '%': return percent[row];
+        case '&': return amp[row];
+        case '\'': return apost[row];
+        case '(': return lparen[row];
+        case ')': return rparen[row];
+        case '*': return star[row];
+        case '+': return plus[row];
+        case ',': return comma[row];
+        case '-': return dash[row];
+        case '.': return dot[row];
+        case '/': return slash[row];
+        case ':': return colon[row];
+        case ';': return semicolon[row];
+        case '<': return less[row];
+        case '=': return equal[row];
+        case '>': return greater[row];
+        case '?': return question[row];
+        case '@': return atsign[row];
+        case '[': return lbrack[row];
+        case '\\': return backslash[row];
+        case ']': return rbrack[row];
+        case '^': return caret[row];
+        case '_': return underscore[row];
+        case '`': return grave[row];
+        case '{': return lbrace[row];
+        case '|': return pipe[row];
+        case '}': return rbrace[row];
+        case '~': return tilde[row];
+        default:  return space[row];
+    }
+}
+
+void f18a_term80_display_reset(void)
+{
+    g_80col_buffer_initialized = 0;
+}
+
+static void f18a_80col_init_buffer_once(void)
+{
+    if (g_80col_buffer_initialized)
+        return;
+
+    f18a_80col_clear(' ', 15, 1);
+    g_80col_buffer_initialized = 1;
+}
+
+void f18a_80col_clear(unsigned char ch, unsigned char fg, unsigned char bg)
+{
+    for (unsigned int r = 0; r < F18A_80COL_ROWS; ++r)
+    {
+        for (unsigned int c = 0; c < F18A_80COL_COLS; ++c)
+        {
+            g_80col_char[r][c] = ch;
+            g_80col_fg[r][c] = fg & 0x0Fu;
+            g_80col_bg[r][c] = bg & 0x0Fu;
+        }
+    }
+
+    g_80col_buffer_initialized = 1;
+}
+
+void f18a_80col_put_char(unsigned int row, unsigned int col,
+                         unsigned char ch,
+                         unsigned char fg,
+                         unsigned char bg)
+{
+    if (row >= F18A_80COL_ROWS || col >= F18A_80COL_COLS)
+        return;
+
+    g_80col_char[row][col] = ch;
+    g_80col_fg[row][col] = fg & 0x0Fu;
+    g_80col_bg[row][col] = bg & 0x0Fu;
+}
+
+void f18a_80col_write_text(unsigned int row, unsigned int col,
+                           const char* text,
+                           unsigned char fg,
+                           unsigned char bg)
+{
+    if (!text || row >= F18A_80COL_ROWS || col >= F18A_80COL_COLS)
+        return;
+
+    while (*text && col < F18A_80COL_COLS)
+    {
+        f18a_80col_put_char(row, col, (unsigned char)*text, fg, bg);
+        ++text;
+        ++col;
+    }
+}
+
+static void f18a_80col_build_selftest_text(void)
+{
+    f18a_80col_clear(' ', 15, 1);
+
+    f18a_80col_write_text(0,  0, "ADAM+ F18A 80 COLUMN TEXT BUFFER API - 480X192 INTERNAL", 7, 1);
+    f18a_80col_write_text(1,  0, "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567", 15, 1);
+    f18a_80col_write_text(2,  0, "COL 00000000011111111112222222222333333333344444444445555555555666666666677777777", 10, 1);
+    f18a_80col_write_text(3,  0, "COL 01234567890123456789012345678901234567890123456789012345678901234567890123456789", 11, 1);
+    f18a_80col_write_text(4,  0, "ROW 04  THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG - 80 COLUMNS VISIBLE", 15, 1);
+    f18a_80col_write_text(5,  0, "ROW 05  THIS SCREEN IS DRAWN FROM THE INTERNAL 80X24 TEXT BUFFER", 14, 1);
+    f18a_80col_write_text(6,  0, "ROW 06  USE f18a_80col_put_char AND f18a_80col_write_text FOR CP/M LATER", 3, 1);
+    f18a_80col_write_text(7,  0, "ROW 07  6X8 CELLS - 80 COLUMNS X 24 ROWS", 12, 1);
+    f18a_80col_write_text(9,  0, "##########----------::::::::::++++++++++..........//////////##########", 9, 1);
+    f18a_80col_write_text(11, 0, "ROW 11  NORMAL F18A GAME RENDERING IS UNCHANGED WHEN SELF TEST IS OFF", 15, 1);
+    f18a_80col_write_text(14, 0, "ROW 14  NEXT STEP CAN CONNECT CP/M OUTPUT TO THIS TEXT BUFFER", 7, 1);
+    f18a_80col_write_text(23, 0, "ROW 23  END OF F18A 80 COLUMN TEXT BUFFER TEST", 10, 1);
+}
+
+static void f18a_render_80col_textbuffer(void)
+{
+    f18a_80col_init_buffer_once();
+
+    uint32_t line[F18A_80COL_WIDTH];
+
+    for (int y = 0; y < F18A_80COL_HEIGHT; ++y)
+    {
+        const unsigned int text_row = (unsigned int)y >> 3;
+        const int pixel_row = y & 7;
+
+        for (unsigned int col = 0; col < F18A_80COL_COLS; ++col)
+        {
+            const unsigned char ch = g_80col_char[text_row][col];
+            const uint32_t fg = f18a_color(g_80col_fg[text_row][col]);
+            const uint32_t bg = f18a_color(g_80col_bg[text_row][col]);
+            const uint8_t bits = f18a_font5x7((char)ch, pixel_row);
+            const unsigned int x0 = col * 6u;
+
+            for (unsigned int b = 0; b < 6u; ++b)
+                line[x0 + b] = (b < 5u && (bits & (0x10u >> b))) ? fg : bg;
+        }
+
+        vb_present_scanline_ex(y, line, F18A_80COL_WIDTH);
+    }
+
+    vb_present_frame();
+    video_set_dirty(1);
+}
+
+int f18a_present_80col_overlay(void)
+{
+    if (!g_f18a_80col_enabled)
+        return 0;
+
+    /* The self-test wants something on screen even before CP/M or T-DOS has written a
+       character, so put the demo up while the buffer is still untouched. */
+    if (g_f18a_80col_selftest_enabled)
+    {
+        if (!f18a_term80_is_enabled() || !g_80col_buffer_initialized)
+            f18a_term80_demo_screen();
+    }
+
+    /* f18a_loop() blinks the cursor once per rendered frame. It is not running when
+       another engine renders the VDP, so the tick comes from here instead. */
+    if (f18a_term80_is_enabled())
+        f18a_term80_tick();
+
+    f18a_render_80col_textbuffer();
+    return 1;
+}
+
+void f18a_set_80col_enabled(int enabled)
+{
+    g_f18a_80col_enabled = enabled ? 1 : 0;
+}
+
+int f18a_is_80col_enabled(void)
+{
+    return g_f18a_80col_enabled;
+}
+
+void f18a_set_80col_selftest_enabled(int enabled)
+{
+    g_f18a_80col_selftest_enabled = enabled ? 1 : 0;
+
+    /*
+     * C8-safe-2:
+     * Self-test is the only UI option that should force the 480x192
+     * 80-column renderer for now. When enabled, build the screen through
+     * the separate TERM80 terminal layer. When disabled, return to normal
+     * TMS-compatible F18A rendering.
+     */
+    if (g_f18a_80col_selftest_enabled)
+    {
+        f18a_term80_set_enabled(1);
+        f18a_term80_demo_screen();
+        g_f18a_80col_enabled = 1;
+    }
+    else
+    {
+        f18a_term80_set_enabled(0);
+        g_f18a_80col_enabled = 0;
+    }
+}
+
+int f18a_is_80col_selftest_enabled(void)
+{
+    return g_f18a_80col_selftest_enabled;
 }

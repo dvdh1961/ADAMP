@@ -19,9 +19,26 @@ enum MachineType {
 };
 
 enum VdpType {
-    VDP_TMS  = 0,
-    VDP_F18A = 1
+    VDP_TMS      = 0,
+    VDP_F18A     = 1,
+    VDP_PICO9918 = 2
 };
+
+/* A PICO9918 is an F18A-compatible drop-in, so everything gated on "F18A is
+   selected" is equally available on it. Mirrors coleco_vdp_has_f18a(). */
+inline bool vdpHasF18A(int vdpType)
+{
+    return vdpType == VDP_F18A || vdpType == VDP_PICO9918;
+}
+
+inline const char* vdpTypeName(int vdpType)
+{
+    switch (vdpType) {
+    case VDP_F18A:     return "F18A";
+    case VDP_PICO9918: return "PICO9918";
+    default:           return "TMS9928A/TMS9918A";
+    }
+}
 
 struct HardwareConfig {
     MachineType machine = MACHINE_COLECO;

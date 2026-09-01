@@ -174,8 +174,36 @@ extern void RenderCalcPalette(BYTE *cv_palette_out, int nbcolors);
 #ifndef COLECO_VDP_F18A
 #define COLECO_VDP_F18A  1
 #endif
+/* A PICO9918 answers every F18A feature test but is its own board, so it gets its
+   own type. Test features with coleco_vdp_has_f18a(); comparing against
+   COLECO_VDP_F18A now means "F18A and not a PICO9918". */
+#ifndef COLECO_VDP_PICO9918
+#define COLECO_VDP_PICO9918  2
+#endif
+
+/* Which implementation renders the VDP. Orthogonal to the type: the type is the
+   chip emulated, the engine is whose code does it. */
+#ifndef COLECO_VDP_ENGINE_LEGACY
+#define COLECO_VDP_ENGINE_LEGACY    0
+#endif
+#ifndef COLECO_VDP_ENGINE_PICO9918
+#define COLECO_VDP_ENGINE_PICO9918  1
+#endif
+
+int  coleco_get_vdp_engine(void);
 
 void coleco_set_vdp_type(int vdpType);
 int  coleco_get_vdp_type(void);
+
+/* Non-zero for any VDP that answers the F18A feature set: an F18A or a PICO9918. */
+int  coleco_vdp_has_f18a(void);
+
+/* VDP state for the debugger and the viewers, from whichever engine is live. Use these
+   rather than tms.VR[] / VDP_Memory[] / f18a_*: those are one engine's private state,
+   and the renderer is not necessarily that engine. The poke reaches the live core, so
+   the debugger's memory editor changes what is on screen. */
+unsigned char coleco_vdp_read_register(unsigned char reg);
+unsigned char coleco_vdp_peek_vram(unsigned int addr);
+void          coleco_vdp_poke_vram(unsigned int addr, unsigned char value);
 
 #endif

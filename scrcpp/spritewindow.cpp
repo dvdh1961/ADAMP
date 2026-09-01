@@ -384,7 +384,7 @@ void SpriteWindow::updateSpriteList()
     if (!emulator) return;
 
     // Bepaal sprite-eigenschappen
-    BYTE R1 = tms.VR[1];
+    BYTE R1 = coleco_vdp_read_register(1);
     m_is8x8 = (R1 & 0x02) == 0;
     m_isZoomed = (R1 & 0x01) != 0;
 

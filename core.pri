@@ -14,6 +14,7 @@ SOURCES += \
     $$PWD/source/CORE/cvstate.cpp \
     $$PWD/source/CORE/z80.c \
     $$PWD/source/GRAPH/f18a.c \
+    $$PWD/source/GRAPH/f18a_gpu.c \
     $$PWD/source/GRAPH/f18a_term80.c \
     $$PWD/source/GRAPH/f18a_term80_cpm.cpp \
     $$PWD/source/GRAPH/f18a_term80_tdos.cpp \
@@ -34,6 +35,7 @@ HEADERS += \
     $$PWD/source/CORE/emu.h \
     $$PWD/source/CORE/z80.h \
     $$PWD/source/GRAPH/f18a.h \
+    $$PWD/source/GRAPH/f18a_gpu.h \
     $$PWD/source/GRAPH/f18a_term80.h \
     $$PWD/source/GRAPH/f18a_term80_cpm.h \
     $$PWD/source/GRAPH/f18a_term80_tdos.h \

@@ -8,6 +8,7 @@
 #include "debugterminalwidget.h"
 #include "commandprocessor.h"
 #include "disasm_bridge.h"
+#include "vdp_bridge.h"
 #include "cartridgeinfowindow.h"
 #include "ntablewindow.h"
 #include "patternwindow.h"
@@ -983,6 +984,22 @@ void MainWindow::setupUI()
 // PREPARE LOGGER DIALOG
 //---------------------------------------------------------------------------------------------
 
+/* Name the VDP in the title: which chip is selected, and which engine rendered it,
+   are otherwise invisible. Call whenever the selected VDP changes. */
+void MainWindow::updateWindowTitleForVdp()
+{
+    QString suffix;
+    if (m_vdpType != VDP_TMS)
+        suffix = QStringLiteral(" - %1").arg(QLatin1String(vdpTypeName(m_vdpType)));
+
+    /* pico9918-core renders all three, so it is the legacy renderer that is worth
+       naming - it is only in use when ADAMP_VDP_ENGINE pinned it. */
+    if (coleco_get_vdp_engine() != COLECO_VDP_ENGINE_PICO9918)
+        suffix += QStringLiteral(" [legacy renderer]");
+
+    setWindowTitle(QString("ADAM+ Emulator - v%1%2").arg(appVersion, suffix));
+}
+
 void MainWindow::setUpLogWindow()
 {
     const int w = 770;
@@ -1146,18 +1163,19 @@ void MainWindow::loadSettings()
     m_paletteIndex = settings.value("video/palette", 0).toInt();
 
     m_vdpType = settings.value("video/vdp", 0).toInt();
-    if (m_vdpType != 1)
-        m_vdpType = 0;
+    if (!vdpHasF18A(m_vdpType))
+        m_vdpType = VDP_TMS;
 
     m_f18a80SelfTest = settings.value("video/f18a80SelfTest", false).toBool();
-    if (m_vdpType != 1)
+    if (!vdpHasF18A(m_vdpType))
         m_f18a80SelfTest = false;
 
     coleco_set_vdp_type(m_vdpType);
     f18a_set_80col_selftest_enabled(m_f18a80SelfTest ? 1 : 0);
+    updateWindowTitleForVdp();
 
     qDebug() << "[VIDEO] Loaded VDP:"
-             << (m_vdpType == 1 ? "F18A" : "TMS9928A/TMS9918A")
+             << vdpTypeName(m_vdpType)
              << "value =" << m_vdpType;
 
     m_machineType = settings.value("machine/type", 0).toInt();
@@ -1367,7 +1385,7 @@ void MainWindow::saveSettings()
 
     qDebug() << "[VIDEO] saveSettings BEFORE sync:"
              << "m_vdpType =" << m_vdpType
-             << (m_vdpType == 1 ? "F18A" : "TMS9928A/TMS9918A")
+             << vdpTypeName(m_vdpType)
              << "file =" << iniPath;
 
     settings.sync();
@@ -3551,14 +3569,15 @@ void MainWindow::switchToColecoMode()
 void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
 {
 
-    m_vdpType = (cfg.vdpType == 1) ? 1 : 0;
-    m_f18a80SelfTest = (m_vdpType == 1) ? cfg.f18a80SelfTest : false;
+    m_vdpType = vdpHasF18A(cfg.vdpType) ? cfg.vdpType : VDP_TMS;
+    m_f18a80SelfTest = vdpHasF18A(m_vdpType) ? cfg.f18a80SelfTest : false;
 
     coleco_set_vdp_type(m_vdpType);
     f18a_set_80col_selftest_enabled(m_f18a80SelfTest ? 1 : 0);
+    updateWindowTitleForVdp();
 
     qDebug() << "[VIDEO] Selected VDP:"
-             << (m_vdpType == 1 ? "F18A" : "TMS9928A/TMS9918A")
+             << vdpTypeName(m_vdpType)
              << "80col self-test=" << m_f18a80SelfTest;
 
     // C80 eerst toepassen, vóór resetAdam/resetColeco.
