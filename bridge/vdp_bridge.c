@@ -18,24 +18,13 @@
 #define VDP_H_VIRTUAL 640u
 #define VDP_V_OUTPUT  480u
 
-/* The library lays out 320 ENTRIES, not 640 pixels: on the board a pixel is 16 bits
-   and a line moves as 320 32-bit words, so every offset the frame module derives from
-   hVirtualPixels is in words. At 32 bits those become entries - left border 0-31,
-   picture 32-287, right border 288-319. The desktop policy is one pixel per entry,
-   leaving the doubling to vdp_bridge_expand_line(). */
-#define VDP_H_LIBRARY   (VDP_H_VIRTUAL / 2u) /* entries the library writes */
-#define VDP_H_ACTIVE    512u                 /* doubled picture, in output pixels */
-#define VDP_H_BORDER    ((VDP_H_VIRTUAL - VDP_H_ACTIVE) / 2u) /* 64 either side */
-#define VDP_H_SRC_START ((VDP_H_LIBRARY - VDP_H_ACTIVE / 2u) / 2u) /* 32: the library's halfHBorder */
+/* No horizontal geometry of our own. A line moves as 320 32-bit words holding two
+   16-bit pixels each, which is the one pixel width the library ships, so its offsets
+   land finished: 640 pixels, the picture doubled into 64..575 with 64 of border either
+   side, and every one of them written on every line it handles. */
 
 /* A little slack: a fine-h-scrolled tile layer's last quad can reach past the line. */
 #define VDP_LINE_SLACK 16u
-
-/* The library's border pixel, set at the top of every frame_scanline(). Its fill
-   covers only the 320 entries, so pre-painting the full 640 settles the half the
-   overlays draw into on border lines. Declared rather than included: an exported
-   symbol, but impl/ is private. One line of latency after a backdrop change. */
-extern uint32_t pico9918_border_bg;
 
 /* The PICO9918_INST macros require the instance to be named tms9918. */
 #if !PICO9918_SINGLE_INSTANCE
@@ -88,18 +77,39 @@ static uint8_t* g_deviceConfig  = 0;
 static char     g_configPath[512];
 static int      g_configCapturing = 0;
 
-/* The rate GPU software is written against: the F18A GPU is a TMS9900 core at
-   100MHz with a typical instruction of 60-150ns. */
-#define VDP_GPU_DEFAULT_IPS 10000000ul
-
 static unsigned int g_scanlines = 262u;
 static unsigned int g_line      = 0u;
 
-/* GPU instructions per scanline - see vdp_bridge_gpu_budget. Never zero: zero is
-   step_n's "no cap", and a loop can run before the first reset resolves this. */
-static uint32_t g_gpuBudget = VDP_GPU_DEFAULT_IPS / (262ul * 60ul);
-
 static PICO9918_PIXEL_T g_pixels[VDP_H_VIRTUAL + VDP_LINE_SLACK];
+
+/* The library renders the board's format, BGR12 in the low 12 bits; the video bridge
+   takes ARGB32. One lookup a pixel, in the copy into the frame that had to happen
+   anyway, and the transform itself is the library's so the nibble order lives in one
+   place. Indexed by the low 12 bits: the dead copy of green in 15-12 is masked off, as
+   the library masks it wherever it matters. */
+static uint32_t g_argb[VDP_H_VIRTUAL];
+static uint32_t g_bgr12Argb[4096];
+
+static void vdp_bridge_init_pixel_map(void)
+{
+    static int built = 0;
+
+    if (built) {
+        return;
+    }
+    built = 1;
+
+    for (unsigned int v = 0u; v < 4096u; ++v) {
+        g_bgr12Argb[v] = 0xff000000u | pico9918_pixel_rgb888((PICO9918_PIXEL_T)v);
+    }
+}
+
+static void vdp_bridge_convert_line(void)
+{
+    for (unsigned int x = 0u; x < VDP_H_VIRTUAL; ++x) {
+        g_argb[x] = g_bgr12Argb[g_pixels[x] & 0x0fffu];
+    }
+}
 
 static pico9918_scanline_params_t g_params;
 static pico9918_frame_display_t   g_display;
@@ -340,6 +350,7 @@ static void vdp_bridge_diag_setup(void)
 
 static int vdp_bridge_ensure(void)
 {
+    vdp_bridge_init_pixel_map();
 #if PICO9918_SINGLE_INSTANCE
     if (!g_coreUp) {
         pico9918_init();
@@ -365,18 +376,6 @@ static int vdp_bridge_ensure(void)
     }
     return tms9918 != 0;
 #endif
-}
-
-/* How much GPU work one emulated scanline buys - the GPU's clock rate in the only unit
-   the host has. Never zero: pico9918_gpu_step_n(0) means "no cap", which runs a program
-   to completion, and one waiting on the Z80 never completes. */
-static uint32_t vdp_bridge_gpu_budget(void)
-{
-    const uint32_t frameRate   = (g_scanlines > 300u) ? 50u : 60u;
-    const uint32_t linesPerSec = g_scanlines * frameRate;
-    const uint32_t budget      = VDP_GPU_DEFAULT_IPS / (linesPerSec ? linesPerSec : 1u);
-
-    return budget ? budget : 1u;
 }
 
 void vdp_bridge_reset(unsigned int scanlines)
@@ -414,8 +413,10 @@ void vdp_bridge_reset(unsigned int scanlines)
     vdp_bridge_configure();
     vdp_bridge_recompute_cadence();
 
-    /* Resolved once here rather than per scanline - it reads the environment. */
-    g_gpuBudget = vdp_bridge_gpu_budget();
+    /* Hands the GPU to the library: it runs a program from the write that arms it, so an
+       F18A detection probe reading its result back a few cycles later cannot miss it,
+       and paces the rest per scanline. */
+    pico9918_gpu_set_clock(PICO9918_INST PICO9918_GPU_IPS_PRO);
 }
 
 void vdp_bridge_writedata(unsigned char value)
@@ -427,9 +428,11 @@ void vdp_bridge_writedata(unsigned char value)
 
 void vdp_bridge_writectrl(unsigned char value)
 {
-    if (vdp_bridge_ensure()) {
-        pico9918_write_addr(PICO9918_INST value);
+    if (!vdp_bridge_ensure()) {
+        return;
     }
+
+    pico9918_write_addr(PICO9918_INST value);
 }
 
 unsigned char vdp_bridge_readdata(void)
@@ -450,124 +453,31 @@ int vdp_bridge_irq_level(void)
     return pico9918_interrupt_status(PICO9918_INST_ONLY) ? 1 : 0;
 }
 
-/* Turn the library's 320-entry line into the 640 pixels the board drives. Normally
-   256 TMS pixels doubled; in 80-column text already 512, so only the offset moves.
-   In place and downwards: every destination index is above every source index still
-   to be read, which is what makes that safe without a scratch line. */
-static void vdp_bridge_expand_line(void)
-{
-    /* Ask how many pixels the library actually wrote, rather than inferring it from the
-       mode: pico9918_display_mode() reports TEXT80 from R0 bit 2 alone, with no unlock
-       test, while the wide line needs the unlock too. A locked device holding R0 bit 2
-       therefore says TEXT80 and emits 256 - and reading 512 gave a 1:1 left half and a
-       stale right half. pico9918_line_bytes() is the one that knows. */
-    const unsigned int wide  = (pico9918_line_bytes(PICO9918_INST_ONLY) > VDP_H_ACTIVE / 2u);
-    const unsigned int count = wide ? VDP_H_ACTIVE : (VDP_H_ACTIVE / 2u);
-
-    /* Hoisted: scale is fixed for the whole line, and a runtime inner bound stops the
-       compiler turning the doubling into the two-word unpack it wants to be. */
-    if (wide) {
-        for (unsigned int i = count; i-- > 0; ) {
-            g_pixels[VDP_H_BORDER + i] = g_pixels[VDP_H_SRC_START + i];
-        }
-    } else {
-        for (unsigned int i = count; i-- > 0; ) {
-            const PICO9918_PIXEL_T v = g_pixels[VDP_H_SRC_START + i];
-            g_pixels[VDP_H_BORDER + 2u * i]      = v;
-            g_pixels[VDP_H_BORDER + 2u * i + 1u] = v;
-        }
-    }
-
-    for (unsigned int x = 0; x < VDP_H_BORDER; ++x) {
-        g_pixels[x]                             = pico9918_border_bg;
-        g_pixels[VDP_H_BORDER + VDP_H_ACTIVE + x] = pico9918_border_bg;
-    }
-}
-
-/* Finish the diagnostics overlay's colours, which the library leaves as BGR12: two
-   of its paths (DIAG_COLOR and renderPalette's swatches) were never ported to a wide
-   pixel, and the library says so at both. Alpha separates them - our policy ORs in
-   0xff000000 unconditionally, so a transparent pixel here is one of theirs. Retires
-   itself once the library has wide-pixel literals. DIAG_COLOR truncates the label
-   colour to white where the Pico shows cyan. */
-static void vdp_bridge_diag_recolour(void)
-{
-    for (unsigned int x = 0; x < VDP_H_VIRTUAL; ++x) {
-        const uint32_t p = (uint32_t)g_pixels[x];
-        if (p & 0xff000000u) {
-            continue; /* opaque: ours, and already right */
-        }
-
-        /* BGR12: blue at 11-8, green at 7-4, red at 3-0. Each nibble to a byte. */
-        g_pixels[x] = (PICO9918_PIXEL_T)((((p >> 0) & 0x0fu) * 0x11u) << 16 |
-                                         (((p >> 4) & 0x0fu) * 0x11u) <<  8 |
-                                         (((p >> 8) & 0x0fu) * 0x11u)       |
-                                         0xff000000u);
-    }
-}
 
 /* One virtual (VGA) line: render it, and write it out vPixelScale times. */
 static void vdp_bridge_virtual_line(void)
 {
     if (g_line < g_params.vVirtualPixels) {
         /* Through the frame module, not the bare pico9918_scan_line(): SR3, the GPU
-           trigger, the palette LUT and the overlays all live in there.
-
-           Only the half above what the library writes needs seeding. Entries 0..319 it
-           fills on every line it handles - border lines wholesale, active lines as left
-           border, picture and right border - so pre-filling those was always dead, and
-           on an active line the expansion below overwrites all 640 anyway. What is left
-           matters on border lines, where the splash draws into the 640-wide space. */
-        for (unsigned int x = VDP_H_LIBRARY; x < VDP_H_VIRTUAL; ++x) {
-            g_pixels[x] = pico9918_border_bg;
-        }
-
-        /* Hold the overlay back over the active render: it draws at 640-wide
-           coordinates into a 320-entry line, so it must come after the expansion. */
-        uint8_t diagWanted = 0;
-        /* Chip-gated: pico9918_reset() leaves config[] alone, so without this a DIAG
-           byte set while this was a PICO9918 keeps drawing panels after a switch to
-           TMS9918A or F18A. */
-        const int diagAllowed = vdp_bridge_is_pico9918();
-
-        if (g_deviceConfig && diagAllowed) {
-            diagWanted = g_deviceConfig[PICO9918_CONF_DIAG];
-            g_deviceConfig[PICO9918_CONF_DIAG] = 0;
-        }
-
-        const bool border =
-            pico9918_frame_scanline(PICO9918_INST (uint16_t)g_line, &g_params, g_pixels);
-
-        if (g_deviceConfig && diagAllowed) {
-            /* The border path turns the diagnostics on itself once the startup grace
-               period lapses, so a raised flag wins over the value we saved. */
-            if (g_deviceConfig[PICO9918_CONF_DIAG]) {
-                diagWanted = g_deviceConfig[PICO9918_CONF_DIAG];
-            }
-            g_deviceConfig[PICO9918_CONF_DIAG] = diagWanted;
-        }
-
-        /* Border lines are already full width, so only active ones need expanding. */
-        if (!border) {
-            vdp_bridge_expand_line();
-        }
-
-        /* On every line, borders included: the panels span the whole frame, and the
-           frame module renders them on active lines only, leaving the border to us.
-           Anything less clips them top and bottom. */
-        if (diagWanted) {
-            pico9918_diag_render(PICO9918_INST (uint16_t)g_line,
-                                 g_params.vVirtualPixels, g_pixels);
-            vdp_bridge_diag_recolour();
-        }
-
+           trigger, the palette LUT, the overlays and the CRT dim all live in there. It
+           writes all 640 pixels on every line it handles - border lines wholesale,
+           active lines as left border, picture and right border - so there is nothing
+           to seed, and it renders once per virtual line however many output rows share
+           it. */
         const unsigned int scale = g_display.vPixelScale ? g_display.vPixelScale : 1u;
         for (unsigned int rep = 0; rep < scale; ++rep) {
             const unsigned int dy = g_line * scale + rep;
-            if (dy < VDP_V_OUTPUT) {
-                vb_present_scanline_size((int)dy, g_pixels,
-                                         (int)VDP_H_VIRTUAL, (int)VDP_V_OUTPUT);
+            if (dy >= VDP_V_OUTPUT) {
+                continue;
             }
+
+            /* False means the buffer is untouched, so the conversion still stands. */
+            if (pico9918_frame_output_line(PICO9918_INST dy, &g_params, g_pixels)) {
+                vdp_bridge_convert_line();
+            }
+
+            vb_present_scanline_size((int)dy, g_argb,
+                                     (int)VDP_H_VIRTUAL, (int)VDP_V_OUTPUT);
         }
     }
 
@@ -614,10 +524,6 @@ int vdp_bridge_loop(void)
     for (unsigned int i = 0; i < g_linesPerCall; ++i) {
         vdp_bridge_virtual_line();
     }
-
-    /* A scanline's worth of GPU, capped so it always comes back: the caller that
-       would satisfy a program waiting on the Z80 is the one blocked inside it. */
-    pico9918_gpu_step_n(PICO9918_INST g_gpuBudget);
 
     return pico9918_interrupt_status(PICO9918_INST_ONLY) ? 1 : 0;
 }

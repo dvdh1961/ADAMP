@@ -71,36 +71,18 @@ PICO9918_RUNTIME_CHIP = ON
 # on UNIX. Flip to OFF for a local build you will never hand to anyone.
 PICO9918_PORTABLE_CODEGEN = ON
 
-# The compiler, not the OS: win32 is true for win32-msvc too, and MSVC needs /FI rather
-# than -include and a generator it can actually drive.
+# The compiler, not the OS: win32 is true for win32-msvc too, and MSVC needs a
+# generator it can actually drive.
 msvc {
     PICO9918_GENERATOR = NMake Makefiles
-    PICO9918_INCLUDE_FLAG = /FI
 } else:win32 {
     PICO9918_GENERATOR = MinGW Makefiles
-    PICO9918_INCLUDE_FLAG = -include
 } else {
     PICO9918_GENERATOR = Unix Makefiles
-    PICO9918_INCLUDE_FLAG = -include
-}
-
-# ADAMP's pixel policy, force-included ahead of the library's headers. The desktop
-# defaults are #ifndef-guarded, so this pins a correct one without editing
-# pico9918-core. See bridge/pico9918_pixel_policy.h.
-PICO9918_POLICY = $$PWD/bridge/pico9918_pixel_policy.h
-
-# The policy path rides inside CMAKE_C_FLAGS, which the compile line re-splits on
-# whitespace, so a space anywhere above the checkout breaks every library compile with a
-# "cannot specify -o with -c ... with multiple files" that names a directory fragment.
-# Said here, where it is actionable, rather than left to the compiler.
-contains(PICO9918_POLICY, ".* .*") {
-    error("pico9918-core: the path to this checkout contains a space \
-($$PICO9918_POLICY). The force-included pixel policy cannot survive that inside \
-CMAKE_C_FLAGS - please build from a path without spaces.")
 }
 
 # PICO9918_MODE=1 selects the F18A: the enhanced renderer and the TMS9900 GPU.
-PICO9918_CONFIGURE = cmake -S \"$$PICO9918_SRC\" -B \"$$PICO9918_BUILD\" -G \"$$PICO9918_GENERATOR\" -DCMAKE_BUILD_TYPE=$$PICO9918_BUILD_TYPE -DPICO9918_MODE=1 -DPICO9918_TEXT80_8BPP=$$PICO9918_TEXT80_8BPP -DPICO9918_RUNTIME_CHIP=$$PICO9918_RUNTIME_CHIP -DPICO9918_PORTABLE_CODEGEN=$$PICO9918_PORTABLE_CODEGEN -DCMAKE_C_FLAGS=\"$$PICO9918_INCLUDE_FLAG $$PICO9918_POLICY\"
+PICO9918_CONFIGURE = cmake -S \"$$PICO9918_SRC\" -B \"$$PICO9918_BUILD\" -G \"$$PICO9918_GENERATOR\" -DCMAKE_BUILD_TYPE=$$PICO9918_BUILD_TYPE -DPICO9918_MODE=1 -DPICO9918_TEXT80_8BPP=$$PICO9918_TEXT80_8BPP -DPICO9918_RUNTIME_CHIP=$$PICO9918_RUNTIME_CHIP -DPICO9918_PORTABLE_CODEGEN=$$PICO9918_PORTABLE_CODEGEN
 
 # Configure eagerly, while qmake parses: the configure step writes
 # pico9918_build_config.h, which every TU including pico9918.h needs before the first
