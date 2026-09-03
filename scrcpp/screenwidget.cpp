@@ -348,7 +348,7 @@ void ScreenWidget::showCpm80ContextMenu(const QPoint& pos)
  * F18A T-DOS 80C -> 40C zonder reset.
  */
     const bool f18aTdos80CanSwitchTo40 =
-        (coleco_get_vdp_type() == COLECO_VDP_F18A) &&
+        (coleco_vdp_has_f18a()) &&
         isTdosMode &&
         term80Active;
 
@@ -383,7 +383,7 @@ void ScreenWidget::showCpm80ContextMenu(const QPoint& pos)
      * F18A CP/M 40C -> 80C zonder reset.
      */
     const bool f18aCpm40CanSwitchTo80 =
-        (coleco_get_vdp_type() == COLECO_VDP_F18A) &&
+        (coleco_vdp_has_f18a()) &&
         isCpmMode &&
         m_cpm_selected &&
         !term80Active &&
@@ -395,7 +395,7 @@ void ScreenWidget::showCpm80ContextMenu(const QPoint& pos)
      * -> sync80ColumnVRAMToF18A() bridge.
      */
     const bool f18aTdos40CanSwitchTo80 =
-        (coleco_get_vdp_type() == COLECO_VDP_F18A) &&
+        (coleco_vdp_has_f18a()) &&
         isTdosMode &&
         !term80Active;
 
@@ -1408,7 +1408,7 @@ void ScreenWidget::paintEvent(QPaintEvent *event)
     m_last80TargetRect = targetRect;
     p.setRenderHint(QPainter::SmoothPixmapTransform, useSmoothFinalScale);
 
-    const bool isF18A = (coleco_get_vdp_type() == COLECO_VDP_F18A);
+    const bool isF18A = (coleco_vdp_has_f18a());
 
     /*
      * Jouw bestaande conventie:
@@ -1682,12 +1682,7 @@ void ScreenWidget::paintEvent(QPaintEvent *event)
 
 static unsigned int readCurrentNameTableBase()
 {
-    unsigned char vr2;
-
-    if (coleco_get_vdp_type() == COLECO_VDP_F18A)
-        vr2 = f18a_get_register(2);
-    else
-        vr2 = tms.VR[2];
+    const unsigned char vr2 = coleco_vdp_read_register(2);
 
     return ((unsigned int)(vr2 & 0x0F) << 10) & 0x3FFF;
 }
@@ -1698,7 +1693,7 @@ void ScreenWidget::set80ColumnMode(bool enabled)
     coleco_80col_enabled = enabled ? 1 : 0;
 
 
-    if (coleco_get_vdp_type() == COLECO_VDP_F18A) {
+    if (coleco_vdp_has_f18a()) {
         if (enabled) {
             if (m_tdos_enabled) {
                 /*
@@ -1737,20 +1732,12 @@ static unsigned char readCurrentVramByte(unsigned int addr)
 {
     addr &= 0x3FFF;
 
-    if (coleco_get_vdp_type() == COLECO_VDP_F18A)
-        return f18a_peek_vram(addr);
-
-    return VDP_Memory[addr];
+    return coleco_vdp_peek_vram(addr);
 }
 
 void ScreenWidget::read80ColumnVRAM(char textBuffer[24][80], unsigned char colorBuffer[24][80])
 {
-    unsigned char vr7;
-
-    if (coleco_get_vdp_type() == COLECO_VDP_F18A)
-        vr7 = f18a_get_register(7);
-    else
-        vr7 = tms.VR[7];
+    const unsigned char vr7 = coleco_vdp_read_register(7);
 
     unsigned char fgIdx = (vr7 >> 4) & 0x0F;
     unsigned char bgIdx = vr7 & 0x0F;
@@ -1848,14 +1835,14 @@ void ScreenWidget::read80ColumnVRAM(char textBuffer[24][80], unsigned char color
 
     // 3) Veilige fallback: normale TMS nametable is 40 kolommen breed.
     // Niet lineair 24x80 lezen, want dan verschuiven de regels.
-    unsigned int nameTableBase = (tms.VR[2] & 0x0F) << 10;
+    unsigned int nameTableBase = (coleco_vdp_read_register(2) & 0x0F) << 10;
     for (int row = 0; row < 24; ++row) {
         for (int col = 0; col < 80; ++col) {
             textBuffer[row][col] = ' ';
             colorBuffer[row][col] = fgIdx;
         }
         for (int col = 0; col < 40; ++col) {
-            unsigned char rawByte = VDP_Memory[(nameTableBase + row * 40 + col) & 0x3FFF];
+            unsigned char rawByte = coleco_vdp_peek_vram((nameTableBase + row * 40 + col) & 0x3FFF);
             textBuffer[row][col] = (char)rawByte;
             colorBuffer[row][col] = fgIdx;
         }
@@ -1871,7 +1858,7 @@ void ScreenWidget::setText(QPainter& painter, const QRect& targetRect,int charWi
     painter.scale((double)targetRect.width() / (80.0 * charWidth),
                   (double)targetRect.height() / (24.0 * charHeight));
 
-    globalBgIdx = tms.VR[7] & 0x0F;
+    globalBgIdx = coleco_vdp_read_register(7) & 0x0F;
 
     // CP/M80 gebruikt de handmatige kleuren of de achtergrondkleur uit het echte 40-col beeld.
     // TDOS gebruikt de normale TMS-kleurindex.
@@ -1901,7 +1888,7 @@ void ScreenWidget::sync80ColumnVRAMToF18A()
 
     f18a_term80_set_enabled(1);
 
-    unsigned char vr7 = f18a_get_register(7);
+    unsigned char vr7 = coleco_vdp_read_register(7);
 
     unsigned char fg40 = (vr7 >> 4) & 0x0F;
     unsigned char bg40 = vr7 & 0x0F;
@@ -1966,7 +1953,7 @@ void ScreenWidget::render80ColumnText(QPainter& painter, const QRect& targetRect
     unsigned char colorBuffer[24][80];
     read80ColumnVRAM(textBuffer, colorBuffer);
 
-    unsigned char globalBgIdx =  tms.VR[7] & 0x0F;
+    unsigned char globalBgIdx =  coleco_vdp_read_register(7) & 0x0F;
 
     // font and metrics
     painter.setFont(m_80colFont);

@@ -684,7 +684,7 @@ void NTableWindow::updateVdpRegisters()
 {
     if (!emulator) return;
 
-    BYTE R0 = tms.VR[0];
+    BYTE R0 = coleco_vdp_read_register(0);
     m_vdpRegLabel[0]->setText("$" + intToHex(R0, 2));
     QString R0_Desc = "";
 
@@ -698,7 +698,7 @@ void NTableWindow::updateVdpRegisters()
     m_vdpRegDesc[0]->setText(R0_Desc);
 
     // --- Update R1 ---
-    BYTE R1 = tms.VR[1];
+    BYTE R1 = coleco_vdp_read_register(1);
     m_vdpRegLabel[1]->setText("$" + intToHex(R1, 2));
     QStringList R1_Desc;
     if (R1 & 0x80) R1_Desc << "16k RAM";        // REG1_RAM16K
@@ -710,30 +710,33 @@ void NTableWindow::updateVdpRegisters()
     m_vdpRegDesc[1]->setText(R1_Desc.join(", "));
 
     // --- Update R2 (Name Table) ---
-    BYTE R2 = tms.VR[2];
+    BYTE R2 = coleco_vdp_read_register(2);
     m_vdpRegLabel[2]->setText("$" + intToHex(R2, 2));
-    // tms.ChrTab is een pointer, VDP_Memory is de start. Het verschil is de offset.
-    m_vdpRegDesc[2]->setText(QString("Addr: $%1").arg(intToHex(tms.ChrTab - VDP_Memory, 4)));
+    /* Derived from the register, not from tms9928a.c's tms.ChrTab: those pointers are
+       only maintained by the legacy engine. tms9928a.c additionally narrows these with a
+       per-mode mask before rendering, so in Graphics II this shows the address the
+       register asks for rather than the one that engine will use. */
+    m_vdpRegDesc[2]->setText(QString("Addr: $%1").arg(intToHex(((R2 & 0x0F) << 10) & 0x3FFF, 4)));
 
     // --- Update R3 (Color Table) ---
-    BYTE R3 = tms.VR[3];
+    BYTE R3 = coleco_vdp_read_register(3);
     m_vdpRegLabel[3]->setText("$" + intToHex(R3, 2));
-    m_vdpRegDesc[3]->setText(QString("Addr: $%1").arg(intToHex(tms.ColTab - VDP_Memory, 4)));
+    m_vdpRegDesc[3]->setText(QString("Addr: $%1").arg(intToHex(((R3 & 0xFF) << 6) & 0x3FFF, 4)));
 
     // --- Update R4 (Pattern Table) ---
-    BYTE R4 = tms.VR[4];
+    BYTE R4 = coleco_vdp_read_register(4);
     m_vdpRegLabel[4]->setText("$" + intToHex(R4, 2));
-    m_vdpRegDesc[4]->setText(QString("Addr: $%1").arg(intToHex(tms.ChrGen - VDP_Memory, 4)));
+    m_vdpRegDesc[4]->setText(QString("Addr: $%1").arg(intToHex(((R4 & 0x07) << 11) & 0x3FFF, 4)));
 
     // --- Update R5 (Sprite Attr) ---
-    BYTE R5 = tms.VR[5];
+    BYTE R5 = coleco_vdp_read_register(5);
     m_vdpRegLabel[5]->setText("$" + intToHex(R5, 2));
-    m_vdpRegDesc[5]->setText(QString("Addr: $%1").arg(intToHex(tms.SprTab - VDP_Memory, 4)));
+    m_vdpRegDesc[5]->setText(QString("Addr: $%1").arg(intToHex(((R5 & 0x7F) << 7) & 0x3FFF, 4)));
 
     // --- Update R6 (Sprite Ptrn) ---
-    BYTE R6 = tms.VR[6];
+    BYTE R6 = coleco_vdp_read_register(6);
     m_vdpRegLabel[6]->setText("$" + intToHex(R6, 2));
-    m_vdpRegDesc[6]->setText(QString("Addr: $%1").arg(intToHex(tms.SprGen - VDP_Memory, 4)));
+    m_vdpRegDesc[6]->setText(QString("Addr: $%1").arg(intToHex(((R6 & 0x07) << 11) & 0x3FFF, 4)));
 
     // --- Update R7 (Colors) ---
     //BYTE R7 = tms.VR[7];

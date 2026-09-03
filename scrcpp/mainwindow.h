@@ -172,6 +172,7 @@ private:
     void setupEmulatorThread();
     void setStatusBar();
     void setUpLogWindow();
+    void updateWindowTitleForVdp();
     void positionDebugger();
     void positionPrinter();
     void saveSettings();
@@ -430,7 +431,7 @@ private:
     QAction *m_actWriterBiosSource = nullptr;
 
     int m_paletteIndex = 0;
-    int m_vdpType = 0; // 0=TMS, 1=F18A
+    int m_vdpType = 0; // VdpType: 0=TMS, 1=F18A, 2=PICO9918
     bool m_f18a80SelfTest = false;
     int m_machineType = 0; // 0=Coleco, 1=ADAM
     bool m_realhardware = false;

@@ -1019,7 +1019,7 @@ void DebuggerWindow::updateVdpRegisters()
     for (int r = 0; r < 4; ++r) {
         // Linker paar: R0 t/m R3 (kolommen 0 en 1)
         int regIndexL = r;
-        uint8_t valL = tms.VR[regIndexL];
+        uint8_t valL = coleco_vdp_read_register(regIndexL);
 
         setItem(r, 0,
                 QString("R%1").arg(regIndexL),
@@ -1028,7 +1028,7 @@ void DebuggerWindow::updateVdpRegisters()
 
         // Rechter paar: R4 t/m R7 (kolommen 2 en 3)
         int regIndexR = r + 4;
-        uint8_t valR = tms.VR[regIndexR];
+        uint8_t valR = coleco_vdp_read_register(regIndexR);
 
         setItem(r, 2,
                 QString("R%1").arg(regIndexR),
@@ -1076,7 +1076,7 @@ uint8_t DebuggerWindow::readMemoryByte(uint32_t address)
     uint32_t addr = address;
     switch (m_currentMemSourceIndex) {
     case 0: return coleco_ReadByte(addr & 0xFFFF);
-    case 1: return VDP_Memory[addr & 0x3FFF];
+    case 1: return coleco_vdp_peek_vram(addr & 0x3FFF);
     case 2: return RAM_Memory[addr & 0x1FFFF];
     case 3: return RAM_Memory[addr & 0x7FFF];
     case 4: return SRAM_Memory[addr & 0x7FFF];
@@ -1772,7 +1772,7 @@ void DebuggerWindow::writeMemoryByte(uint32_t address, uint8_t data)
     }
 
     case 1: // TMS VDP VRAM
-        VDP_Memory[addr & 0x3FFF] = data;
+        coleco_vdp_poke_vram(addr & 0x3FFF, data);
         break;
 
     case 2: // Main RAM raw

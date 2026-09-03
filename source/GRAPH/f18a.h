@@ -47,6 +47,17 @@ void           f18a_set_palette_entry(unsigned int index, unsigned short rgb12);
 unsigned char  f18a_palette_is_dirty(void);
 void           f18a_palette_clear_dirty(void);
 
+/* Present the host 80-column terminal buffer, whichever engine is rendering the VDP.
+   The buffer is ADAMP's, not the VDP's - CP/M and T-DOS write it through TERM80 - so it
+   outlives f18a.c's own renderer. Returns 1 if it took the frame, 0 if 80-column is not
+   up and the VDP frame stands. */
+int  f18a_present_80col_overlay(void);
+
+/* Reset the host 80-column overlay's own state - the palette it draws with and the
+   display buffer. Call from the VDP reset on every engine: f18a_reset() is only
+   reached on the legacy path, and without this the overlay draws black on black. */
+void f18a_reset_80col_overlay(void);
+
 /* F18A 80-column diagnostic/self-test controls. */
 void f18a_set_80col_enabled(int enabled);
 int  f18a_is_80col_enabled(void);

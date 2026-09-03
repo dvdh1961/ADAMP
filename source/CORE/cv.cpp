@@ -21,6 +21,7 @@
 */
 
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -52,6 +53,7 @@
 #include "GRAPH/f18a_term80.h"
 #include "GRAPH/f18a_term80_cpm.h"
 #include "GRAPH/f18a_term80_tdos.h"
+#include "vdp_bridge.h"
 
 // BIOS loader prototype
 static int loadBios(const char *filename, BYTE *memory, int sizerm);
@@ -291,8 +293,16 @@ static inline void DKA_TRACE_BANK(const QString&)
 #ifndef COLECO_VDP_F18A
 #define COLECO_VDP_F18A  1
 #endif
+#ifndef COLECO_VDP_PICO9918
+#define COLECO_VDP_PICO9918  2
+#endif
 
 static int  g_vdpType = COLECO_VDP_TMS;
+/* pico9918-core renders every chip ADAMP offers - see coleco_set_vdp_type. The legacy
+   tms9928a.c/f18a.c renderers are reachable through ADAMP_VDP_ENGINE=legacy. */
+static int  g_vdpEngine = COLECO_VDP_ENGINE_PICO9918;
+static bool g_vdpEngineResolved = false;
+static void vdp_engine_resolve(void);
 static bool g_f18a_irq_level = false;
 
 static inline unsigned int vdp_current_scanlines()
@@ -312,7 +322,7 @@ static inline unsigned int vdp_current_scanlines()
     if (emulator->NTSC)
         return TMS9918_LINES;
 
-    if (g_vdpType == COLECO_VDP_F18A)
+    if (coleco_vdp_has_f18a())
         return TMS9918_LINES;
 
     return TMS9929_LINES;
@@ -325,9 +335,25 @@ static inline void f18a_sync_timing()
 
 void coleco_set_vdp_type(int vdpType)
 {
-    g_vdpType = (vdpType == COLECO_VDP_F18A) ? COLECO_VDP_F18A : COLECO_VDP_TMS;
-    f18a_set_enabled(g_vdpType == COLECO_VDP_F18A);
+    g_vdpType = (vdpType == COLECO_VDP_F18A || vdpType == COLECO_VDP_PICO9918)
+                    ? vdpType
+                    : COLECO_VDP_TMS;
+
+    /* A PICO9918 answers the F18A feature set, so the F18A module stays enabled. */
+    f18a_set_enabled(coleco_vdp_has_f18a() != 0);
     g_f18a_irq_level = false;
+
+    /* One renderer for all three. The chip is a runtime personality of pico9918-core
+       now, not a different engine, so the selection no longer picks one - it picks who
+       that core answers as. ADAMP_VDP_ENGINE=legacy pins the old renderers for an A/B. */
+    vdp_engine_resolve();
+
+    vdp_bridge_set_chip(g_vdpType);
+
+    /* ADAMP's 80-column terminal is a host character buffer that CP/M and T-DOS write
+       through TERM80, not VDP state, so it has to outlive the engine that used to draw
+       it. Registered here because this is where the engine is decided. */
+    vdp_bridge_set_overlay_hook(f18a_present_80col_overlay);
 
     /*
      * Belangrijk:
@@ -344,16 +370,118 @@ int coleco_get_vdp_type(void)
     return g_vdpType;
 }
 
-static inline bool coleco_vdp_is_f18a(void)
+/* A PICO9918 is an F18A-compatible drop-in, so every "does this chip behave as an
+   F18A" test answers yes for both - including the legacy renderer's own dispatch,
+   which has no PICO9918 of its own and must render one as an F18A. There used to be a
+   strict COLECO_VDP_F18A-only variant beside this; it dated from when the engine
+   followed the chip, and with the engine pinned to legacy it left a PICO9918 rendering
+   as a bare TMS9918A with its 80-column terminal never presented. */
+int coleco_vdp_has_f18a(void)
 {
-    return g_vdpType == COLECO_VDP_F18A;
+    return (g_vdpType == COLECO_VDP_F18A || g_vdpType == COLECO_VDP_PICO9918) ? 1 : 0;
+}
+
+int coleco_get_vdp_engine(void)
+{
+    vdp_engine_resolve(); /* the UI asks before any frame runs */
+    return g_vdpEngine;
+}
+
+/* Case-insensitive, because a debug switch that silently ignores "LEGACY" costs an
+   afternoon. */
+static bool vdp_engine_name_is(const char* value, const char* name)
+{
+    for (; *value && *name; ++value, ++name)
+    {
+        if (std::tolower((unsigned char)*value) != *name)
+            return false;
+    }
+    return *value == '\0' && *name == '\0';
+}
+
+/* ADAMP_VDP_ENGINE names an engine: "pico9918" for the core that now renders by
+   default, "legacy" for tms9928a.c/f18a.c - which is the one worth asking for, as the
+   A/B for a rendering difference. Resolved once, on first use, so a frame never changes
+   engine underneath itself. */
+static void vdp_engine_resolve(void)
+{
+    if (g_vdpEngineResolved)
+        return;
+
+    g_vdpEngineResolved = true;
+
+    const char* requested = std::getenv("ADAMP_VDP_ENGINE");
+    if (!requested)
+        return;
+
+    if (vdp_engine_name_is(requested, "pico9918"))
+        g_vdpEngine = COLECO_VDP_ENGINE_PICO9918;
+    else if (vdp_engine_name_is(requested, "legacy"))
+        g_vdpEngine = COLECO_VDP_ENGINE_LEGACY;
+    else
+        qWarning("ADAMP_VDP_ENGINE=%s is not an engine name - expected pico9918 or legacy.",
+                 requested);
+}
+
+static inline bool coleco_vdp_is_pico9918(void)
+{
+    vdp_engine_resolve();
+    return g_vdpEngine == COLECO_VDP_ENGINE_PICO9918;
+}
+
+/* VDP state for the debugger and the viewers, from whichever engine is actually live.
+   The window code used to test the chip and then reach straight into f18a.c's private
+   VRAM or tms9928a.c's VDP_Memory[] - but under pico9918-core neither of those is fed,
+   so a chip test cannot answer "where is the state". That decision lives here, once. */
+unsigned char coleco_vdp_read_register(unsigned char reg)
+{
+    if (coleco_vdp_is_pico9918())
+        return vdp_bridge_get_register(reg);
+    if (coleco_vdp_has_f18a())
+        return f18a_get_register(reg);
+    return tms.VR[reg & 0x0Fu];
+}
+
+unsigned char coleco_vdp_peek_vram(unsigned int addr)
+{
+    if (coleco_vdp_is_pico9918())
+        return vdp_bridge_peek_vram(addr);
+    if (coleco_vdp_has_f18a())
+        return f18a_peek_vram(addr);
+    return VDP_Memory[addr & 0xFFFFu];
+}
+
+void coleco_vdp_poke_vram(unsigned int addr, unsigned char value)
+{
+    if (coleco_vdp_is_pico9918())
+    {
+        vdp_bridge_poke_vram(addr, value);
+        return;
+    }
+    if (coleco_vdp_has_f18a())
+    {
+        f18a_poke_vram(addr, value);
+        return;
+    }
+    VDP_Memory[addr & 0xFFFFu] = value;
 }
 
 static inline void vdp_reset_active(void)
 {
     g_f18a_irq_level = false;
 
-    if (g_vdpType == COLECO_VDP_F18A)
+    if (coleco_vdp_is_pico9918())
+    {
+        vdp_bridge_reset(vdp_current_scanlines());
+        /* The 80-column overlay is ADAMP's, not the core's, so the core's reset does
+           not touch it. f18a_reset() below is unreachable from here. */
+        f18a_reset_80col_overlay();
+        return;
+    }
+
+    /* has_f18a, not == F18A: on the legacy engine a PICO9918 is rendered by f18a.c,
+       so it needs f18a.c's reset and its timing too. */
+    if (coleco_vdp_has_f18a())
     {
         f18a_sync_timing();
         f18a_reset();
@@ -366,7 +494,13 @@ static inline void vdp_reset_active(void)
 
 static inline void vdp_writedata_active(BYTE value)
 {
-    if (coleco_vdp_is_f18a())
+    if (coleco_vdp_is_pico9918())
+    {
+        vdp_bridge_writedata((unsigned char)value);
+        return;
+    }
+
+    if (coleco_vdp_has_f18a())
     {
         f18a_writedata((unsigned char)value);
         return;
@@ -378,7 +512,13 @@ static inline void vdp_writedata_active(BYTE value)
 static inline void vdp_writectrl_active(BYTE value)
 {
 
-    if (coleco_vdp_is_f18a())
+    if (coleco_vdp_is_pico9918())
+    {
+        vdp_bridge_writectrl((unsigned char)value);
+        return;
+    }
+
+    if (coleco_vdp_has_f18a())
     {
         (void)f18a_writectrl((unsigned char)value);
         return;
@@ -391,7 +531,10 @@ static inline void vdp_writectrl_active(BYTE value)
 
 static inline BYTE vdp_readdata_active(void)
 {
-    if (coleco_vdp_is_f18a())
+    if (coleco_vdp_is_pico9918())
+        return (BYTE)vdp_bridge_readdata();
+
+    if (coleco_vdp_has_f18a())
         return (BYTE)f18a_readdata();
 
     return tms9918_readdata();
@@ -401,7 +544,27 @@ static inline BYTE vdp_readctrl_active(void)
 {
     BYTE value = 0;
 
-    if (coleco_vdp_is_f18a())
+    if (coleco_vdp_is_pico9918())
+    {
+        value = (BYTE)vdp_bridge_readctrl();
+
+        /* Not an unconditional de-assert, unlike the two paths below. The core clears
+           its INT latch only on an SR0 read, and F18A VR15 can point the status port at
+           another register - SR3 to poll the scanline counter is a standard raster
+           technique. Clearing regardless dropped that frame's vblank NMI: the level
+           stayed high in the core, so no fresh asserting edge was ever issued. Take the
+           level from the core, and leave asserting to the scanline loop that owns the
+           edge. */
+        if (!vdp_bridge_irq_level())
+        {
+            g_f18a_irq_level = false;
+            z80_set_irq_line(INPUT_LINE_NMI, CLEAR_LINE);
+        }
+
+        return value;
+    }
+
+    if (coleco_vdp_has_f18a())
     {
         /*
          * VDP status read clears the VDP interrupt condition.
@@ -438,8 +601,13 @@ static inline BYTE vdp_readctrl_active(void)
 static inline void vdp_loop_active(void)
 {
 
+    if (coleco_vdp_is_pico9918())
+    {
+        g_f18a_irq_level = (vdp_bridge_loop() != 0);
+        return;
+    }
 
-    if (coleco_vdp_is_f18a())
+    if (coleco_vdp_has_f18a())
     {
         /*
          * F18A CP/M 40-column centering correction.
@@ -468,7 +636,10 @@ static inline void vdp_loop_active(void)
 
 static inline bool vdp_irq_level_active(void)
 {
-    if (coleco_vdp_is_f18a())
+    if (coleco_vdp_is_pico9918())
+        return g_f18a_irq_level;
+
+    if (coleco_vdp_has_f18a())
         return g_f18a_irq_level;
 
     return ((tms.VR[1] & TMS9918_REG1_IRQ) != 0) &&
@@ -1360,7 +1531,7 @@ void coleco_reset_and_restart_bios()
     // 3. CP/M 80-column smartkey rescan
     // --------------------------------------------------------------------
 
-    if (coleco_vdp_is_f18a() && m_cpm_enabled && !m_tdos_enabled)
+    if (coleco_vdp_has_f18a() && m_cpm_enabled && !m_tdos_enabled)
     {
         f18a_term80_cpm_force_smartkey_rescan();
     }
@@ -1378,7 +1549,7 @@ void coleco_hide_current_vdp_sprites(void)
     if (!emulator || emulator->currentMachineType != MACHINEADAM)
         return;
 
-    if (coleco_vdp_is_f18a())
+    if (coleco_vdp_has_f18a())
     {
         f18a_hide_current_sprites();
         return;
@@ -2058,7 +2229,7 @@ void coleco_writeport(int Address, int Data, int * /**tstates*/)
             // Als we in C80 modus zitten, moeten we
             // soms specifieke register-instellingen forceren die
             // T-DOS verwacht voor een 80-koloms lineaire buffer.
-            if (!coleco_vdp_is_f18a() && coleco_80col_enabled) {
+            if (!coleco_vdp_has_f18a() && coleco_80col_enabled) {
                 // Forceer Text Mode (Mode 0) maar met aangepaste timing/breedte
                 // Dit zorgt dat de interne 'tms' structuur de juiste tabellen kiest.
                 tms.Mode = 0;
@@ -2317,7 +2488,7 @@ int coleco_do_scanline(void)
 
             DEBUG_BRIDGE.setCurrentOpcodeStartPC(Z80.pc.w.l);
 
-            if (coleco_get_vdp_type() == COLECO_VDP_F18A)
+            if (coleco_vdp_has_f18a())
             {
                 if (m_cpm_enabled && m_tdos_enabled)
                 {
@@ -2356,7 +2527,7 @@ int coleco_do_scanline(void)
     // VDP scanline update
     // ------------------------------------------------------------
     vdp_loop_active();
-    if (!coleco_vdp_is_f18a() && tms.CurLine == TMS9918_END_LINE)
+    if (!coleco_vdp_has_f18a() && tms.CurLine == TMS9918_END_LINE)
     {
         static unsigned diagnosticFrame = 0;
         adamp_vdp_trace("FRAME", 0);
@@ -2522,7 +2693,7 @@ int coleco_cpu_execute_one_step() {
         return 0; // 0 cycles uitgevoerd
     }
 
-     if (coleco_get_vdp_type() == COLECO_VDP_F18A) {
+     if (coleco_vdp_has_f18a()) {
           if (m_cpm_enabled && m_tdos_enabled)
                    f18a_term80_tdos_before_opcode();
          else

@@ -393,6 +393,14 @@ Version 0.1.10.25
 ## Debugger breakpoint
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_DEBUG.gif)
 
+## Third-party libraries
+
+### pico9918-core
+
+  The TMS9918A, F18A and PICO9918 modes are powered by [**pico9918-core**](https://github.com/visrealm/pico9918-core). It is the same renderer behind the [PICO9918](https://github.com/visrealm/pico9918), a drop-in VDP replacement for real ADAM and ColecoVision hardware, so the renderer and GPU emulation you get here are identical to the real PICO9918. We link it as a static library and pick the chip at runtime, so you can switch between the three in the Hardware window.
+  
+  MIT License, Copyright (c) 2021-2026 Troy Schrapel
+
 ## Credits
 
 Thanks to everyone who shared their knowledge and inspiration — without them, this project would never have come to life.
@@ -404,6 +412,7 @@ Thanks to everyone who shared their knowledge and inspiration — without them, 
 - Russell Marks        (https://sz81.sourceforge.net/)
 - Juergen Buchmueller  (R.I.P.) (z80 code)
 - Óscar Toledo         (https://github.com/nanochess/CVBasic) 
+- Troy Schrapel        (https://github.com/visrealm)
 
 ## Support ADAM+
 

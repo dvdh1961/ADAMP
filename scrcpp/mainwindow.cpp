@@ -6,6 +6,7 @@
 #include "logwindow.h"
 #include "debuggerwindow.h"
 #include "disasm_bridge.h"
+#include "CORE/cv.h"
 #include "cartridgeinfowindow.h"
 #include "ntablewindow.h"
 #include "patternwindow.h"
@@ -43,6 +44,7 @@
 #include <QJsonValue>
 #include <QFile>
 #include <QDir>
+#include "vdp_bridge.h"
 #include <QSettings>
 #include <QDialog>
 #include <QVBoxLayout>
@@ -103,6 +105,13 @@ MainWindow::MainWindow(QWidget *parent)
     m_openColecoRomAction(nullptr)
 
 {
+    /* The emulated PICO9918's flash, beside settings.ini because it is the same kind
+       of thing. Set before anything can reset the VDP: the bridge reads it on reset,
+       as a board reads flash at power-on, so a reset that got in first would default. */
+    const QByteArray picoConfigPath =
+        QDir(QCoreApplication::applicationDirPath()).filePath("pico9918.cfg").toLocal8Bit();
+    vdp_bridge_set_config_path(picoConfigPath.constData());
+
     setUpLogWindow();
     configurePlatformSettings();
 
@@ -112,7 +121,7 @@ MainWindow::MainWindow(QWidget *parent)
     // Version
     appVersion = "1.3.08.26";
 
-    setWindowTitle(QString("ADAM+ Emulator - v%1").arg(appVersion));
+    updateWindowTitleForVdp();
 
     m_wallpaperLabel = new QLabel(this);
     QPixmap wallpaper(":/images/images/wallpaper_coleco.png");

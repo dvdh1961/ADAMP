@@ -1,0 +1,3 @@
+[submodule "3rdparty/pico9918-core"]
+	path = 3rdparty/pico9918-core
+	url = https://github.com/visrealm/pico9918-core.git

@@ -234,7 +234,7 @@ byte GetKBD()
     {
         unsigned char checkByte = 0;
 
-        if (coleco_get_vdp_type() == COLECO_VDP_F18A) {
+        if (coleco_vdp_has_f18a()) {
             // F18A gebruikt eigen VRAM-buffer
             checkByte = f18a_peek_vram(0x3747);
         } else {

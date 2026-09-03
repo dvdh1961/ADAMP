@@ -1,0 +1,17 @@
+# Build output. qmake shadow builds live in build/<Config>/, matching the paths in
+# ADAMP_EMU.pro.user, and pico9918.pri writes the pico9918-core CMake tree in beside
+# them (one per configuration - see PICO9918_BUILD).
+/build/
+
+# If qmake is ever run in the source tree rather than a shadow directory, it drops
+# these in the root - the pico9918-core CMake trees included, since pico9918.pri
+# builds under OUT_PWD.
+/Makefile
+/Makefile.Debug
+/Makefile.Release
+/.qmake.stash
+/object_script.*
+/debug/
+/release/
+/pico9918-core-debug/
+/pico9918-core-release/

@@ -30,5 +30,6 @@ INCLUDEPATH += $$PWD/source \
 include(core.pri)
 include(bridge.pri)
 include(scrcpp.pri)
+include(pico9918.pri)
 
 RC_FILE = app.rc
