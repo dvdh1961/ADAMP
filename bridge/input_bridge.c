@@ -6,6 +6,7 @@ volatile uint16_t ib_keypad1   = 0; // elke bit = 1 wanneer ingedrukt
 
 volatile int16_t  ib_analog_x1 = 0;
 volatile uint8_t ib_paddle_mode = 0;
+volatile uint8_t ib_driving_gear = 0;
 
 void ib_set_joy1_dir(uint8_t mask, int pressed) {
     if (pressed) ib_joy1_dir |= mask;
@@ -26,4 +27,8 @@ void ib_set_keypad_bit(int index, int pressed) {
 
 void ib_set_analog_x1(int16_t value) {
     ib_analog_x1 = value;
+}
+
+void ib_set_driving_gear(uint8_t gear) {
+    ib_driving_gear = gear <= 4 ? gear : 0;
 }

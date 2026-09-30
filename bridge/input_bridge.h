@@ -16,6 +16,7 @@ extern volatile uint16_t ib_keypad1;    // bitmask 0..11 (0..9,*,#): 1=ingedrukt
 
 extern volatile int16_t ib_analog_x1;   // Ruwe analoge X-as waarde (-32767 tot 32767)
 extern volatile uint8_t ib_paddle_mode;
+extern volatile uint8_t ib_driving_gear; // 0=neutral, 1..4=latched gear
 
 // Setters (idempotent)
 void ib_set_joy1_dir(uint8_t mask, int pressed);
@@ -23,6 +24,7 @@ void ib_set_joy1_btn(uint8_t mask, int pressed);
 void ib_set_keypad_bit(int index, int pressed); // index: 0..9=digits,10='*',11='#'
 
 void ib_set_analog_x1(int16_t value);
+void ib_set_driving_gear(uint8_t gear);
 
 #ifdef __cplusplus
 }
