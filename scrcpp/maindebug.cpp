@@ -5,6 +5,7 @@
 #include "inputwidget.h"
 #include "logwindow.h"
 #include "debuggerwindow.h"
+#include "ataridebuggerwindow.h"
 #include "disasm_bridge.h"
 #include "cartridgeinfowindow.h"
 #include "ntablewindow.h"
@@ -67,6 +68,16 @@ void MainWindow::setDebugger(DebuggerWindow *debugger)
 
 void MainWindow::onOpenDebugger()
 {
+    if(m_machineType==MACHINE_ATARI2600){
+        if(!m_atariDebugWin)return;
+        m_atariDebugWin->show();
+        if(m_snapWindows)m_atariDebugWin->move(x()+width()+10,y());
+        else m_atariDebugWin->move(x()+(width()-m_atariDebugWin->width())/2,y()+(height()-m_atariDebugWin->height())/2);
+        m_atariDebugWin->raise();m_atariDebugWin->activateWindow();
+        QMetaObject::invokeMethod(m_colecoController,"setAtariDebuggerActive",Qt::QueuedConnection,Q_ARG(bool,true));
+        QMetaObject::invokeMethod(m_colecoController,"pauseAtariDebugger",Qt::QueuedConnection);
+        return;
+    }
     if (!m_debugWin) return;
     m_isPaused = true;
     QMetaObject::invokeMethod(m_colecoController, "resumeEmulation",
@@ -419,4 +430,3 @@ void MainWindow::onLoadSymbolDefinitions()
 
     m_debugWin->setSymbolDefinitions(loadedSymbols);
 }
-

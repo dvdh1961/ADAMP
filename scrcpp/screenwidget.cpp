@@ -348,7 +348,7 @@ void ScreenWidget::showCpm80ContextMenu(const QPoint& pos)
  * F18A T-DOS 80C -> 40C zonder reset.
  */
     const bool f18aTdos80CanSwitchTo40 =
-        (coleco_get_vdp_type() == COLECO_VDP_F18A) &&
+        (coleco_vdp_has_f18a()) &&
         isTdosMode &&
         term80Active;
 
@@ -383,7 +383,7 @@ void ScreenWidget::showCpm80ContextMenu(const QPoint& pos)
      * F18A CP/M 40C -> 80C zonder reset.
      */
     const bool f18aCpm40CanSwitchTo80 =
-        (coleco_get_vdp_type() == COLECO_VDP_F18A) &&
+        (coleco_vdp_has_f18a()) &&
         isCpmMode &&
         m_cpm_selected &&
         !term80Active &&
@@ -395,7 +395,7 @@ void ScreenWidget::showCpm80ContextMenu(const QPoint& pos)
      * -> sync80ColumnVRAMToF18A() bridge.
      */
     const bool f18aTdos40CanSwitchTo80 =
-        (coleco_get_vdp_type() == COLECO_VDP_F18A) &&
+        (coleco_vdp_has_f18a()) &&
         isTdosMode &&
         !term80Active;
 
@@ -1408,7 +1408,7 @@ void ScreenWidget::paintEvent(QPaintEvent *event)
     m_last80TargetRect = targetRect;
     p.setRenderHint(QPainter::SmoothPixmapTransform, useSmoothFinalScale);
 
-    const bool isF18A = (coleco_get_vdp_type() == COLECO_VDP_F18A);
+    const bool isF18A = (coleco_vdp_has_f18a());
 
     /*
      * Jouw bestaande conventie:
@@ -1684,7 +1684,7 @@ static unsigned int readCurrentNameTableBase()
 {
     unsigned char vr2;
 
-    if (coleco_get_vdp_type() == COLECO_VDP_F18A)
+    if (coleco_vdp_has_f18a())
         vr2 = f18a_get_register(2);
     else
         vr2 = tms.VR[2];
@@ -1698,7 +1698,7 @@ void ScreenWidget::set80ColumnMode(bool enabled)
     coleco_80col_enabled = enabled ? 1 : 0;
 
 
-    if (coleco_get_vdp_type() == COLECO_VDP_F18A) {
+    if (coleco_vdp_has_f18a()) {
         if (enabled) {
             if (m_tdos_enabled) {
                 /*
@@ -1737,7 +1737,7 @@ static unsigned char readCurrentVramByte(unsigned int addr)
 {
     addr &= 0x3FFF;
 
-    if (coleco_get_vdp_type() == COLECO_VDP_F18A)
+    if (coleco_vdp_has_f18a())
         return f18a_peek_vram(addr);
 
     return VDP_Memory[addr];
@@ -1747,7 +1747,7 @@ void ScreenWidget::read80ColumnVRAM(char textBuffer[24][80], unsigned char color
 {
     unsigned char vr7;
 
-    if (coleco_get_vdp_type() == COLECO_VDP_F18A)
+    if (coleco_vdp_has_f18a())
         vr7 = f18a_get_register(7);
     else
         vr7 = tms.VR[7];

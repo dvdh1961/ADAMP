@@ -7,7 +7,9 @@
 #include <QIODevice>
 #include <QElapsedTimer>
 #include "CORE/cv.h"
+#include "ATARI2600/a2600_core.h"
 #include <QSoundEffect>
+#include <QVariantMap>
 
 #define KB_F1 0x54
 #define KB_F2 0x55
@@ -71,7 +73,8 @@ public slots:
     void ejectColecoCartridge();
     void resetMachine();
     void resethMachine();
-    void powerOffMachine();
+    void powerOffMachine(bool bootFromAdamNet,
+                         bool forceAdamCoreBeforeMenu = false);
     void setSGMEnabled(bool enabled);
     void setVideoStandard(bool isNTSC);
     void onAdamKeyEvent(int adamKeyCode);
@@ -89,7 +92,7 @@ public slots:
     void saveState(const QString& filePath);
     void loadState(const QString& filePath);
     void setMachineType(MachineType machineType);
-    void resetAdam();
+    void resetAdam(bool forceAdamCoreBeforeMenu = false);
     void resetColeco();
     void coldStartAdam();
     void loadBiosRoms(const QString& colecoPath, const QString& eosPath, const QString& writerPath);
@@ -100,10 +103,28 @@ public slots:
                        const QString& eosPath,
                        const QString& writerPath);
     void bootCpmDisk();
+    void setAtari2600Mode(bool enabled);
+    void loadAtari2600Rom(const QString &romPath);
+    void ejectAtari2600Rom();
+    void resetAtari2600();
+    void setAtari2600ResetSwitch(bool pressed);
+    void setAtari2600Joystick(int port, bool up, bool down, bool left, bool right, bool fire);
+    void setAtari2600Paddle(int paddle, int position, bool fire);
+    void setAtari2600ConsoleSwitches(bool resetPressed, bool selectPressed, bool color,
+                                     bool leftDifficultyA, bool rightDifficultyA);
+    void setAtari2600PhosphorEffect(bool enabled);
+    void pauseAtariDebugger();
+    void runAtariDebugger();
+    void stepAtariDebugger();
+    void runAtariDebuggerBurst();
+    void requestAtariDebuggerState();
+    void setAtariDebuggerBreakpoints(const QVariantList& addresses);
+    void setAtariDebuggerActive(bool active);
 
 public slots:
     void setDTsoundEnabled(bool enabled);
     void bootPreparedColecoCartridge(const QString &romPath);
+    void prepareHardwareBootProfile(int profile);
 
 signals:
     void frameReady(const QImage &frame);
@@ -123,6 +144,8 @@ signals:
     void biosAFramesDone();
     void requestPlayDiskSound();
     void requestPlayTapeSound();
+    void atari2600CartridgeStatusChanged(const QString& fileName);
+    void atariDebuggerStateChanged(const QVariantMap& state);
 
 private:
     bool   m_isNTSC;
@@ -170,6 +193,16 @@ private:
     int m_deferredMountFramesRemaining = 0;
 
     std::atomic<bool> m_dtSoundEnabled{true};
+    std::atomic<bool> m_atari2600Mode{false};
+    Atari2600Core m_atari2600;
+    QString m_currentAtari2600CartPath;
+    bool m_atariPhosphorEffect = true;
+    bool m_atariRegionLocked = false;
+    bool m_atariRegionNtsc = true;
+    std::atomic<bool> m_atariDebuggerPaused{false};
+    std::vector<uint16_t> m_atariDebuggerBreakpoints;
+    int m_atariDebuggerSnapshotCounter = 0;
+    void emitAtariDebuggerState();
 };
 
 #endif

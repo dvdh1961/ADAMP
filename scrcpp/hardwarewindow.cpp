@@ -1,5 +1,6 @@
 #include "hardwarewindow.h"
 #include "printwindow.h"
+#include "mcu2_gateway.h"
 
 #include "CORE/cv.h"
 
@@ -25,15 +26,10 @@
 #include <QIcon>
 #include <QPixmap>
 #include <QDebug>
+#include <QMessageBox>
 
 bool HardwareWindow::m_sgmSelectionState = false;
 bool HardwareWindow::m_c80SelectionState = false;
-
-static QWidget* makeHSpacer(QWidget* parent=nullptr) {
-    auto *w = new QWidget(parent);
-    w->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    return w;
-}
 
 HardwareWindow::HardwareWindow(const HardwareConfig& initial, QWidget *parent)
     : QDialog(parent), m_initial(initial), m_result(initial)
@@ -108,15 +104,14 @@ void HardwareWindow::buildUi()
     //layMac->addWidget(makeLabeledButton(m_btnAdamP,   ":/images/images/machine_adamp.png",   "ADAMP",        true));
     QWidget* adamPWidget =
         makeLabeledButton(m_btnAdamP,
-                          ":/images/images/machine_adamp.png",
-                          "ADAMP",
+                          ":/images/images/machine_atari.png",
+                          "Expansion ATARI 2600",
                           true);
 
     layMac->addWidget(adamPWidget);
 
     // Zoek de label binnen dat widget en bewaar hem
     m_lblAdamP = adamPWidget->findChild<QLabel*>();
-    m_btnAdamP->setAutoExclusive(false); // extra zekerheid
     layMac->addStretch(1);
     m_groupMachine->setLayout(layMac);
 
@@ -124,52 +119,10 @@ void HardwareWindow::buildUi()
     m_machineGroup->setExclusive(true);
     m_machineGroup->addButton(m_btnColeco, static_cast<int>(MACHINE_COLECO));
     m_machineGroup->addButton(m_btnAdam,   static_cast<int>(MACHINE_ADAM));
+    m_machineGroup->addButton(m_btnAdamP,  static_cast<int>(MACHINE_ATARI2600));
 
     connect(m_machineGroup, &QButtonGroup::idClicked,
             this, [this](int){ onMachineChanged(); });
-    connect(m_btnAdamP, &QToolButton::toggled, this, &HardwareWindow::updateAvailability);
-    connect(m_btnAdamP, &QToolButton::clicked, this, &HardwareWindow::updateAvailability);
-
-    // === Additional Controller ===
-    m_groupCtrl = new QGroupBox("Real ADAMP hardware", this);
-    m_btnJoys    = new QToolButton(m_groupCtrl);
-    m_btnAdamnet      = new QToolButton(m_groupCtrl);
-    m_btnCartridge = new QToolButton(m_groupCtrl);
-
-    // Real Controllers
-    auto *wrapJoys = makeLabeledButton(m_btnJoys, ":/images/images/real_joys.png", "Controllers", false);
-    // Real Adamnet
-    auto *wrapAdamNet  = makeLabeledButton(m_btnAdamnet, ":/images/images/real_adamnet.png", "AdamNet", false);
-    // Real Cartridge
-    auto *wrapCartridge   = makeLabeledButton(m_btnCartridge, ":/images/images/real_cartridge.png", "Cartridge", false);
-
-    m_btnAdamnet->setAutoExclusive(false);
-    m_btnCartridge->setAutoExclusive(false);
-
-    m_ctrlGroup = new QButtonGroup(m_groupCtrl);
-    m_ctrlGroup->addButton(m_btnAdamnet, 1);
-    m_ctrlGroup->addButton(m_btnCartridge, 2);
-    m_ctrlGroup->setExclusive(false);
-
-    auto *layCtrl = new QHBoxLayout;
-    layCtrl->addWidget(wrapJoys);
-    layCtrl->addWidget(wrapAdamNet);
-    layCtrl->addWidget(wrapCartridge);
-    layCtrl->addWidget(makeHSpacer());
-    m_groupCtrl->setLayout(layCtrl);
-
-    connect(m_btnJoys, &QToolButton::clicked, this, &HardwareWindow::updateAvailability);
-
-    connect(m_btnAdamnet, &QToolButton::toggled, this, [this](bool on){
-       // if (on) m_btnCartridge->setChecked(false); // exclusief als 'on'
-        updateAvailability();
-    });
-
-    connect(m_btnCartridge, &QToolButton::toggled, this, [this](bool on){
-        //if (on) m_btnAdamnet->setChecked(false);      // exclusief als 'on'
-        updateAvailability();
-    });
-
     // === Additional Hardware ===
     m_groupAddHw = new QGroupBox("Additional Hardware", this);
     m_btnSGM  = new QToolButton(m_groupAddHw);
@@ -192,6 +145,35 @@ void HardwareWindow::buildUi()
     connect(m_btn80C,  &QToolButton::clicked, this, &HardwareWindow::updateAvailability);
     connect(m_btnPrinter, &QToolButton::clicked, this, &HardwareWindow::onPrinterClicked);
 
+    // === Experimental physical ADAMnet backend ===
+    // The proven Disk 1 and FujiNet devices can use the physical MCU2 backend. The selection
+    // is activated on the next ADAM reset so an active DCB can never change
+    // backend halfway. Software images remain the unchanged default path.
+    m_groupAdamNet = new QGroupBox("ADAMnet (Experimental)", this);
+    m_cboDisk1Backend = new QComboBox(m_groupAdamNet);
+    m_cboDisk1Backend->addItem("ADAM drives: Software images", false);
+    m_cboDisk1Backend->addItem("Disk 1 + FujiNet: MCU2 hardware", true);
+    m_lblMcu2Status = new QLabel("MCU2 not tested", m_groupAdamNet);
+    m_lblMcu2Status->setWordWrap(true);
+    m_btnTestMcu2 = new QPushButton("Test MCU2 connection", m_groupAdamNet);
+    m_chkFujiNetDirectRom = new QCheckBox(
+        tr("Fast native ROM loading via PC network"), m_groupAdamNet);
+    m_chkFujiNetDirectRom->setToolTip(tr(
+        "Use the FujiNet host and path to download native Coleco ROMs directly. "
+        "If that is unavailable, ADAMP automatically uses the physical D5 route."));
+
+    auto *layAdamNet = new QGridLayout;
+    layAdamNet->addWidget(m_cboDisk1Backend, 0, 0, 1, 2);
+    layAdamNet->addWidget(m_btnTestMcu2, 1, 0);
+    layAdamNet->addWidget(m_lblMcu2Status, 1, 1);
+    layAdamNet->addWidget(m_chkFujiNetDirectRom, 2, 0, 1, 2);
+    layAdamNet->setColumnStretch(1, 1);
+    m_groupAdamNet->setLayout(layAdamNet);
+    connect(m_btnTestMcu2, &QPushButton::clicked,
+            this, &HardwareWindow::onTestMcu2);
+    connect(m_cboDisk1Backend, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int) { updateAvailability(); });
+
     // === Video ===
     m_groupVideo = new QGroupBox("Video", this);
     auto *lblPal  = new QLabel("Palette", m_groupVideo);
@@ -203,16 +185,16 @@ void HardwareWindow::buildUi()
     m_cboVdp = new QComboBox(m_groupVideo);
     m_cboVdp->addItem("TMS9928A / TMS9918A", VDP_TMS);
     m_cboVdp->addItem("F18A", VDP_F18A);
+    m_cboVdp->addItem("PICO9918", VDP_PICO9918);
 
     //m_chkF18a80SelfTest = new QCheckBox("F18A 80-column self-test", m_groupVideo);
    // m_chkF18a80SelfTest->setToolTip("Shows the internal F18A 80-column diagnostic screen. Only useful when VDP is F18A.");
 
     auto *layVidTop = new QGridLayout;
-    layVidTop->addWidget(lblPal,       0, 0);
-    layVidTop->addWidget(m_cboPalette, 0, 1);
-    layVidTop->addWidget(lblVdp,       1, 0);
-    layVidTop->addWidget(m_cboVdp,     1, 1);
-    //layVidTop->addWidget(m_chkF18a80SelfTest, 2, 0, 1, 2);
+    layVidTop->addWidget(lblVdp,       0, 0);
+    layVidTop->addWidget(m_cboVdp,     0, 1);
+    layVidTop->addWidget(lblPal,       1, 0);
+    layVidTop->addWidget(m_cboPalette,1, 1);
 
     // 16 kleur-swatch
     auto *palLayout = new QGridLayout();
@@ -250,7 +232,7 @@ void HardwareWindow::buildUi()
 
     connect(m_cboVdp, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int){
-                const bool isF18A = (m_cboVdp->currentData().toInt() == VDP_F18A);
+                const bool isF18A = vdpHasF18A(m_cboVdp->currentData().toInt());
                 //m_chkF18a80SelfTest->setEnabled(isF18A);
                 //if (!isF18A)
                    // m_chkF18a80SelfTest->setChecked(false);
@@ -261,7 +243,7 @@ void HardwareWindow::buildUi()
     updatePaletteSwatches();
 
     // === Emulation ===
-    m_groupEmu = new QGroupBox("Loaded Media", this);
+    m_groupEmu = new QGroupBox("Selected System: ColecoVision", this);
 
     // Image
     QLabel* imgEmu = new QLabel(m_groupEmu);
@@ -312,8 +294,9 @@ void HardwareWindow::buildUi()
         return lbl;
     };
 
-    auto addTableRow = [&](int row, const QString& hwCode, QLabel*& lblEmu) {
+    auto addTableRow = [&](int row, const QString& hwCode, QLabel*& lblEmu, QLabel*& lblRow) {
         QLabel *lblHw = new QLabel(hwCode, m_groupEmu);
+        lblRow = lblHw;
         lblHw->setAlignment(Qt::AlignLeft | Qt::AlignTop);
 
         // Stijl voor de linkerkolom (Kolom 0): volledige rand, behalve dubbele border in het midden.
@@ -329,22 +312,25 @@ void HardwareWindow::buildUi()
 
     // Rijen toevoegen en labels initialiseren met default waarden
     m_lblEmuCC = createEmuLabel("No coleco cartridge");
-    addTableRow(1, "CV ROM", m_lblEmuCC);
+    addTableRow(1, "CV ROM", m_lblEmuCC, m_lblRowCC);
 
     m_lblEmuCA = createEmuLabel("No adam cartridge");
-    addTableRow(2, "AD ROM", m_lblEmuCA);
+    addTableRow(2, "AD ROM", m_lblEmuCA, m_lblRowCA);
 
     m_lblEmuD1 = createEmuLabel("No tape");
-    addTableRow(3, "TAPE D1", m_lblEmuD1);
+    addTableRow(3, "TAPE D1", m_lblEmuD1, m_lblRowD1);
 
     m_lblEmuD2 = createEmuLabel("No tape");
-    addTableRow(4, "TAPE D2", m_lblEmuD2);
+    addTableRow(4, "TAPE D2", m_lblEmuD2, m_lblRowD2);
 
     m_lblEmuD5 = createEmuLabel("No disc");
-    addTableRow(5, "DISK D5", m_lblEmuD5);
+    addTableRow(5, "DISK D5", m_lblEmuD5, m_lblRowD5);
 
     m_lblEmuD6 = createEmuLabel("No disc");
-    addTableRow(6, "DISK D6", m_lblEmuD6);
+    addTableRow(6, "DISK D6", m_lblEmuD6, m_lblRowD6);
+
+    m_lblEmuVCS = createEmuLabel("No atari cartridge");
+    addTableRow(7, "VCS", m_lblEmuVCS, m_lblRowVCS);
 
     // Emu Layout (combineert image, widgets en grid)
     auto *layEmu = new QVBoxLayout;
@@ -388,8 +374,8 @@ void HardwareWindow::buildUi()
     // === Hoofd-layout ===
     auto *colLeft  = new QVBoxLayout;
     colLeft->addWidget(m_groupMachine);
-    colLeft->addWidget(m_groupCtrl);
     colLeft->addWidget(m_groupAddHw);
+    colLeft->addWidget(m_groupAdamNet);
     colLeft->addStretch(1);
 
     auto *colRight = new QVBoxLayout;
@@ -423,15 +409,13 @@ void HardwareWindow::loadFromConfig(const HardwareConfig& c)
     // Machine
     m_btnColeco ->setChecked(c.machine == MACHINE_COLECO);
     m_btnAdam   ->setChecked(c.machine == MACHINE_ADAM);
-
-    //Realhardware AdamP
-    m_btnAdamP->setChecked(c.realhardware);
+    m_btnAdamP  ->setChecked(c.machine == MACHINE_ATARI2600);
 
     // Video
     //m_cboDisplay->setCurrentIndex(qBound(0, c.renderMode, m_cboDisplay->count()-1));
     m_cboPalette->setCurrentIndex(qBound(0, c.palette,    m_cboPalette->count()-1));
 
-    const int vdpIdx = m_cboVdp->findData(c.vdpType == VDP_F18A ? VDP_F18A : VDP_TMS);
+    const int vdpIdx = m_cboVdp->findData(vdpHasF18A(c.vdpType) ? c.vdpType : VDP_TMS);
     m_cboVdp->setCurrentIndex(vdpIdx >= 0 ? vdpIdx : 0);
    // m_chkF18a80SelfTest->setChecked(c.f18a80SelfTest && c.vdpType == VDP_F18A);
    // m_chkF18a80SelfTest->setEnabled(c.vdpType == VDP_F18A);
@@ -448,16 +432,14 @@ void HardwareWindow::loadFromConfig(const HardwareConfig& c)
      * coleco_80col_enabled is cleared immediately. The saved HardwareConfig
      * can still contain c80Enabled=true, so do not blindly show the button ON.
      */
-    const bool isF18A = (c.vdpType == VDP_F18A);
+    const bool isF18A = vdpHasF18A(c.vdpType);
     const bool liveC80Enabled = (isF18A && c.c80Enabled && (coleco_80col_enabled != 0));
     HardwareWindow::m_c80SelectionState = liveC80Enabled;
     m_btn80C->setChecked(liveC80Enabled);
 
-    // Real Hardware
-    m_btnJoys->setChecked(c.Joys);
-    m_btnAdamnet->setChecked(c.AdamNet);
-    m_btnCartridge->setChecked(c.Cartridge);
-
+    const int adamNetIndex = m_cboDisk1Backend->findData(c.AdamNet);
+    m_cboDisk1Backend->setCurrentIndex(adamNetIndex >= 0 ? adamNetIndex : 0);
+    m_chkFujiNetDirectRom->setChecked(c.fujiNetDirectRom);
     updateAvailability();
 }
 
@@ -466,41 +448,46 @@ HardwareConfig HardwareWindow::readFromUi() const
     HardwareConfig c;
 
     // Machine
-    if      (m_btnAdam->isChecked())   c.machine = MACHINE_ADAM;
-    else                                                         c.machine = MACHINE_COLECO;
+    if      (m_btnAdam->isChecked())  c.machine = MACHINE_ADAM;
+    else if (m_btnAdamP->isChecked()) c.machine = MACHINE_ATARI2600;
+    else                              c.machine = MACHINE_COLECO;
 
-    c.realhardware = m_btnAdamP->isChecked();
+    c.realhardware = false;
 
     // Video
     c.palette = m_cboPalette->currentIndex();
     c.vdpType = m_cboVdp ? m_cboVdp->currentData().toInt() : VDP_TMS;
-    if (c.vdpType != VDP_F18A)
+    if (!vdpHasF18A(c.vdpType))
         c.vdpType = VDP_TMS;
    // c.f18a80SelfTest = (c.vdpType == VDP_F18A) && m_chkF18a80SelfTest && m_chkF18a80SelfTest->isChecked();
 
     // Additional hardware
-    c.sgmEnabled  = !m_btnAdam->isChecked() && m_btnSGM->isChecked();
-    c.c80Enabled = (c.vdpType == VDP_F18A) && m_btn80C->isChecked();
+    c.sgmEnabled = m_btnColeco->isChecked() && m_btnSGM->isChecked();
+    c.c80Enabled = m_btnAdam->isChecked() && vdpHasF18A(c.vdpType) && m_btn80C->isChecked();
 
-    // Real hardware
-    c.Joys = m_btnJoys->isChecked();
-    c.AdamNet    = m_btnAdamnet->isChecked();
-    c.Cartridge   = m_btnCartridge->isChecked();
+    // External joystick/cartridge backends remain unused.  AdamNet now stores
+    // the experimental Disk 1 backend choice; software is always the default.
+    c.Joys = false;
+    c.AdamNet = m_cboDisk1Backend && m_cboDisk1Backend->currentData().toBool();
+    c.fujiNetDirectRom = c.AdamNet && m_chkFujiNetDirectRom
+        && m_chkFujiNetDirectRom->isChecked();
+    c.Cartridge = false;
 
     return c;
 }
 
 void HardwareWindow::updateAvailability()
 {
-    if (!m_btnColeco->isChecked() &&  !m_btnAdam->isChecked()) {
+    if (!m_btnColeco->isChecked() && !m_btnAdam->isChecked() && !m_btnAdamP->isChecked()) {
         m_btnColeco->setChecked(true);
     }
 
     const bool isAdam = m_btnAdam->isChecked();
-    const bool isF18A = (m_cboVdp && m_cboVdp->currentData().toInt() == VDP_F18A);
+    const bool isAtari2600 = m_btnAdamP->isChecked();
+    const bool isF18A = (m_cboVdp && vdpHasF18A(m_cboVdp->currentData().toInt()));
     const bool c80Available = isAdam && isF18A;
 
-    if (isAdam) {
+    if (isAdam || isAtari2600) {
 
         m_btnSGM->setChecked(false);
         m_btnSGM->setEnabled(false);
@@ -516,17 +503,12 @@ void HardwareWindow::updateAvailability()
     }
 
     m_btnPrinter->setEnabled(true);
-
-
-    const bool padHardware =   m_btnAdamP->isChecked();
-    m_btnJoys->setEnabled(padHardware);
-    m_btnAdamnet->setEnabled(padHardware);
-    m_btnCartridge->setEnabled(padHardware);
-    if (!padHardware) {
-        m_btnJoys->setChecked(false);
-        m_btnAdamnet->setChecked(false);
-        m_btnCartridge->setChecked(false);
-    }
+    m_groupAdamNet->setEnabled(isAdam);
+    if (m_chkFujiNetDirectRom)
+        m_chkFujiNetDirectRom->setEnabled(isAdam && m_cboDisk1Backend
+            && m_cboDisk1Backend->currentData().toBool());
+    m_cboPalette->setEnabled(!isAtari2600);
+    m_cboVdp->setEnabled(!isAtari2600);
 
     auto setBorder = [](QToolButton* b){
         b->setStyleSheet(b->isChecked()
@@ -541,18 +523,31 @@ void HardwareWindow::updateAvailability()
 
     setBorder(m_btnAdamP);
 
-    setBorder(m_btnJoys);
-    setBorder(m_btnAdamnet);
-    setBorder(m_btnCartridge);
-
     setBorder(m_btnSGM);
     setBorder(m_btn80C);
     setBorder(m_btnPrinter);
 }
 
+void HardwareWindow::onTestMcu2()
+{
+    m_btnTestMcu2->setEnabled(false);
+    m_lblMcu2Status->setText("Testing MCU2...");
+    QApplication::processEvents();
+
+    const Mcu2Gateway::ProbeResult result = Mcu2Gateway::probe();
+    m_mcu2ProbeSucceeded = result.connected;
+    m_lblMcu2Status->setText(result.message);
+    m_lblMcu2Status->setStyleSheet(result.connected
+        ? "QLabel{color:#55dd77;}" : "QLabel{color:#ff7777;}");
+    m_btnTestMcu2->setEnabled(true);
+
+    if (!result.connected && m_cboDisk1Backend->currentData().toBool())
+        m_cboDisk1Backend->setCurrentIndex(0);
+}
+
 void HardwareWindow::onToggleC80(bool checked)
 {
-    const bool isF18A = (m_cboVdp && m_cboVdp->currentData().toInt() == VDP_F18A);
+    const bool isF18A = (m_cboVdp && vdpHasF18A(m_cboVdp->currentData().toInt()));
     if (!isF18A) {
         m_c80SelectionState = false;
         if (m_btn80C)
@@ -632,19 +627,61 @@ void HardwareWindow::onMachineChanged()
     }
 
     qDebug() << "Machine changed:"
-             << (m_btnAdam->isChecked() ? "ADAM" : "COLECO");
+             << (m_btnAdamP->isChecked() ? "ATARI 2600" :
+                 (m_btnAdam->isChecked() ? "ADAM" : "COLECO"));
 
-    const int machine = m_btnAdam->isChecked()
-                            ? MACHINE_ADAM
-                            : MACHINE_COLECO;
+    const int machine = m_btnAdamP->isChecked() ? MACHINE_ATARI2600 :
+                        (m_btnAdam->isChecked() ? MACHINE_ADAM : MACHINE_COLECO);
 
     emit machineChanged(machine);
 
+    updateMediaVisibility(static_cast<MachineType>(machine));
     updateAvailability();
+}
+
+void HardwareWindow::updateMediaVisibility(MachineType activeMachine)
+{
+    const bool colecoActive = activeMachine == MACHINE_COLECO;
+    const bool adamActive = activeMachine == MACHINE_ADAM;
+    const bool atariActive = activeMachine == MACHINE_ATARI2600;
+
+    m_groupEmu->setTitle(QString("Selected System: %1").arg(
+        colecoActive ? "ColecoVision" :
+        adamActive ? "ADAM" : "Expansion ATARI 2600"));
+
+    auto showRow = [](QLabel* code, QLabel* value, bool visible) {
+        if (code) code->setVisible(visible);
+        if (value) value->setVisible(visible);
+    };
+    showRow(m_lblRowCC, m_lblEmuCC, colecoActive);
+    showRow(m_lblRowCA, m_lblEmuCA, adamActive);
+    showRow(m_lblRowD1, m_lblEmuD1, adamActive);
+    showRow(m_lblRowD2, m_lblEmuD2, adamActive);
+    showRow(m_lblRowD5, m_lblEmuD5, adamActive);
+    showRow(m_lblRowD6, m_lblEmuD6, adamActive);
+    showRow(m_lblRowVCS, m_lblEmuVCS, atariActive);
 }
 
 void HardwareWindow::onOk()
 {
+    /* Never store the experimental hardware selection based on an assumption.
+     * A successful live PING/VERSION probe is required in this dialog.  The
+     * software backend therefore remains the guaranteed escape route.
+     */
+    if (m_cboDisk1Backend->currentData().toBool() && !m_mcu2ProbeSucceeded) {
+        onTestMcu2();
+        if (!m_mcu2ProbeSucceeded) {
+            QMessageBox::warning(
+                this,
+                "MCU2 not available",
+                "Disk 1 remains on the software backend because the MCU2 "
+                "connection test did not succeed."
+            );
+            m_cboDisk1Backend->setCurrentIndex(0);
+            return;
+        }
+    }
+
     m_result = readFromUi();
     accept();
 }
@@ -664,8 +701,10 @@ void HardwareWindow::updateLoadedMedia(const QString& cartridgeName)
 // In hardwarewindow.cpp, implementatie van de setter methode:
 
 void HardwareWindow::setLoadedMediaDisplayNames(
+    MachineType activeMachine,
     const QString& colecoCartridgeName,
     const QString& adamCartridgeName,
+    const QString& atariCartridgeName,
     const QString& tape1Name,
     const QString& tape2Name,
     const QString& disc1Name,
@@ -705,8 +744,11 @@ void HardwareWindow::setLoadedMediaDisplayNames(
     // Noot: We gaan ervan uit dat de QLabel van Kolom 0 (Code) zijn stijl behoudt
     // en dat Kolom 1 (Beschrijving) deze statusmethode gebruikt.
 
+    updateMediaVisibility(activeMachine);
+
     setLabelStatus(m_lblEmuCC, colecoCartridgeName, "No coleco cartridge");
     setLabelStatus(m_lblEmuCA, adamCartridgeName, "No adam cartridge");
+    setLabelStatus(m_lblEmuVCS, atariCartridgeName, "No atari cartridge");
     setLabelStatus(m_lblEmuD1, tape1Name, "No tape");
     setLabelStatus(m_lblEmuD2, tape2Name, "No tape");
     setLabelStatus(m_lblEmuD5, disc1Name, "No disc");
@@ -716,18 +758,7 @@ void HardwareWindow::setLoadedMediaDisplayNames(
 
 void HardwareWindow::checkRealAdamP()
 {
-    HardwareConfig c;
-
-    if (c.adamPconnect)
-    {
-        m_btnAdamP->setEnabled(true);
-        if (m_lblAdamP)
-            m_lblAdamP->setText("ADAMP [connected]");
-    }
-    else
-    {
-      m_btnAdamP->setEnabled(false);
-      if (m_lblAdamP)
-          m_lblAdamP->setText("ADAMP [not connected]");
-    }
+    m_btnAdamP->setEnabled(true);
+    if (m_lblAdamP)
+        m_lblAdamP->setText("Expansion ATARI 2600");
 }

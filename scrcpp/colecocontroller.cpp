@@ -9,6 +9,9 @@
 #include <QTimer>
 #include <QFile>
 #include <QDir>
+#include <QPainter>
+#include <QFont>
+#include <algorithm>
 
 // ==== C++-core header ====
 #include "CORE/cv.h"
@@ -28,10 +31,114 @@ extern "C" {
 #include "GRAPH/f18a_term80_tdos.h"
 }
 
+/* adnet_core.h is deliberately included with C linkage above. Include the
+ * C++ MCU2 bridge afterwards so its exported helpers keep C++ linkage.
+ */
+#include "6801/adnet_mcu2.h"
+
 #include <stdint.h>
 
 ColecoController *g_controller = nullptr;
 static std::atomic<bool> g_dtSoundEnabled{true};
+
+static std::array<uint8_t, 7> colecoGlyph(QChar character)
+{
+    switch (character.toLatin1()) {
+    case 'A': return {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11};
+    case 'B': return {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E};
+    case 'C': return {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E};
+    case 'D': return {0x1E,0x11,0x11,0x11,0x11,0x11,0x1E};
+    case 'E': return {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F};
+    case 'F': return {0x1F,0x10,0x10,0x1E,0x10,0x10,0x10};
+    case 'G': return {0x0E,0x11,0x10,0x17,0x11,0x11,0x0F};
+    case 'H': return {0x11,0x11,0x11,0x1F,0x11,0x11,0x11};
+    case 'I': return {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E};
+    case 'J': return {0x07,0x02,0x02,0x02,0x12,0x12,0x0C};
+    case 'K': return {0x11,0x12,0x14,0x18,0x14,0x12,0x11};
+    case 'L': return {0x10,0x10,0x10,0x10,0x10,0x10,0x1F};
+    case 'M': return {0x11,0x1B,0x15,0x15,0x11,0x11,0x11};
+    case 'N': return {0x11,0x19,0x19,0x15,0x13,0x13,0x11};
+    case 'O': return {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E};
+    case 'P': return {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10};
+    case 'Q': return {0x0E,0x11,0x11,0x11,0x15,0x12,0x0D};
+    case 'R': return {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11};
+    case 'S': return {0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E};
+    case 'T': return {0x1F,0x04,0x04,0x04,0x04,0x04,0x04};
+    case 'U': return {0x11,0x11,0x11,0x11,0x11,0x11,0x0E};
+    case 'V': return {0x11,0x11,0x11,0x11,0x11,0x0A,0x04};
+    case 'W': return {0x11,0x11,0x11,0x15,0x15,0x15,0x0A};
+    case 'X': return {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11};
+    case 'Y': return {0x11,0x11,0x0A,0x04,0x04,0x04,0x04};
+    case 'Z': return {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F};
+    case '0': return {0x0E,0x11,0x13,0x15,0x19,0x11,0x0E};
+    case '1': return {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E};
+    case '2': return {0x0E,0x11,0x01,0x02,0x04,0x08,0x1F};
+    case '3': return {0x1E,0x01,0x01,0x0E,0x01,0x01,0x1E};
+    case '4': return {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02};
+    case '5': return {0x1F,0x10,0x10,0x1E,0x01,0x01,0x1E};
+    case '6': return {0x0E,0x10,0x10,0x1E,0x11,0x11,0x0E};
+    case '7': return {0x1F,0x01,0x02,0x04,0x08,0x08,0x08};
+    case '8': return {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E};
+    case '9': return {0x0E,0x11,0x11,0x0F,0x01,0x01,0x0E};
+    case ',': return {0x00,0x00,0x00,0x00,0x00,0x04,0x08};
+    case '.': return {0x00,0x00,0x00,0x00,0x00,0x00,0x04};
+    default:  return {0x00,0x00,0x00,0x00,0x00,0x00,0x00};
+    }
+}
+
+static void drawColecoText(QPainter& painter, const QImage& image,
+                           int y, const QString& text)
+{
+    constexpr int cellWidth = 8;
+    const int naturalWidth = text.size() * cellWidth;
+    QImage textImage(naturalWidth, 7, QImage::Format_ARGB32);
+    textImage.fill(Qt::transparent);
+    QPainter textPainter(&textImage);
+    textPainter.setPen(Qt::NoPen);
+    textPainter.setBrush(Qt::white);
+    for (int characterIndex = 0; characterIndex < text.size(); ++characterIndex) {
+        if (text.at(characterIndex).unicode() == 0x00A9) {
+            // Coleco-style copyright glyph: closed 7x7 circle with a small C
+            // centred inside it. It occupies the same 8-pixel character cell.
+            static constexpr uint8_t copyrightRows[7] = {
+                0x3E, 0x41, 0x5D, 0x51, 0x5D, 0x41, 0x3E
+            };
+            for (int row = 0; row < 7; ++row)
+                for (int column = 0; column < 7; ++column)
+                    if (copyrightRows[row] & (0x40 >> column))
+                        textPainter.drawRect(characterIndex * cellWidth + column,
+                                             row, 1, 1);
+            continue;
+        }
+        const auto glyph = colecoGlyph(text.at(characterIndex));
+        for (int row = 0; row < 7; ++row)
+            for (int column = 0; column < 5; ++column)
+                if (glyph[row] & (0x10 >> column))
+                    textPainter.drawRect(characterIndex * cellWidth + column + 1,
+                                         row, 1, 1);
+    }
+    textPainter.end();
+    painter.drawImage((image.width() - textImage.width()) / 2, y, textImage);
+}
+
+static void drawAtariNoCartridgeScreen(QImage& image)
+{
+    QPainter painter(&image);
+    painter.fillRect(image.rect(), Qt::black);
+
+    const QImage atariLogo(QStringLiteral(":/images/images/Atari.png"));
+    if (!atariLogo.isNull()) {
+        const QImage scaledLogo = atariLogo.scaled(95, 95,
+                                                   Qt::KeepAspectRatio,
+                                                   Qt::SmoothTransformation);
+        const QPoint logoPosition((image.width() - scaledLogo.width()) / 2, 7);
+        painter.drawImage(logoPosition, scaledLogo);
+    }
+
+    drawColecoText(painter, image, 111, QStringLiteral("ATARI VCS EXTENSION SELECTED"));
+    drawColecoText(painter, image, 137, QStringLiteral("NO CARTRIDGE INSERTED"));
+    drawColecoText(painter, image, 208, QStringLiteral("© 1977 ATARI"));
+}
 
 extern bool m_cpm_selected;
 
@@ -166,6 +273,7 @@ void ColecoController::onAdamKeyEvent(int code)
 void ColecoController::setVideoStandard(bool isNTSC)
 {
     m_isNTSC = isNTSC;
+    m_atari2600.setNtsc(isNTSC);
 
     // BELANGRIJK: core-vlag ook zetten
     if (emulator)
@@ -192,8 +300,12 @@ void ColecoController::setVideoStandard(bool isNTSC)
 
     if (m_running) {
         qDebug() << "[CTRL] Resetting core for new video standard.";
-        PsgBridge::reset(m_Clock, m_SampleRate);
-        coleco_reset();
+        if (m_atari2600Mode.load()) {
+            m_atari2600.reset();
+        } else {
+            PsgBridge::reset(m_Clock, m_SampleRate);
+            coleco_reset();
+        }
     }
 }
 
@@ -287,7 +399,25 @@ void ColecoController::startEmulation()
         // === A: Verwerk events (pause, stop, etc.) ===
         QCoreApplication::processEvents();
 
+        /* Match the proven software-media boot, but only after FujiNet has
+         * acknowledged D9. Resetting while the D9 DCB is still live would
+         * invalidate that transfer. */
+        const int completedFujiProfile = mcu2_take_completed_fuji_boot_profile();
+        if (completedFujiProfile == 1 || completedFujiProfile == 2) {
+            qDebug() << "[CTRL][BOOT] completed FujiNet D9 -> exact software"
+                     << (completedFujiProfile == 1 ? "CP/M" : "T-DOS")
+                     << "stop/reset/start boot route";
+            bootCpmDisk();
+            tstate_accumulator = 0.0;
+        }
+
         // === B: Pauze-afhandeling ===
+        if (m_atari2600Mode.load() && m_atariDebuggerPaused.load()) {
+            m_fpsCalcTimer.restart();
+            m_fpsFrameCount = 0;
+            QThread::msleep(20);
+            continue;
+        }
         if (m_paused) {
             // Reset de FPS-timer tijdens pauze
             m_fpsCalcTimer.restart();
@@ -305,7 +435,74 @@ void ColecoController::startEmulation()
         if (!m_running || m_paused) continue;
 
 
-        // === D: Emuleer 1 frame (audio per scanline) ===
+        // === D: Emuleer 1 frame ===
+        if (m_atari2600Mode.load()) {
+            std::vector<int16_t> atariAudio;
+            const bool breakpointHit=m_atari2600.runFrame(atariAudio,m_atariDebuggerBreakpoints);
+            if(breakpointHit){
+                m_atariDebuggerPaused.store(true);
+                emitAtariDebuggerState();
+            }
+
+            int16_t* d = m_stereoBuf;
+            for (int i = 0; i < m_AudioChunkFrames; ++i) {
+                const int16_t sample = i < static_cast<int>(atariAudio.size())
+                    ? atariAudio[static_cast<std::size_t>(i)] : 0;
+                *d++ = sample;
+                *d++ = sample;
+            }
+
+            m_audioDevice->write(
+                reinterpret_cast<const char*>(m_stereoBuf),
+                m_AudioChunkBytes
+                );
+
+            QImage frame(
+                reinterpret_cast<const uchar*>(m_atari2600.frameBuffer()),
+                Atari2600Core::Width,
+                Atari2600Core::Height,
+                Atari2600Core::Width * static_cast<int>(sizeof(uint32_t)),
+                QImage::Format_ARGB32
+                );
+            // Atari 2600 pixels zijn op een CRT horizontaal breder dan hoog.
+            // Presenteer daarom een 4:3 bronbeeld in plaats van smalle 1:1-pixels.
+            QImage presentedFrame = frame.scaled(320, 240,
+                                                  Qt::IgnoreAspectRatio,
+                                                  Qt::FastTransformation);
+
+            if (!m_atari2600.hasRom()) {
+                drawAtariNoCartridgeScreen(presentedFrame);
+            }
+
+            emit frameReady(presentedFrame);
+
+            m_fpsFrameCount++;
+            const qint64 elapsed = m_fpsCalcTimer.elapsed();
+            if (elapsed >= 1000) {
+                emit fpsUpdated(m_fpsFrameCount);
+                m_fpsFrameCount = 0;
+                m_fpsCalcTimer.restart();
+            }
+
+            // Detect the cartridge region once, then lock it until eject/load.
+            // Some non-standard games vary their frame length while running;
+            // reclassifying every frame made those cartridges oscillate
+            // continuously between PAL and NTSC.
+            const int generatedLines=m_atari2600.lastFrameScanlines();
+            if(!m_atariRegionLocked && generatedLines>=240 && generatedLines<=340){
+                m_atariRegionNtsc=generatedLines<287;
+                m_atariRegionLocked=true;
+                qDebug() << "[ATARI2600] Cartridge video standard locked:"
+                         << (m_atariRegionNtsc ? "NTSC" : "PAL")
+                         << "from" << generatedLines << "scanlines";
+            }
+            if(m_atariRegionLocked && m_atariRegionNtsc!=m_isNTSC){
+                setVideoStandard(m_atariRegionNtsc);
+            }
+            continue;
+        }
+
+        // ColecoVision / ADAM: audio per scanline
         int samples_generated = 0;
         tstate_accumulator = 0.0;
 
@@ -337,7 +534,8 @@ void ColecoController::startEmulation()
         } else {
             int samples_to_fill = m_AudioChunkFrames - samples_generated;
             if (samples_to_fill > 0 && samples_to_fill < m_AudioChunkFrames) {
-                PsgBridge::getSamples(&m_monoBuf[samples_generated], samples_to_fill);
+                PsgBridge::getSamples(&m_monoBuf[samples_generated],
+                                      samples_to_fill);
             }
         }
 
@@ -404,6 +602,164 @@ void ColecoController::startEmulation()
         qDebug() << "[CTRL] Preserving media on stop (reboot/bootCPM).";
     }
     emit emulationStopped();
+}
+
+void ColecoController::emitAtariDebuggerState()
+{
+    QVariantMap s;
+    const Atari6507& cpu=m_atari2600.cpu();
+    s["hasRom"]=m_atari2600.hasRom();
+    s["paused"]=m_atariDebuggerPaused.load();
+    s["pc"]=cpu.pc();s["a"]=cpu.a();s["x"]=cpu.x();s["y"]=cpu.y();
+    s["sp"]=cpu.sp();s["p"]=cpu.status();
+    s["scanline"]=m_atari2600.debugScanline();
+    s["colorClock"]=m_atari2600.debugColorClock();
+    s["swcha"]=m_atari2600.debugSwcha();s["swchb"]=m_atari2600.debugSwchb();
+    s["intim"]=m_atari2600.debugIntim();s["instat"]=m_atari2600.debugInstat();
+    s["bank"]=m_atari2600.debugBank();s["mapper"]=QString::fromLatin1(m_atari2600.mapperName());
+    QByteArray bytes(96,Qt::Uninitialized);
+    for(int i=0;i<bytes.size();++i)bytes[i]=char(m_atari2600.debugPeek(uint16_t(cpu.pc()+i)));
+    s["bytes"]=bytes;
+    // De disassembly loopt op 20 Hz; 9216 tabelcellen zo vaak herbouwen zou
+    // de GUI onnodig belasten. Het volledige geheugen wordt tijdens Run op
+    // 2 Hz meegestuurd en bij Pause/Step onmiddellijk.
+    if((++m_atariDebuggerSnapshotCounter%10)==0){
+        QByteArray memory(0x2000,Qt::Uninitialized);
+        for(int i=0;i<memory.size();++i)memory[i]=char(m_atari2600.debugPeek(uint16_t(i)));
+        s["memoryBase"]=0;s["memory"]=memory;
+    }
+    const uint16_t programBase=uint16_t(cpu.pc()&0xF000);
+    QByteArray program(4096,Qt::Uninitialized);
+    for(int i=0;i<program.size();++i)program[i]=char(m_atari2600.debugPeek(uint16_t(programBase+i)));
+    s["programBase"]=programBase;s["program"]=program;
+    QVariantList traceEntries;
+    for(const Atari2600Core::DebugTraceEntry& entry:m_atari2600.debugTrace()){
+        QVariantMap item;item["pc"]=entry.pc;item["op"]=entry.opcode;
+        item["b1"]=entry.operand1;item["b2"]=entry.operand2;
+        item["a"]=entry.a;item["x"]=entry.x;item["y"]=entry.y;
+        item["sp"]=entry.sp;item["p"]=entry.status;traceEntries.append(item);
+    }
+    s["traceEntries"]=traceEntries;
+    emit atariDebuggerStateChanged(s);
+}
+
+void ColecoController::pauseAtariDebugger(){m_atariDebuggerPaused.store(true);m_atariDebuggerSnapshotCounter=9;emitAtariDebuggerState();}
+void ColecoController::runAtariDebugger()
+{
+    // Wanneer we precies op een breakpoint hervatten, voer die ene instructie
+    // eerst uit. Anders zou dezelfde PC onmiddellijk opnieuw stoppen.
+    const uint16_t pc=m_atari2600.cpu().pc();
+    if(std::find(m_atariDebuggerBreakpoints.begin(),m_atariDebuggerBreakpoints.end(),pc)!=m_atariDebuggerBreakpoints.end())
+        m_atari2600.debugStepInstruction();
+    m_atariDebuggerPaused.store(false);
+    emitAtariDebuggerState();
+}
+void ColecoController::stepAtariDebugger()
+{
+    m_atariDebuggerPaused.store(true);
+    m_atari2600.debugStepInstruction();
+    m_atariDebuggerSnapshotCounter=9;
+    emitAtariDebuggerState();
+}
+void ColecoController::runAtariDebuggerBurst()
+{
+    // Houd de normale frame-loop gepauzeerd en voltooi hier exact één volledig
+    // TIA-frame. Een vast instructieaantal kan midden in een scanline stoppen;
+    // het presenteren daarvan toont de beeldopbouw en veroorzaakt flikkering.
+    m_atariDebuggerPaused.store(true);
+    std::vector<int16_t> frameAudio;
+    const bool breakpointHit=m_atari2600.runFrame(frameAudio,m_atariDebuggerBreakpoints);
+
+    QImage frame(reinterpret_cast<const uchar*>(m_atari2600.frameBuffer()),
+                 Atari2600Core::Width,Atari2600Core::Height,
+                 Atari2600Core::Width*static_cast<int>(sizeof(uint32_t)),
+                 QImage::Format_ARGB32);
+    QImage presentedFrame=frame.scaled(320,240,Qt::IgnoreAspectRatio,Qt::FastTransformation);
+    if(!m_atari2600.hasRom()){
+        drawAtariNoCartridgeScreen(presentedFrame);
+    }
+    emit frameReady(presentedFrame);
+    if(breakpointHit)m_atariDebuggerPaused.store(true);
+    emitAtariDebuggerState();
+}
+void ColecoController::requestAtariDebuggerState(){emitAtariDebuggerState();}
+void ColecoController::setAtariDebuggerBreakpoints(const QVariantList& addresses)
+{
+    m_atariDebuggerBreakpoints.clear();
+    for(const QVariant& address:addresses)m_atariDebuggerBreakpoints.push_back(uint16_t(address.toUInt()));
+    emitAtariDebuggerState();
+}
+void ColecoController::setAtariDebuggerActive(bool active){m_atariDebuggerSnapshotCounter=0;m_atari2600.setDebugTraceEnabled(active);}
+
+void ColecoController::setAtari2600Mode(bool enabled)
+{
+    m_atari2600Mode.store(enabled);
+    m_atari2600.setNtsc(m_isNTSC);
+    if (enabled)
+        m_atari2600.reset();
+}
+
+void ColecoController::loadAtari2600Rom(const QString &romPath)
+{
+    m_atariRegionLocked=false;
+    std::string error;
+    if (!m_atari2600.loadRom(QFile::encodeName(romPath).constData(), &error)) {
+        qWarning() << "[ATARI2600] ROM load failed:" << QString::fromStdString(error);
+        return;
+    }
+    m_atari2600.setPhosphorEnabled(m_atariPhosphorEffect);
+
+    m_currentAtari2600CartPath = romPath;
+    m_atari2600Mode.store(true);
+    emit atari2600CartridgeStatusChanged(QFileInfo(romPath).fileName());
+    qDebug() << "[ATARI2600] Loaded" << romPath
+             << "mapper" << m_atari2600.mapperName()
+             << "core" << Atari2600Core::coreRevision();
+}
+
+void ColecoController::ejectAtari2600Rom()
+{
+    m_atariRegionLocked=false;
+    m_atari2600.eject();
+    m_currentAtari2600CartPath.clear();
+    emit atari2600CartridgeStatusChanged(QString());
+}
+
+void ColecoController::resetAtari2600()
+{
+    m_atari2600.reset();
+}
+
+void ColecoController::setAtari2600ResetSwitch(bool pressed)
+{
+    m_atari2600.setResetSwitch(pressed);
+}
+
+void ColecoController::setAtari2600Joystick(int port, bool up, bool down,
+                                             bool left, bool right, bool fire)
+{
+    m_atari2600.setJoystick(port, up, down, left, right, fire);
+}
+
+void ColecoController::setAtari2600Paddle(int paddle, int position, bool fire)
+{
+    m_atari2600.setPaddle(paddle, position, fire);
+}
+
+void ColecoController::setAtari2600ConsoleSwitches(bool resetPressed,
+                                                    bool selectPressed,
+                                                    bool color,
+                                                    bool leftDifficultyA,
+                                                    bool rightDifficultyA)
+{
+    m_atari2600.setConsoleSwitches(resetPressed, selectPressed, color,
+                                   leftDifficultyA, rightDifficultyA);
+}
+
+void ColecoController::setAtari2600PhosphorEffect(bool enabled)
+{
+    m_atariPhosphorEffect=enabled;
+    m_atari2600.setPhosphorEnabled(enabled);
 }
 
 void ColecoController::pauseEmulation()
@@ -605,11 +961,19 @@ void ColecoController::resetDkaLoadedCartridge()
 
 void ColecoController::ejectColecoCartridge()
 {
-    // if (!m_currentColecoCartPath.isEmpty()) {
-    //     m_currentColecoCartPath.clear();
-    //     emit cartridgeStatusChanged(m_currentColecoCartPath, m_currentAdamCartPath);
-    //     qDebug() << "[CTRL] Coleco Cartridge ejected (GUI updated).";
-    // }
+    const bool hadCartridge = !m_currentColecoCartPath.isEmpty();
+    if (!hadCartridge)
+        return;
+
+    // A real eject/power-off must remove the ROM bytes and mapper state too;
+    // clearing only the GUI filename leaves the cartridge electrically in
+    // the emulated slot and lets a later Coleco reset start it again.
+    coleco_hardreset();
+    m_currentColecoCartPath.clear();
+
+    qDebug() << "[CTRL] Coleco Cartridge fully ejected.";
+
+    emit cartridgeStatusChanged(m_currentColecoCartPath, m_currentAdamCartPath);
 }
 
 void ColecoController::resetMachine() // SOFT
@@ -647,9 +1011,11 @@ void ColecoController::resethMachine() // HARD
 
 }
 
-void ColecoController::powerOffMachine()
+void ColecoController::powerOffMachine(bool bootFromAdamNet,
+                                       bool forceAdamCoreBeforeMenu)
 {
-    qDebug() << "[CTRL] power off Machine()";
+    qDebug() << "[CTRL] power off Machine(); ADAMNet boot=" << bootFromAdamNet
+             << "force-ADAM-before-menu=" << forceAdamCoreBeforeMenu;
 
     const bool wasCpm  = m_cpm_enabled;
     const bool wasAdam = (emulator && emulator->currentMachineType == MACHINEADAM);
@@ -677,13 +1043,61 @@ void ColecoController::powerOffMachine()
     m_deferredMountFramesRemaining = 0;
     m_deferredMountDisk0Path.clear();
 
-    // Power-cycle: hier mag coleco_initialise() WEL.
-    // PowerOff is de harde, propere start vanaf BIOS/Writer.
-    coleco_initialise();
-    coleco_reset_and_restart_bios();
+    /* Clear the previous machine first, then prepare the newly selected
+     * retained-media route. Otherwise CP/M/T-DOS chosen by the dialog would
+     * immediately be cleared again above. This still precedes the BIOS reset. */
+    if (bootFromAdamNet) {
+        if (forceAdamCoreBeforeMenu || !wasAdam) {
+            /* Power-off Reset from a native cartridge must enter a real ADAM
+             * core before the FujiNet preflight opens its menu.  Apart from
+             * being the correct visible order, this guarantees that the
+             * choice is made against an ADAM PCB/backend rather than while a
+             * Coleco core is still active.  coleco_initialise() prepares the
+             * core here; execution/BIOS boot only resumes after the dialog. */
+            qDebug() << "[CTRL][BOOT] Power-off Reset: entering ADAM mode"
+                     << "before FujiNet boot menu";
+            coleco_set_machine_type(1);
+            if (emulator)
+                emulator->SGM = 0;
+            emit sgmStatusChanged(false);
+            coleco_initialise();
+            emit machineTypeChanged(Machine_Adam);
+        }
+
+        if (!mcu2_prepare_fuji_reset_boot()) {
+            qDebug() << "[CTRL][BOOT] retained FujiNet ADAM boot suppressed;"
+                     << "selection cancelled or direct native ROM already complete";
+            return;
+        }
+
+        /* Follow the same transition as Boot in the FujiNet application.
+         * F8/D9 have already selected and mounted the medium. A full
+         * coleco_initialise() here erases the core state between those
+         * commands and the BIOS D5 boot. */
+        if (m_cpm_enabled) {
+            qDebug() << "[CTRL][BOOT] retained FujiNet media -> exact software"
+                     << (m_tdos_enabled ? "T-DOS" : "CP/M")
+                     << "stop/reset/start boot route";
+            bootCpmDisk();
+        } else if (forceAdamCoreBeforeMenu || !wasAdam) {
+            qDebug() << "[CTRL][BOOT] ADAM core prepared before menu;"
+                     << "starting selected FujiNet BIOS boot";
+            coleco_reset_and_restart_bios();
+        } else {
+            qDebug() << "[CTRL][BOOT] FujiNet warm BIOS restart (no coleco_initialise)";
+            coleco_reset_and_restart_bios();
+        }
+    } else {
+        // Normal Power Off remains a complete cold restart at SmartWriter.
+        coleco_initialise();
+        coleco_reset_and_restart_bios();
+    }
     coleco_hide_current_vdp_sprites();
 
-    if (wasCpm || wasAdam)
+    /* The historical second reset deliberately forces SmartWriter.  It must
+     * not run when physical ADAMNet/FujiNet is the boot source: FujiNet has
+     * already started serving D5 by then and the second reset aborts it. */
+    if (!bootFromAdamNet && (wasCpm || wasAdam))
     {
         QTimer::singleShot(500, QCoreApplication::instance(), []() {
             qDebug() << "[CTRL] doubleResetToWriter() SECOND reset";
@@ -966,9 +1380,40 @@ void ColecoController::loadState(const QString& filePath)
     }
 }
 
-void ColecoController::resetAdam()
+void ColecoController::resetAdam(bool forceAdamCoreBeforeMenu)
 {
+    qDebug() << "[CTRL] resetAdam(); force-ADAM-before-menu="
+             << forceAdamCoreBeforeMenu;
+    if (forceAdamCoreBeforeMenu) {
+        /* Reset ADAM from a native Coleco session must construct ADAM before
+         * the blocking FujiNet choice dialog, exactly like Power-off Reset.
+         * setMachineType() below then performs only the selected ADAM boot. */
+        qDebug() << "[CTRL][BOOT] Reset ADAM: entering ADAM mode"
+                 << "before FujiNet boot menu";
+        coleco_set_machine_type(1);
+        if (emulator)
+            emulator->SGM = 0;
+        emit sgmStatusChanged(false);
+        coleco_initialise();
+        emit machineTypeChanged(Machine_Adam);
+    }
+    if (!mcu2_prepare_fuji_reset_boot()) {
+        qDebug() << "[CTRL][BOOT] Reset ADAM continuation suppressed;"
+                 << "selection cancelled or direct native ROM already complete";
+        return;
+    }
     setMachineType(Machine_Adam);
+}
+
+void ColecoController::prepareHardwareBootProfile(int profile)
+{
+    /* 0=EOS, 1=CP/M, 2=T-DOS.  This must run before the ADAM reset so
+     * ResetPCB() selects the same PCB/DCB router as software media loading. */
+    m_cpm_enabled = (profile == 1 || profile == 2);
+    m_tdos_enabled = (profile == 2);
+    m_cpm_selected = false;
+    qDebug() << "[CTRL][HW-MEDIA] prepared boot profile"
+             << (profile == 2 ? "T-DOS" : profile == 1 ? "CP/M" : "EOS");
 }
 
 void ColecoController::resetColeco()
@@ -1062,23 +1507,23 @@ void ColecoController::setMachineType(ColecoController::MachineType machineType)
     // }
     else
     {
-        // Coleco cartridge mode: forceer NTSC vóór elke reset/init.
-        m_isNTSC = true;
-
+        // Behoud de door de gebruiker gekozen video-standaard bij een reset.
+        // Een cartridge-reset mag PAL niet stilzwijgend terug op NTSC zetten.
         if (emulator)
-            emulator->NTSC = true;
+            emulator->NTSC = m_isNTSC;
 
-        m_Clock = 3579545;
-        m_AudioChunkFrames = 735;
+        m_Clock = m_isNTSC ? 3579545 : 3546893;
+        m_AudioChunkFrames = m_isNTSC ? 735 : 882;
         m_AudioChunkBytes = m_AudioChunkFrames * m_BytesPerSampleStereo;
         m_tstates_per_sample = (double)m_Clock / (double)m_SampleRate;
 
-        machine.tperscanline = 228;
-        tms.ScanLines = TMS9918_LINES;   // 262
+        machine.tperscanline = m_isNTSC ? 228 : 227;
+        tms.ScanLines = m_isNTSC ? TMS9918_LINES : 313;
 
         coleco_set_vdp_type(coleco_get_vdp_type());
 
-        qDebug() << "[CTRL] COLECO mode forced NTSC"
+        qDebug() << "[CTRL] COLECO mode keeps video standard"
+                 << (m_isNTSC ? "NTSC" : "PAL")
                  << "emulator->NTSC=" << (emulator ? emulator->NTSC : -1)
                  << "scanlines=" << tms.ScanLines;
 
@@ -1166,32 +1611,33 @@ void ColecoController::bootPreparedColecoCartridge(const QString &romPath)
     // gebruiken, want die kan extra resets/hardresets veroorzaken.
     coleco_set_machine_type(0);
 
-    // Coleco cartridge mode standaard NTSC
-    m_isNTSC = true;
+    // Behoud de ingestelde PAL/NTSC-keuze wanneer de cartridge wordt gestart.
     if (emulator)
-        emulator->NTSC = true;
+        emulator->NTSC = m_isNTSC;
 
-    m_Clock = 3579545;
-    m_AudioChunkFrames = 735;
+    m_Clock = m_isNTSC ? 3579545 : 3546893;
+    m_AudioChunkFrames = m_isNTSC ? 735 : 882;
     m_AudioChunkBytes = m_AudioChunkFrames * m_BytesPerSampleStereo;
     m_tstates_per_sample = (double)m_Clock / (double)m_SampleRate;
 
-    machine.tperscanline = 228;
-    tms.ScanLines = TMS9918_LINES;
+    machine.tperscanline = m_isNTSC ? 228 : 227;
+    tms.ScanLines = m_isNTSC ? TMS9918_LINES : 313;
     coleco_set_vdp_type(coleco_get_vdp_type());
 
     machine.interrupt = 0;
 
-    // SGM core-flag klaarzetten, maar NIET via setSGMEnabled(),
-    // want die kan opnieuw resetten.
+    /* Load and analyse the cartridge first.  coleco_loadcart() decides the
+     * mapper and whether this particular game requires SGM; applying SGM
+     * before that decision used the previous cartridge/user state. */
+    ColecoCartridge(romPath);
+
+    // Apply the SGM hardware selected by the freshly loaded cartridge.
     if (emulator->SGM)
     {
         coleco_writeport(0x60, 0x0F, nullptr);
         coleco_writeport(0x53, 0x01, nullptr);
+        qDebug() << "[CTRL][BOOT] cartridge analysis enabled SGM before reset";
     }
-
-    // ROM pas nu laden
-    ColecoCartridge(romPath);
 
     // Gearcoleco-style: no special DKA reset path.
     // DKA/Mr.Do are normal MegaCart ROMs with SGM hardware available.

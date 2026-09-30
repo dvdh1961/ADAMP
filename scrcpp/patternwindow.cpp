@@ -16,6 +16,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QImage>
+#include <QRegularExpression>
 
 #include <QPainter>
 #include <QImage>
@@ -171,6 +172,22 @@ void PatternWindow::setupUI()
     connect(m_colorRadio, &QRadioButton::toggled, this, &PatternWindow::onOptionToggled);
     connect(m_bwRadio, &QRadioButton::toggled, this, &PatternWindow::onOptionToggled);
     connect(m_vramScroll, &QScrollBar::valueChanged, this, &PatternWindow::onScrollChanged);
+
+    if (QApplication::palette().color(QPalette::Window).lightness() >= 128) {
+        const auto makeTextBlack = [](QWidget *widget) {
+            QString style = widget->styleSheet();
+            style.replace(QRegularExpression("color\\s*:\\s*(white|cyan|yellow|#A{6})",
+                                             QRegularExpression::CaseInsensitiveOption),
+                          "color: #191919");
+            if (!style.contains(QRegularExpression("color\\s*:", QRegularExpression::CaseInsensitiveOption)))
+                style += " color: #191919;";
+            widget->setStyleSheet(style);
+        };
+        for (QLabel *label : findChildren<QLabel*>()) makeTextBlack(label);
+        for (QGroupBox *box : findChildren<QGroupBox*>()) makeTextBlack(box);
+        for (QCheckBox *check : findChildren<QCheckBox*>()) makeTextBlack(check);
+        for (QRadioButton *radio : findChildren<QRadioButton*>()) makeTextBlack(radio);
+    }
 }
 
 void PatternWindow::setupMenus()

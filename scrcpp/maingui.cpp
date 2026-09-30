@@ -21,12 +21,15 @@
 #include "printwindow.h"
 #include "simplejoystick.h"
 #include "soundpreviewbridge.h"
+#include "mcu2_gateway.h"
 
 // Qt includes
 #include <QMenuBar>
 #include <QSplitter>
 #include <QTextEdit>
 #include <QMenu>
+#include <QMouseEvent>
+#include <QKeyEvent>
 #include <QAction>
 #include <QActionGroup>
 #include <QFileDialog>
@@ -43,6 +46,7 @@
 #include <QTimer>
 #include <QSizePolicy>
 #include <QThread>
+#include "6801/adnet_mcu2.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -51,6 +55,8 @@
 #include <QSettings>
 #include <QDialog>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QWindow>
 #include <QLabel>
 #include <QPushButton>
 #include <QPixmap>
@@ -61,8 +67,156 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QMessageBox>
+#include <QInputDialog>
+#include <QLineEdit>
 #include <QProgressDialog>
+#include <QCryptographicHash>
+#include <QApplication>
+#include <QGuiApplication>
+#include <QScreen>
+#include <QPainter>
+#include <QPaintEvent>
+#include <QtMath>
+#include <QPainterPath>
+#include <QRegion>
 #include "6801/adnet_core.h"
+
+namespace {
+class DayNightToggleButton final : public QPushButton
+{
+public:
+    explicit DayNightToggleButton(QWidget *parent = nullptr)
+        : QPushButton(parent)
+    {
+        setCursor(Qt::PointingHandCursor);
+        setFocusPolicy(Qt::NoFocus);
+        setFixedSize(116, 30);
+        setToolTip(tr("Switch day/night mode"));
+    }
+
+    void setDarkMode(bool dark)
+    {
+        if (m_dark == dark)
+            return;
+        m_dark = dark;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        Q_UNUSED(event);
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+
+        const QRectF pill = QRectF(rect()).adjusted(1.0, 2.0, -1.0, -2.0);
+        painter.setPen(m_dark ? QPen(QColor("#101010"), 1.2) : Qt::NoPen);
+        painter.setBrush(m_dark ? QColor("#050505") : QColor("#E6E6E6"));
+        painter.drawRoundedRect(pill, pill.height() / 2.0, pill.height() / 2.0);
+
+        const qreal diameter = 27.0;
+        const qreal circleX = m_dark ? pill.left() + 1.0
+                                     : pill.right() - diameter - 1.0;
+        const QRectF circle(circleX, (height() - diameter) / 2.0, diameter, diameter);
+        painter.setPen(QPen(m_dark ? QColor("#111111") : QColor("#D0D0D0"), 1.0));
+        painter.setBrush(Qt::white);
+        painter.drawEllipse(circle);
+
+        painter.setPen(m_dark ? Qt::white : QColor("#202020"));
+        QFont labelFont = font();
+        labelFont.setFamily(QStringLiteral("Segoe UI"));
+        labelFont.setPixelSize(9);
+        labelFont.setBold(true);
+        painter.setFont(labelFont);
+        const QRectF textRect = m_dark
+            ? QRectF(circle.right() + 3.0, 0.0, pill.right() - circle.right() - 6.0, height())
+            : QRectF(pill.left() + 7.0, 0.0, circle.left() - pill.left() - 9.0, height());
+        painter.drawText(textRect, Qt::AlignCenter,
+                         m_dark ? QStringLiteral("NIGHT MODE")
+                                : QStringLiteral("DAY MODE"));
+
+        painter.save();
+        painter.setClipRect(circle.adjusted(3.0, 3.0, -3.0, -3.0));
+        painter.setPen(QPen(QColor("#333333"), 1.1));
+        painter.setBrush(Qt::NoBrush);
+        const QPointF c = circle.center();
+        if (m_dark) {
+            painter.setBrush(QColor("#333333"));
+            painter.setPen(Qt::NoPen);
+            painter.drawEllipse(c, 7.0, 7.0);
+            painter.setBrush(Qt::white);
+            painter.drawEllipse(c + QPointF(3.5, -2.5), 6.5, 6.5);
+            painter.setBrush(QColor("#333333"));
+            painter.drawEllipse(c + QPointF(5.5, -7.0), 1.0, 1.0);
+        } else {
+            painter.drawEllipse(c, 4.5, 4.5);
+            for (int i = 0; i < 8; ++i) {
+                const qreal angle = (3.14159265358979323846 / 4.0) * i;
+                const QPointF inner(c.x() + qCos(angle) * 7.0,
+                                    c.y() + qSin(angle) * 7.0);
+                const QPointF outer(c.x() + qCos(angle) * 9.5,
+                                    c.y() + qSin(angle) * 9.5);
+                painter.drawLine(inner, outer);
+            }
+        }
+        painter.restore();
+    }
+
+private:
+    bool m_dark = false;
+};
+
+class WindowDragBar final : public QWidget
+{
+public:
+    explicit WindowDragBar(QWidget *parent = nullptr) : QWidget(parent) {}
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::LeftButton && window() && window()->windowHandle()) {
+            window()->windowHandle()->startSystemMove();
+            event->accept();
+            return;
+        }
+        QWidget::mousePressEvent(event);
+    }
+};
+
+class StayOpenMenu final : public QMenu
+{
+public:
+    using QMenu::QMenu;
+
+protected:
+    void mouseReleaseEvent(QMouseEvent *event) override
+    {
+        QAction *action = actionAt(event->pos());
+        if (action && action->isEnabled() && !action->menu()) {
+            action->trigger();
+            setActiveAction(action);
+            event->accept();
+            return;
+        }
+        QMenu::mouseReleaseEvent(event);
+    }
+
+    void keyPressEvent(QKeyEvent *event) override
+    {
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter
+                || event->key() == Qt::Key_Space) {
+            QAction *action = activeAction();
+            if (action && action->isEnabled() && !action->menu()) {
+                action->trigger();
+                setActiveAction(action);
+                event->accept();
+                return;
+            }
+        }
+        QMenu::keyPressEvent(event);
+    }
+};
+}
 
 //---------------------------------------------------------------------------------------------
 // GUI implementations (menus, widgets, media, settings, input, etc.)
@@ -78,6 +232,304 @@ static bool isDka2018RomName(const QString& name)
     return n.contains("donkey kong arcade") ||
            n.contains("dka") ||
            n.contains("45345709");
+}
+
+enum HardwareMediaProfile {
+    HardwareUnknown = -1,
+    HardwareEos = 0,
+    HardwareCpm = 1,
+    HardwareTdos = 2,
+    HardwareColecoRom = 3,
+    HardwareAdamRom = 4
+};
+
+static HardwareMediaProfile classifyHardwareHeader(const QByteArray &bytes)
+{
+    /* FujiNet's Coleco launcher exposes a small boot disk.  The actual ROM
+     * begins at block 2 and retains its normal 55AA/AA55 cartridge header. */
+    const int romOffsets[] = { 0, 1024, 2048 };
+    for (int offset : romOffsets) {
+        if (bytes.size() < offset + 2)
+            continue;
+        const quint8 a = quint8(bytes[offset]);
+        const quint8 b = quint8(bytes[offset + 1]);
+        if ((a == 0xAA && b == 0x55) || (a == 0x55 && b == 0xAA))
+            return HardwareColecoRom;
+    }
+
+    const QByteArray upper = bytes.toUpper();
+    if (upper.contains("CP/M") || upper.contains("CPM")
+        || upper.contains("CP-M"))
+        return HardwareCpm;
+    /* CP/M tool disks can contain one TDOS utility filename. One loose TDOS
+     * occurrence is therefore not sufficient to classify the boot system. */
+    if (upper.contains("T-DOS") || upper.count("TDOS") >= 2)
+        return HardwareTdos;
+    if ((upper.contains("FIRST DIR") && upper.contains("DIRECTORY"))
+        || (upper.contains("DIRECTORY") && upper.contains("BLOCKS LEFT"))
+        || upper.contains("EOS"))
+        return HardwareEos;
+    return HardwareUnknown;
+}
+
+static bool isFujiNetStartupHeader(const QByteArray &bytes)
+{
+    /* Physical FujiNet startup D5 observed on hardware. Use three independent
+     * loader signatures, not a generic EOS marker, to avoid classifying an
+     * ordinary EOS application disk as the FujiNet menu. */
+    if (bytes.size() < 3 * 1024)
+        return false;
+    return bytes.mid(0, 8) == QByteArray::fromHex("78326ffd3e01d37f")
+        && bytes.mid(1024, 8) == QByteArray::fromHex("c369000000000000")
+        && bytes.mid(2048, 8) == QByteArray::fromHex("e5cddc19c1210000");
+}
+
+static QString fujiMediaFingerprint(const QByteArray &bytes)
+{
+    if (bytes.size() < 1024 + 32)
+        return QString();
+    /* Do not hash complete directory/allocation blocks: a successful SAVE
+     * legitimately changes them and must not make the remembered title vanish.
+     * The boot block plus the fixed volume-header prefix forms a stable ID. */
+    QByteArray identity = bytes.left(1024);
+    identity.append(bytes.mid(1024, 32));
+    return QString::fromLatin1(QCryptographicHash::hash(
+        identity, QCryptographicHash::Sha256).toHex());
+}
+
+static QString cachedFujiMediaPath(const QByteArray &headerBlocks,
+                                   const QString &reportedPath)
+{
+    const QString fingerprint = fujiMediaFingerprint(headerBlocks);
+    if (fingerprint.isEmpty())
+        return reportedPath;
+
+    const QString iniPath = QDir(QCoreApplication::applicationDirPath())
+        .filePath(QStringLiteral("settings.ini"));
+    QSettings settings(iniPath, QSettings::IniFormat);
+    const QString key = QStringLiteral("fujinet/media_names/%1").arg(fingerprint);
+    if (!reportedPath.isEmpty()) {
+        settings.setValue(key, reportedPath);
+        settings.setValue(QStringLiteral("fujinet/last_mounted_path"), reportedPath);
+        settings.setValue(QStringLiteral("fujinet/last_media_fingerprint"), fingerprint);
+        settings.sync();
+        qDebug() << "[UI][BOOT] cached FujiNet media title for fingerprint="
+                 << fingerprint.left(12) << QFileInfo(reportedPath).fileName();
+        return reportedPath;
+    }
+
+    const QString remembered = settings.value(key).toString();
+    if (!remembered.isEmpty()) {
+        qDebug() << "[UI][BOOT] restored FujiNet media title from fingerprint="
+                 << fingerprint.left(12) << QFileInfo(remembered).fileName();
+        return remembered;
+    }
+
+    /* Writable media and some FujiNet loaders can alter the inspected header
+     * between runs. E2 is authoritative whenever a new image is selected, so
+     * its last path is the best available fallback when startup sends no E2. */
+    QString lastKnown = settings.value(
+        QStringLiteral("fujinet/last_mounted_path")).toString();
+    if (lastKnown.isEmpty()) {
+        settings.beginGroup(QStringLiteral("fujinet/media_names"));
+        const QStringList knownFingerprints = settings.childKeys();
+        if (knownFingerprints.size() == 1)
+            lastKnown = settings.value(knownFingerprints.constFirst()).toString();
+        settings.endGroup();
+        if (!lastKnown.isEmpty()) {
+            settings.setValue(QStringLiteral("fujinet/last_mounted_path"), lastKnown);
+            settings.sync();
+        }
+    }
+    if (!lastKnown.isEmpty())
+        qDebug() << "[UI][BOOT] restored last known FujiNet media title; fingerprint changed from="
+                 << settings.value(QStringLiteral("fujinet/last_media_fingerprint"))
+                        .toString().left(12)
+                 << "to=" << fingerprint.left(12)
+                 << QFileInfo(lastKnown).fileName();
+    return lastKnown;
+}
+
+static void updateRomLabelForStatusBar(QStatusBar* bar, QLabel* sepLabel4,
+                                       QLabel* romLabel, const QString& fullText);
+static QString hardwareProfileName(HardwareMediaProfile profile);
+
+int MainWindow::handleFujiNetBootIntercept(
+    const QByteArray &headerBlocks, const QString &mountedPath)
+{
+    HardwareMediaProfile detected = classifyHardwareHeader(headerBlocks);
+    const QString effectivePath = cachedFujiMediaPath(headerBlocks, mountedPath);
+    const QByteArray upperHeader = headerBlocks.toUpper();
+    const bool resetPreflight = mountedPath.isEmpty();
+    const bool fujiStartMedium = resetPreflight
+        && detected != HardwareColecoRom
+        && (isFujiNetStartupHeader(headerBlocks)
+            || upperHeader.contains("FUJINET")
+            || upperHeader.contains("FUJI NET"));
+    if (fujiStartMedium)
+        qDebug() << "[UI][BOOT] FujiNet start medium recognised; showing boot menu";
+    const QString lowerPath = effectivePath.toLower();
+    if (detected != HardwareColecoRom) {
+        const bool cpmName = lowerPath.contains("cp/m")
+            || lowerPath.contains("cpm") || lowerPath.contains("cp-m");
+        const bool tdosName = lowerPath.contains("t-dos")
+            || lowerPath.contains("tdos");
+        if (cpmName && !tdosName)
+            detected = HardwareCpm;
+        else if (tdosName && !cpmName)
+            detected = HardwareTdos;
+        else if (lowerPath.endsWith(".dsk") || lowerPath.endsWith(".ddp"))
+            detected = HardwareEos;
+    }
+
+    const QString mediaName = effectivePath.isEmpty()
+        ? QStringLiteral("FujiNet mounted media")
+        : QFileInfo(effectivePath).fileName();
+    const bool detectedRom = detected == HardwareColecoRom;
+    QStringList choices;
+    if (detectedRom) {
+        choices << tr("ROM via ADAM D5 loader (Coleco keypad)")
+                << tr("ROM as native Coleco cartridge (mapper/SGM)")
+                << tr("EOS disk on D5") << tr("CP/M disk on D5")
+                << tr("T-DOS disk on D5")
+                << tr("EOS tape on D1") << tr("CP/M tape on D1")
+                << tr("T-DOS tape on D1") << tr("Cancel boot");
+    } else {
+        choices << tr("EOS disk on D5") << tr("CP/M disk on D5")
+                << tr("T-DOS disk on D5")
+                << tr("EOS tape on D1") << tr("CP/M tape on D1")
+                << tr("T-DOS tape on D1")
+                << tr("ROM via ADAM D5 loader (Coleco keypad)")
+                << tr("ROM as native Coleco cartridge (mapper/SGM)")
+                << tr("Cancel boot");
+    }
+    if (resetPreflight)
+        choices.insert(0, tr("FujiNet start medium (continue normally)"));
+
+    /* An unknown retained D5 may simply be FujiNet's own startup disk. Keep
+     * that as the safe default; recognised application formats override it. */
+    int suggested = detectedRom && resetPreflight ? 1 : 0;
+    if (!detectedRom) {
+        const int resetOffset = resetPreflight ? 1 : 0;
+        if (fujiStartMedium) suggested = 0;
+        else if (detected == HardwareEos) suggested = resetOffset;
+        else if (detected == HardwareCpm) suggested = resetOffset + 1;
+        else if (detected == HardwareTdos) suggested = resetOffset + 2;
+        else if (detected == HardwareColecoRom) suggested = resetOffset + 3;
+    }
+    const QString detectedText = fujiStartMedium
+        ? tr("FujiNet startup medium")
+        : (detected == HardwareUnknown
+            ? tr("not recognised") : hardwareProfileName(detected));
+    bool accepted = false;
+    const QString choice = QInputDialog::getItem(
+        this, resetPreflight ? tr("Mounted FujiNet medium found")
+                             : tr("FujiNet BOOT intercepted"),
+        tr("Medium: %1\nDetected: %2\n\nChoose how ADAMP must boot it:")
+            .arg(mediaName, detectedText),
+        choices, suggested, false, &accepted);
+    if (!accepted || choice == tr("Cancel boot"))
+        return -1;
+    if (choice.startsWith("FujiNet"))
+        return 4;
+
+    const bool tapeD1 = choice == tr("EOS tape on D1")
+        || choice == tr("CP/M tape on D1")
+        || choice == tr("T-DOS tape on D1");
+    int profile = 0;
+    if (choice == tr("CP/M disk on D5") || choice == tr("CP/M tape on D1"))
+        profile = 1;
+    else if (choice == tr("T-DOS disk on D5")
+             || choice == tr("T-DOS tape on D1"))
+        profile = 2;
+    const bool adamRomLoader =
+        choice == tr("ROM via ADAM D5 loader (Coleco keypad)");
+    const bool nativeColeco =
+        choice == tr("ROM as native Coleco cartridge (mapper/SGM)");
+    const bool gameInput = adamRomLoader || nativeColeco;
+    /* 0..2 retain the established D5 profile values, 3 remains Coleco and
+     * 5..7 are the matching EOS/CP-M/T-DOS profiles for physical tape D1.
+     * Value 4 is reserved for "continue FujiNet startup normally". */
+    const int decision = nativeColeco ? 8
+        : (adamRomLoader ? 3 : (tapeD1 ? 5 + profile : profile));
+
+    if (tapeD1) {
+        mcu2_block_set_device_enabled(0x04, false);
+        mcu2_block_set_device_enabled(0x08, true);
+        m_hardwareDiskMedia[0] = false;
+        m_loadedDiskNames[0].clear();
+        m_hardwareTapeMedia[0] = true;
+        m_loadedTapeNames[0] = QStringLiteral("[HW] %1").arg(mediaName);
+        m_AdamTMedia_insert = true;
+        onTapeStatusChanged(0, m_loadedTapeNames[0]);
+    } else {
+        mcu2_block_set_device_enabled(0x08, false);
+        mcu2_block_set_device_enabled(0x04, true);
+        m_hardwareTapeMedia[0] = false;
+        m_loadedTapeNames[0].clear();
+        m_hardwareDiskMedia[0] = true;
+        m_loadedDiskNames[0] = QStringLiteral("[HW] %1").arg(mediaName);
+        m_AdamDMedia_insert = true;
+        onDiskStatusChanged(0, m_loadedDiskNames[0]);
+    }
+    m_resetAdamLocked = true;
+
+    m_adamGameMode = adamRomLoader;
+
+    /* The physical FujiNet transfer must continue through the ADAM D5
+     * loader, so m_machineType and the core may not be changed here.  The
+     * selected payload is nevertheless a Coleco cartridge: show that final
+     * machine identity in the status bar instead of leaving the misleading
+     * ADAM label visible throughout gameplay. */
+    if (m_sysLabel)
+        m_sysLabel->setText(gameInput ? QStringLiteral("COLECO")
+                                      : QStringLiteral("ADAM"));
+    if (m_actAdamGameOn && m_actAdamGameOff)
+        (adamRomLoader ? m_actAdamGameOn : m_actAdamGameOff)->setChecked(true);
+    if (m_inputWidget)
+        m_inputWidget->setAdamGameMode(adamRomLoader);
+    adamnet_set_game_mode(adamRomLoader);
+    m_cpm_status = profile == 1 || profile == 2;
+
+    if (gameInput) {
+        updateRomLabelForStatusBar(
+            statusBar(), m_sepLabel4, m_romLabel,
+            QStringLiteral("[HW Coleco] %1").arg(mediaName));
+    } else {
+        updateRomLabelForStatusBar(statusBar(), m_sepLabel4, m_romLabel,
+                                   QStringLiteral("No cart"));
+    }
+    updateMediaMenuState();
+    updateMediaStatusLabels();
+    updateHardwareWindowMediaDisplay();
+
+    qDebug() << "[UI][BOOT] FujiNet decision=" << decision
+             << "target=" << (tapeD1 ? "Tape D1" : "Disk D5")
+             << "name=" << mediaName
+             << "route=" << (nativeColeco ? "native Coleco" :
+                                adamRomLoader ? "ADAM D5 loader" : "ADAM media")
+             << "game-input=" << adamRomLoader;
+    if (adamRomLoader)
+        qDebug() << "[UI][BOOT] ROM route keeps ADAM core and enables Coleco keypad";
+    else if (nativeColeco)
+        qDebug() << "[UI][BOOT] ROM route="
+                 << (m_fujiNetDirectRom
+                         ? "direct PC network (automatic physical D5 fallback)"
+                         : "physical D5 capture")
+                 << "-> save FujiNet.rom -> native Coleco";
+    return decision;
+}
+
+static QString hardwareProfileName(HardwareMediaProfile profile)
+{
+    switch (profile) {
+    case HardwareEos: return QStringLiteral("EOS");
+    case HardwareCpm: return QStringLiteral("CP/M");
+    case HardwareTdos: return QStringLiteral("T-DOS");
+    case HardwareColecoRom: return QStringLiteral("Coleco ROM");
+    case HardwareAdamRom: return QStringLiteral("ADAM ROM");
+    default: return QStringLiteral("Unknown");
+    }
 }
 
 
@@ -142,6 +594,7 @@ static QString appDefaultPath(const QString& relativePath)
 }
 
 static QString defaultRomPathForPlatform()          { return appDefaultPath("media/roms"); }
+static QString defaultAtariRomPathForPlatform()     { return appDefaultPath("media/aroms"); }
 static QString defaultDiskPathForPlatform()         { return appDefaultPath("media/disks"); }
 static QString defaultTapePathForPlatform()         { return appDefaultPath("media/tapes"); }
 static QString defaultStatePathForPlatform()        { return appDefaultPath("media/states"); }
@@ -229,8 +682,7 @@ void MainWindow::setStatusBar()
     // Window flags
     Qt::WindowFlags flags = windowFlags();
     flags &= ~Qt::WindowMaximizeButtonHint;
-    flags |= Qt::WindowMinimizeButtonHint;
-    flags |= Qt::CustomizeWindowHint;
+    flags |= Qt::FramelessWindowHint;
     setWindowFlags(flags);
 
     auto mkLabel = [&](const QString& text,
@@ -347,6 +799,245 @@ void MainWindow::setStatusBar()
     updateRomLabelForStatusBar(statusBar(), m_sepLabel4, m_romLabel, "No cart");
 }
 
+//---------------------------------------------------------------------------------------------
+// DAY / NIGHT APPEARANCE
+//---------------------------------------------------------------------------------------------
+void MainWindow::setupThemeButton()
+{
+    if (m_themeButton)
+        return;
+
+    QMenuBar *applicationMenu = menuBar();
+    QWidget *topArea = new QWidget(this);
+    topArea->setObjectName(QStringLiteral("windowTopArea"));
+    QVBoxLayout *topLayout = new QVBoxLayout(topArea);
+    topLayout->setContentsMargins(0, 0, 0, 0);
+    topLayout->setSpacing(0);
+
+    WindowDragBar *titleBar = new WindowDragBar(topArea);
+    titleBar->setObjectName(QStringLiteral("customTitleBar"));
+    titleBar->setFixedHeight(32);
+    QHBoxLayout *titleLayout = new QHBoxLayout(titleBar);
+    titleLayout->setContentsMargins(10, 0, 0, 0);
+    titleLayout->setSpacing(0);
+
+    QLabel *title = new QLabel(windowTitle(), titleBar);
+    title->setObjectName(QStringLiteral("customWindowTitle"));
+    title->setAttribute(Qt::WA_TransparentForMouseEvents);
+    titleLayout->addWidget(title);
+    titleLayout->addStretch(1);
+
+    m_themeButton = new DayNightToggleButton(titleBar);
+    m_themeButton->setObjectName(QStringLiteral("dayNightButton"));
+    m_themeButton->setFlat(true);
+    m_themeButton->setFocusPolicy(Qt::NoFocus);
+    titleLayout->addWidget(m_themeButton);
+
+    QPushButton *minimizeButton = new QPushButton(QString::fromUtf8("\xE2\x80\x94"), titleBar);
+    minimizeButton->setObjectName(QStringLiteral("captionButton"));
+    minimizeButton->setToolTip(tr("Minimize"));
+    minimizeButton->setFocusPolicy(Qt::NoFocus);
+    minimizeButton->setFixedSize(46, 32);
+    titleLayout->addWidget(minimizeButton);
+
+    QPushButton *closeButton = new QPushButton(QString::fromUtf8("\xC3\x97"), titleBar);
+    closeButton->setObjectName(QStringLiteral("closeCaptionButton"));
+    closeButton->setToolTip(tr("Close"));
+    closeButton->setFocusPolicy(Qt::NoFocus);
+    closeButton->setFixedSize(46, 32);
+    titleLayout->addWidget(closeButton);
+
+    topLayout->addWidget(titleBar);
+    topLayout->addWidget(applicationMenu);
+    setMenuWidget(topArea);
+
+    connect(m_themeButton, &QPushButton::clicked,
+            this, &MainWindow::onToggleDayNight);
+    connect(minimizeButton, &QPushButton::clicked, this, &QWidget::showMinimized);
+    connect(closeButton, &QPushButton::clicked, this, &QWidget::close);
+    applyDayNightTheme(m_darkTheme);
+}
+
+void MainWindow::onToggleDayNight()
+{
+    applyDayNightTheme(!m_darkTheme);
+    QSettings().setValue(QStringLiteral("appearance/darkTheme"), m_darkTheme);
+}
+
+void MainWindow::applyDayNightTheme(bool dark)
+{
+    m_darkTheme = dark;
+
+    QPalette palette;
+    if (dark) {
+        palette.setColor(QPalette::Window, QColor(45, 45, 45));
+        palette.setColor(QPalette::WindowText, Qt::white);
+        palette.setColor(QPalette::Base, QColor(30, 30, 30));
+        palette.setColor(QPalette::AlternateBase, QColor(45, 45, 45));
+        palette.setColor(QPalette::ToolTipBase, QColor(42, 42, 42));
+        palette.setColor(QPalette::ToolTipText, Qt::white);
+        palette.setColor(QPalette::Text, Qt::white);
+        palette.setColor(QPalette::Button, QColor(45, 45, 45));
+        palette.setColor(QPalette::ButtonText, Qt::white);
+        palette.setColor(QPalette::BrightText, Qt::red);
+        palette.setColor(QPalette::Highlight, QColor(100, 100, 255));
+        palette.setColor(QPalette::HighlightedText, Qt::black);
+        palette.setColor(QPalette::Light, QColor(70, 70, 70));
+        palette.setColor(QPalette::Midlight, QColor(58, 58, 58));
+        palette.setColor(QPalette::Mid, QColor(48, 48, 48));
+        palette.setColor(QPalette::Dark, QColor(25, 25, 25));
+        palette.setColor(QPalette::Shadow, Qt::black);
+        palette.setColor(QPalette::PlaceholderText, QColor(150, 150, 150));
+    } else {
+        // Do not derive this from the current palette: after night mode that
+        // palette is dark as well. Set every visible role explicitly.
+        palette.setColor(QPalette::Window, QColor(245, 245, 245));
+        palette.setColor(QPalette::WindowText, QColor(25, 25, 25));
+        palette.setColor(QPalette::Base, Qt::white);
+        palette.setColor(QPalette::AlternateBase, QColor(238, 238, 238));
+        palette.setColor(QPalette::ToolTipBase, QColor(255, 255, 220));
+        palette.setColor(QPalette::ToolTipText, QColor(25, 25, 25));
+        palette.setColor(QPalette::Text, QColor(25, 25, 25));
+        palette.setColor(QPalette::Button, QColor(240, 240, 240));
+        palette.setColor(QPalette::ButtonText, QColor(25, 25, 25));
+        palette.setColor(QPalette::BrightText, Qt::red);
+        palette.setColor(QPalette::Highlight, QColor(0, 120, 215));
+        palette.setColor(QPalette::HighlightedText, Qt::white);
+        palette.setColor(QPalette::Light, Qt::white);
+        palette.setColor(QPalette::Midlight, QColor(248, 248, 248));
+        palette.setColor(QPalette::Mid, QColor(190, 190, 190));
+        palette.setColor(QPalette::Dark, QColor(130, 130, 130));
+        palette.setColor(QPalette::Shadow, QColor(80, 80, 80));
+        palette.setColor(QPalette::Link, QColor(0, 102, 204));
+        palette.setColor(QPalette::PlaceholderText, QColor(110, 110, 110));
+    }
+    qApp->setPalette(palette);
+
+    const QString common = QStringLiteral(R"(
+        QMenuBar::item { background: transparent; padding: 6px 10px; }
+        QMenu::item { padding: 6px 24px; border-radius: 3px; }
+        QMenu::separator { height: 1px; margin: 6px 8px; }
+        QMenu::indicator { width: 16px; height: 16px; }
+        QMenu::indicator:checked {
+            background: transparent; border: 0px;
+            image: url(:/images/images/Check.png);
+        }
+        QPushButton#dayNightButton {
+            border: 0px; border-radius: 0px; padding: 0px;
+            font-family: "Segoe UI Symbol"; font-size: 17px;
+        }
+        QPushButton#captionButton, QPushButton#closeCaptionButton {
+            border: 0px; border-radius: 0px; padding: 0px;
+            font-family: "Segoe UI Symbol"; font-size: 16px;
+        }
+    )");
+
+    const QString darkSheet = QStringLiteral(R"(
+        QToolTip { color: #ffffff; background-color: #2a2a2a; border: 1px solid #767676; }
+        QMenuBar { background-color: #2b2b2b; color: #eaeaea; }
+        QMenuBar::item:selected { background: #3a3a3a; color: #ffffff; }
+        QMenuBar::item:pressed, QMenuBar::item:open { background: #4c5a66; color: #ffffff; }
+        QMenu { background-color: #2b2b2b; color: #eaeaea; border: 1px solid #555; padding: 4px; }
+        QMenu::separator { background: #444; }
+        QMenu::item:selected { background: #4c5a66; color: #ffffff; }
+        QMenu::item:disabled { color: #777; }
+        QMenu::item:selected:disabled { background: #3a3a3a; }
+        QPushButton#dayNightButton { color: #ffd75e; background: #353535; }
+        QPushButton#dayNightButton:hover { background: #4a4a4a; }
+        QPushButton#dayNightButton:pressed { background: #555; }
+        QWidget#windowTopArea, QWidget#customTitleBar { background: #202020; }
+        QMainWindow#adampMainWindow { border: 1px solid #202020; }
+        QLabel#customWindowTitle { color: #eeeeee; }
+        QPushButton#captionButton, QPushButton#closeCaptionButton { color: #eeeeee; background: #202020; }
+        QPushButton#captionButton:hover { background: #3d3d3d; }
+        QPushButton#closeCaptionButton:hover { color: white; background: #c42b1c; }
+    )");
+
+    const QString lightSheet = QStringLiteral(R"(
+        QMainWindow, QDialog { background-color: #f5f5f5; color: #191919; }
+        QStatusBar { background-color: #f0f0f0; color: #191919; border-top: 1px solid #c8c8c8; }
+        QLineEdit, QTextEdit, QPlainTextEdit, QListView, QTreeView,
+        QSpinBox, QDoubleSpinBox, QComboBox {
+            background-color: #ffffff; color: #191919; border: 1px solid #b8b8b8;
+            selection-background-color: #0078d7; selection-color: #ffffff;
+        }
+        QTableView {
+            background-color: #696867; alternate-background-color: #696867;
+            color: #191919; border: 1px solid #b8b8b8;
+            selection-background-color: #0078d7; selection-color: #ffffff;
+        }
+        QMainWindow QLabel, QDialog QLabel,
+        QMainWindow QCheckBox, QDialog QCheckBox,
+        QMainWindow QRadioButton, QDialog QRadioButton,
+        QMainWindow QGroupBox, QDialog QGroupBox,
+        QMainWindow QPushButton, QDialog QPushButton {
+            color: #191919;
+        }
+        QHeaderView::section { background-color: #ededed; color: #191919; border: 1px solid #c8c8c8; }
+        QTabWidget::pane { background-color: #f5f5f5; border: 1px solid #c8c8c8; }
+        QTabBar::tab { background-color: #e7e7e7; color: #191919; border: 1px solid #c8c8c8; padding: 5px 10px; }
+        QTabBar::tab:selected { background-color: #ffffff; }
+        QGroupBox { color: #191919; }
+        QToolTip { color: #202020; background-color: #ffffdc; border: 1px solid #8a8a8a; }
+        QMenuBar { background-color: #f3f3f3; color: #202020; }
+        QMenuBar::item:selected { background: #e2e2e2; color: #111111; }
+        QMenuBar::item:pressed, QMenuBar::item:open { background: #d7e8f7; color: #111111; }
+        QMenu { background-color: #ffffff; color: #202020; border: 1px solid #b8b8b8; padding: 4px; }
+        QMenu::separator { background: #d0d0d0; }
+        QMenu::item:selected { background: #d7e8f7; color: #111111; }
+        QMenu::item:disabled { color: #999; }
+        QMenu::item:selected:disabled { background: #eeeeee; }
+        QPushButton#dayNightButton { color: #344f73; background: #e7e7e7; }
+        QPushButton#dayNightButton:hover { background: #d7d7d7; }
+        QPushButton#dayNightButton:pressed { background: #c8c8c8; }
+        QWidget#windowTopArea, QWidget#customTitleBar { background: #f3f3f3; }
+        QMainWindow#adampMainWindow { border: 1px solid #d0d0d0; }
+        QLabel#customWindowTitle { color: #202020; }
+        QPushButton#captionButton, QPushButton#closeCaptionButton { color: #202020; background: #f3f3f3; }
+        QPushButton#captionButton:hover { background: #dddddd; }
+        QPushButton#closeCaptionButton:hover { color: white; background: #c42b1c; }
+    )");
+
+    qApp->setStyleSheet(common + (dark ? darkSheet : lightSheet));
+
+    // The narrow strips beside the 4:3 emulation image are painted by
+    // ScreenWidget itself, not by the QMainWindow frame.
+    if (m_screenWidget) {
+        m_screenWidget->setBackgroundColor(dark ? QColor(QStringLiteral("#323232"))
+                                                : QColor(QStringLiteral("#F3F3F3")));
+    }
+
+    if (m_windowBorderOverlay) {
+        const QString borderColor = dark ? QStringLiteral("#161616")
+                                         : QStringLiteral("#F3F3F3");
+        m_windowBorderOverlay->setStyleSheet(
+            QStringLiteral("QFrame#windowBorderOverlay { background: transparent; border: 2px solid %1; border-radius: 10px; }")
+                .arg(borderColor));
+        m_windowBorderOverlay->raise();
+    }
+
+    if (m_themeButton) {
+        const char baseStyleProperty[] = "adampMainBaseStyleSheet";
+        if (!property(baseStyleProperty).isValid())
+            setProperty(baseStyleProperty, styleSheet());
+        const QString baseStyle = property(baseStyleProperty).toString();
+        const QString edgeColor = dark ? QStringLiteral("#202020")
+                                       : QStringLiteral("#f3f3f3");
+        setStyleSheet(baseStyle + QStringLiteral(
+            "QMainWindow#adampMainWindow {"
+            " background-color: %1; border: 1px solid %1;"
+            "}").arg(edgeColor));
+
+        if (auto* toggle = dynamic_cast<DayNightToggleButton*>(m_themeButton))
+            toggle->setDarkMode(dark);
+        m_themeButton->setToolTip(dark ? tr("Switch to day mode")
+                                       : tr("Switch to night mode"));
+    }
+
+    if (m_cvBasicEditor)
+        m_cvBasicEditor->setDarkTheme(dark);
+}
+
 void MainWindow::onSgmStatusChanged(bool enabled)
 {
     if (!m_sgmLabel || !m_sepLabelSGM) return;
@@ -397,17 +1088,10 @@ void MainWindow::setupUI()
                         "QMenuBar { "
                         "  font-family: '%1';"
                         "  font-size: 16pt;"
-                        "  background-color: #000000;" // Optioneel: geef de menu background een kleur
                         "}"
                         "QMenu { "
                         "  font-family: '%1';"
                         "  font-size: 16pt;"
-                        "  background-color: #2e2e2e;" // Optioneel: geef de dropdown een kleur
-                        "  color: white;"
-                        "  border: 1px solid black;"
-                        "}"
-                        "QMenu::item:selected { " // Kleur wanneer je met de muis over een optie gaat
-                        "  background-color: #4a90e2;"
                         "}"
                         ).arg(family);
 
@@ -425,12 +1109,27 @@ void MainWindow::setupUI()
     connect(m_openColecoRomAction, &QAction::triggered, this, &MainWindow::onOpenColecoRom);
     fileMenu->addAction(m_openColecoRomAction);
 
+    m_openAtari2600RomAction = new QAction(tr("Atari 2600 Cartridge"), this);
+    connect(m_openAtari2600RomAction, &QAction::triggered,
+            this, &MainWindow::onOpenAtari2600Rom);
+    fileMenu->addAction(m_openAtari2600RomAction);
+
     fileMenu->addSeparator();
 
     // Adam cartridge
     m_openAdamRomAction = new QAction(tr("Adam Cartridge"), this);
     connect(m_openAdamRomAction, &QAction::triggered, this, &MainWindow::onOpenAdamRom);
     fileMenu->addAction(m_openAdamRomAction);
+
+    // m_prepareHardwareMediaAction = new QAction(tr("Manual MCU2 hardware media..."), this);
+    // m_prepareHardwareMediaAction->setToolTip(
+    //     tr("Manual fallback for inspecting and preparing physical MCU2 media"));
+    // m_prepareHardwareMediaAction->setStatusTip(
+    //     tr("Use only when automatic FujiNet media detection cannot be used"));
+    // connect(m_prepareHardwareMediaAction, &QAction::triggered,
+    //         this, &MainWindow::onPrepareHardwareMedia);
+    // fileMenu->addAction(m_prepareHardwareMediaAction);
+    // fileMenu->addSeparator();
 
     // Tape Menu's
     m_tapeMenuA = new QMenu(tr("Tape D1"), this);
@@ -565,19 +1264,19 @@ void MainWindow::setupUI()
             this, &MainWindow::onShowDebugTerminal);
 
     // --- TOOLS MENU ---
-    QMenu* toolsMenu = menuBar()->addMenu(tr("Tools"));
+    m_toolsMenu = menuBar()->addMenu(tr("Tools"));
     m_actShowNameTable = new QAction(tr("Name Table Viewer"), this);
     connect(m_actShowNameTable, &QAction::triggered, this, &MainWindow::onShowNameTable);
-    toolsMenu->addAction(m_actShowNameTable);
+    m_toolsMenu->addAction(m_actShowNameTable);
     m_actShowPatternTable = new QAction(tr("Pattern Table Viewer"), this);
     connect(m_actShowPatternTable, &QAction::triggered, this, &MainWindow::onShowPatternTable);
-    toolsMenu->addAction(m_actShowPatternTable);
+    m_toolsMenu->addAction(m_actShowPatternTable);
     m_actShowSpriteTable = new QAction(tr("Sprite Table Viewer"), this);
     connect(m_actShowSpriteTable, &QAction::triggered, this, &MainWindow::onShowSpriteTable);
-    toolsMenu->addAction(m_actShowSpriteTable);
-    toolsMenu->addSeparator();
+    m_toolsMenu->addAction(m_actShowSpriteTable);
+    m_toolsMenu->addSeparator();
     m_cartInfoAction = new QAction(tr("Cart profile"), this);
-    toolsMenu->addAction(m_cartInfoAction);
+    m_toolsMenu->addAction(m_cartInfoAction);
 
      m_actImageManager = new QAction(tr("EOS Media Manager"), this);
      connect(m_actImageManager, &QAction::triggered, this, [this]() {
@@ -591,35 +1290,135 @@ void MainWindow::setupUI()
         m_imageManagerDialog->raise();
         m_imageManagerDialog->activateWindow();
     });
-    toolsMenu->addSeparator();
-    toolsMenu->addAction(m_actImageManager);
+    m_toolsMenu->addSeparator();
+    m_toolsMenu->addAction(m_actImageManager);
     // --- CVBASIC ---
     m_actCvBasicEditor = new QAction(tr("CVBasic SUITE PLUG-IN"), this);
     connect(m_actCvBasicEditor, &QAction::triggered,
             this, &MainWindow::onShowCvBasicEditor);
-    toolsMenu->addSeparator();
-    toolsMenu->addAction(m_actCvBasicEditor);
+    m_toolsMenu->addSeparator();
+    m_toolsMenu->addAction(m_actCvBasicEditor);
 
     // --- SMARTBASIC TEXT INJECTOR ---
-    toolsMenu->addSeparator();
+    m_toolsMenu->addSeparator();
     m_actStartBasicInject = new QAction(tr("START INJECT"), this);
     connect(m_actStartBasicInject, &QAction::triggered,
             this, &MainWindow::onStartBasicInject);
-    toolsMenu->addAction(m_actStartBasicInject);
+    m_toolsMenu->addAction(m_actStartBasicInject);
 
     m_actStopBasicInject = new QAction(tr("STOP INJECT"), this);
     m_actStopBasicInject->setEnabled(false);
     connect(m_actStopBasicInject, &QAction::triggered,
             this, &MainWindow::onStopBasicInject);
-    toolsMenu->addAction(m_actStopBasicInject);
+    m_toolsMenu->addAction(m_actStopBasicInject);
 
     m_basicInjectTimer = new QTimer(this);
     m_basicInjectTimer->setSingleShot(true);
     connect(m_basicInjectTimer, &QTimer::timeout,
             this, &MainWindow::injectNextBasicCharacter);
 
+    // --- ATARI 2600 MENU ---
+    m_atariInputsMenu = new StayOpenMenu(tr("ATARI"), menuBar());
+    menuBar()->addMenu(m_atariInputsMenu);
+    m_atariGameSelectAction = m_atariInputsMenu->addAction(tr("GAME PLAY \tTRIG L"));
+    m_atariGameSelectAction = m_atariInputsMenu->addAction(tr("GAME SELECT \tTRIG R"));
+    m_atariInputsMenu->addSeparator();
+    m_atariGameResetAction = m_atariInputsMenu->addAction(tr("GAME RESET\tKEY 4"));
+    connect(m_atariGameSelectAction, &QAction::triggered, this, [this]() {
+        if (!m_inputWidget) return;
+        m_inputWidget->setJoystickSelect(true);
+        QTimer::singleShot(150, this, [this]() {
+            if (m_inputWidget) m_inputWidget->setJoystickSelect(false);
+        });
+    });
+    connect(m_atariGameResetAction, &QAction::triggered, this, [this]() {
+        if (!m_inputWidget) return;
+        m_inputWidget->setJoystickStart(true);
+        QTimer::singleShot(150, this, [this]() {
+            if (m_inputWidget) m_inputWidget->setJoystickStart(false);
+        });
+    });
+
+    m_atariInputsMenu->addSeparator();
+    m_atariColorAction = m_atariInputsMenu->addAction(tr("COLOR-B/W\tKEY 1"));
+    m_atariColorAction->setCheckable(true);
+    m_atariColorAction->setChecked(m_atariColor);
+    m_atariColorAction->setToolTip(tr("Checked = COLOR, unchecked = B/W"));
+    connect(m_atariColorAction, &QAction::toggled, this, [this](bool color) {
+        m_atariColor = color;
+        if (m_inputWidget) m_inputWidget->setAtari2600Color(color);
+        saveSettings();
+        updateAtariStatusBar();
+    });
+    m_atariInputsMenu->addSeparator();
+    QMenu *leftDifficultyMenu = new StayOpenMenu(tr("LEFT DIFFICULTY\tKEY 2"), m_atariInputsMenu);
+    m_atariInputsMenu->addMenu(leftDifficultyMenu);
+    QActionGroup *leftDifficultyGroup = new QActionGroup(this);
+    leftDifficultyGroup->setExclusive(true);
+    QAction *leftDifficultyA = leftDifficultyMenu->addAction(tr("A (Expert)"));
+    QAction *leftDifficultyB = leftDifficultyMenu->addAction(tr("B (Novice)"));
+    m_atariLeftDifficultyAAction = leftDifficultyA;
+    m_atariLeftDifficultyBAction = leftDifficultyB;
+    leftDifficultyA->setCheckable(true);
+    leftDifficultyB->setCheckable(true);
+    leftDifficultyGroup->addAction(leftDifficultyA);
+    leftDifficultyGroup->addAction(leftDifficultyB);
+    (m_atariLeftDifficultyA ? leftDifficultyA : leftDifficultyB)->setChecked(true);
+
+    QMenu *rightDifficultyMenu = new StayOpenMenu(tr("RIGHT DIFFICULTY\tKEY 3"), m_atariInputsMenu);
+    m_atariInputsMenu->addMenu(rightDifficultyMenu);
+    QActionGroup *rightDifficultyGroup = new QActionGroup(this);
+    rightDifficultyGroup->setExclusive(true);
+    QAction *rightDifficultyA = rightDifficultyMenu->addAction(tr("A (Expert)"));
+    QAction *rightDifficultyB = rightDifficultyMenu->addAction(tr("B (Novice)"));
+    m_atariRightDifficultyAAction = rightDifficultyA;
+    m_atariRightDifficultyBAction = rightDifficultyB;
+    rightDifficultyA->setCheckable(true);
+    rightDifficultyB->setCheckable(true);
+    rightDifficultyGroup->addAction(rightDifficultyA);
+    rightDifficultyGroup->addAction(rightDifficultyB);
+    (m_atariRightDifficultyA ? rightDifficultyA : rightDifficultyB)->setChecked(true);
+
+    connect(leftDifficultyA, &QAction::triggered, this, [this]() {
+        m_atariLeftDifficultyA = true;
+        if (m_inputWidget) m_inputWidget->setAtari2600LeftDifficultyA(true);
+        saveSettings();
+        updateAtariStatusBar();
+    });
+    connect(leftDifficultyB, &QAction::triggered, this, [this]() {
+        m_atariLeftDifficultyA = false;
+        if (m_inputWidget) m_inputWidget->setAtari2600LeftDifficultyA(false);
+        saveSettings();
+        updateAtariStatusBar();
+    });
+    connect(rightDifficultyA, &QAction::triggered, this, [this]() {
+        m_atariRightDifficultyA = true;
+        if (m_inputWidget) m_inputWidget->setAtari2600RightDifficultyA(true);
+        saveSettings();
+        updateAtariStatusBar();
+    });
+    connect(rightDifficultyB, &QAction::triggered, this, [this]() {
+        m_atariRightDifficultyA = false;
+        if (m_inputWidget) m_inputWidget->setAtari2600RightDifficultyA(false);
+        saveSettings();
+        updateAtariStatusBar();
+    });
+    m_atariInputsMenu->addSeparator();
+    m_atariPhosphorEffectAction=m_atariInputsMenu->addAction(tr("PHOSPHOR EFFECT"));
+    m_atariPhosphorEffectAction->setCheckable(true);
+    m_atariPhosphorEffectAction->setChecked(m_atariPhosphorEffect);
+    connect(m_atariPhosphorEffectAction,&QAction::toggled,this,[this](bool enabled){
+        m_atariPhosphorEffect=enabled;
+        if(m_colecoController)
+            QMetaObject::invokeMethod(m_colecoController,"setAtari2600PhosphorEffect",
+                                      Qt::QueuedConnection,Q_ARG(bool,enabled));
+        saveSettings();
+    });
+    m_atariInputsMenu->menuAction()->setVisible(m_machineType == MACHINE_ATARI2600);
+
     // --- INPUT MENU ---
     QMenu* inputMenu = menuBar()->addMenu(tr("Input"));
+    inputMenu->setToolTipsVisible(true);
 
     // Keypad (was in Tools)
     m_actToggleKeyboard = new QAction(tr("Keypad"), this);
@@ -705,6 +1504,31 @@ void MainWindow::setupUI()
     // De connectie
     connect(m_actTogglePaddleMode, &QAction::toggled, this, &MainWindow::onTogglePaddleMode);
 
+    m_actPaddleDirectionUpDown = new QAction(tr("INPUT DIRECTION UP/DOWN"), this);
+    m_actPaddleDirectionUpDown->setCheckable(true);
+    m_actPaddleDirectionUpDown->setChecked(m_paddleDirectionUpDown);
+    m_actPaddleDirectionUpDown->setEnabled(m_usePaddleMode);
+    inputMenu->addAction(m_actPaddleDirectionUpDown);
+    connect(m_actPaddleDirectionUpDown, &QAction::toggled, this, [this](bool upDown) {
+        m_paddleDirectionUpDown = upDown;
+        if (m_inputWidget) m_inputWidget->setPaddleVertical(upDown);
+        saveSettings();
+    });
+
+    inputMenu->addSeparator();
+    m_actToggleDrivingControllerMode = new QAction(tr("DRIVING CONTROLLER MODE"), this);
+    m_actToggleDrivingControllerMode->setCheckable(true);
+    m_actToggleDrivingControllerMode->setChecked(m_useDrivingControllerMode);
+    m_actToggleDrivingControllerMode->setToolTip(
+        tr("DUKES OF HAZZARD\n"
+           "STEERING WHEEL LEFT (TRIG L)\n"
+           "STEERING WHEEL RIGHT (TRIG R)\n"
+           "GASPEDAL (BUT #)\n"
+           "GEARING (BUT UP,DOWN,LEFT RIGHT)"));
+    inputMenu->addAction(m_actToggleDrivingControllerMode);
+    connect(m_actToggleDrivingControllerMode, &QAction::toggled,
+            this, &MainWindow::onToggleDrivingControllerMode);
+
     // --- VIDEO MENU ---
     QMenu* videoMenu = menuBar()->addMenu(tr("Video"));
     QActionGroup* videoGroup = new QActionGroup(this);
@@ -718,6 +1542,9 @@ void MainWindow::setupUI()
     m_actTogglePAL->setCheckable(true);
     videoGroup->addAction(m_actTogglePAL);
     videoMenu->addAction(m_actTogglePAL);
+    videoMenu->addSeparator();
+    m_actResetGeometry = new QAction(tr("RESET GEOMETRY"), this);
+    videoMenu->addAction(m_actResetGeometry);
     videoMenu->addSeparator();
     m_scanlinesMenu = videoMenu->addMenu(tr("Simulate Scanlines"));
     m_scanlinesGroup = new QActionGroup(this);
@@ -963,6 +1790,7 @@ void MainWindow::setupUI()
     connect(m_scanlinesGroup, &QActionGroup::triggered, this, &MainWindow::onScanlinesModeChanged);
     connect(m_actToggleNTSC, &QAction::triggered, this, &MainWindow::onToggleVideoStandard);
     connect(m_actTogglePAL, &QAction::triggered, this, &MainWindow::onToggleVideoStandard);
+    connect(m_actResetGeometry, &QAction::triggered, this, &MainWindow::onResetGeometry);
     connect(m_actToggleKeyboard, &QAction::toggled, this, &MainWindow::onToggleKeyboard);
     connect(m_cartInfoAction, &QAction::triggered, this, &MainWindow::onOpenCartInfo);
     connect(m_actAbout, &QAction::triggered, this, &MainWindow::showAboutDialog);
@@ -975,6 +1803,38 @@ void MainWindow::setupUI()
     connect(m_powerBtn, &QPushButton::clicked, this, &MainWindow::onPowerBtnClicked);
     connect(m_resetAdamBtn, &QPushButton::clicked, this, &MainWindow::onResetAdamBtnClicked);
     connect(m_resetCartBtn, &QPushButton::clicked, this, &MainWindow::onResetCartBtnClicked);
+    connect(m_resetCartBtn, &QPushButton::pressed, this, [this]() {
+        if (m_machineType != MACHINE_ATARI2600 || !m_resetCartBtn)
+            return;
+
+        m_resetCartBtn->setChecked(true);
+        m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_on.png"));
+        if (m_colecoController) {
+            QMetaObject::invokeMethod(m_colecoController, "setAtari2600ResetSwitch",
+                                      Qt::QueuedConnection, Q_ARG(bool, true));
+        }
+    });
+    connect(m_resetCartBtn, &QPushButton::released, this, [this]() {
+        if (m_machineType != MACHINE_ATARI2600 || !m_resetCartBtn)
+            return;
+
+        // The real Atari RESET switch is momentary: release it immediately in
+        // the emulated console, but keep the button lit briefly so the user
+        // gets the same clear visual feedback as with ADAM Reset.
+        if (m_colecoController) {
+            QMetaObject::invokeMethod(m_colecoController, "setAtari2600ResetSwitch",
+                                      Qt::QueuedConnection, Q_ARG(bool, false));
+        }
+
+        QTimer::singleShot(250, this, [this]() {
+            if (!m_resetCartBtn || m_machineType != MACHINE_ATARI2600 ||
+                m_resetCartBtn->isDown())
+                return;
+
+            m_resetCartBtn->setChecked(false);
+            m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png"));
+        });
+    });
 
     onEmuPausedChanged(false);
 }
@@ -1031,6 +1891,7 @@ void MainWindow::onOpenSettings()
 
     PathBind paths[] = {
         { &SettingsWindow::setRomPath,         &SettingsWindow::romPath,         &m_romPath,         "roms" },
+        { &SettingsWindow::setAtariRomPath,    &SettingsWindow::atariRomPath,    &m_atariRomPath,    "aroms" },
         { &SettingsWindow::setDiskPath,        &SettingsWindow::diskPath,        &m_diskPath,        "disks" },
         { &SettingsWindow::setTapePath,        &SettingsWindow::tapePath,        &m_tapePath,        "tapes" },
         { &SettingsWindow::setStatePath,       &SettingsWindow::statePath,       &m_statePath,       "states" },
@@ -1067,6 +1928,9 @@ void MainWindow::onOpenSettings()
         const QString v = (m_settingsWindow->*(p.get))();
         *p.target = resolvePath(v, p.subdir);
     }
+
+    if (!m_atariRomPath.trimmed().isEmpty())
+        QDir().mkpath(m_atariRomPath);
 
     m_colecoBiosPath = m_settingsWindow->colecoBiosPath();
     m_eosBiosPath    = m_settingsWindow->eosBiosPath();
@@ -1131,6 +1995,7 @@ void MainWindow::loadSettings()
     // Geen settings.ini? Dan starten alle directories vanuit de app-folder:
     // <app>/media/...  en tools vanuit <app>/tools/...
     m_romPath         = resolvePath("romPath",         defaultRomPathForPlatform());
+    m_atariRomPath    = resolvePath("aromPath",        defaultAtariRomPathForPlatform());
     m_diskPath        = resolvePath("diskPath",        defaultDiskPathForPlatform());
     m_tapePath        = resolvePath("tapePath",        defaultTapePathForPlatform());
     m_statePath       = resolvePath("statePath",       defaultStatePathForPlatform());
@@ -1146,21 +2011,27 @@ void MainWindow::loadSettings()
     m_paletteIndex = settings.value("video/palette", 0).toInt();
 
     m_vdpType = settings.value("video/vdp", 0).toInt();
-    if (m_vdpType != 1)
+    if (m_vdpType < VDP_TMS || m_vdpType > VDP_PICO9918)
         m_vdpType = 0;
 
     m_f18a80SelfTest = settings.value("video/f18a80SelfTest", false).toBool();
-    if (m_vdpType != 1)
+    if (!vdpHasF18A(m_vdpType))
         m_f18a80SelfTest = false;
 
     coleco_set_vdp_type(m_vdpType);
     f18a_set_80col_selftest_enabled(m_f18a80SelfTest ? 1 : 0);
 
     qDebug() << "[VIDEO] Loaded VDP:"
-             << (m_vdpType == 1 ? "F18A" : "TMS9928A/TMS9918A")
+             << vdpTypeName(m_vdpType)
              << "value =" << m_vdpType;
 
     m_machineType = settings.value("machine/type", 0).toInt();
+    if (m_machineType < MACHINE_COLECO || m_machineType > MACHINE_ATARI2600)
+        m_machineType = MACHINE_COLECO;
+    m_atariColor = settings.value("Atari/Color", true).toBool();
+    m_atariLeftDifficultyA = settings.value("Atari/LeftDifficultyA", false).toBool();
+    m_atariRightDifficultyA = settings.value("Atari/RightDifficultyA", false).toBool();
+    m_atariPhosphorEffect = settings.value("Atari/PhosphorEffect", true).toBool();
     //m_machineType = 1; // always start in adam
 
     m_realhardware     = settings.value("machine/realhardware", false).toBool();
@@ -1182,10 +2053,13 @@ void MainWindow::loadSettings()
     // --- Controller ---
     m_joystickType    = settings.value("controller/joystickType", 0).toInt();
     m_usePaddleMode   = settings.value("controller/usePaddleMode", false).toBool();
+    m_useDrivingControllerMode = settings.value("controller/useDrivingControllerMode", false).toBool();
+    m_paddleDirectionUpDown = settings.value("controller/paddleDirectionUpDown", false).toBool();
 
     // Real hardware
     m_ctrlJoys    = settings.value("rhard/rJoys",    false).toBool();
     m_ctrlAdamNet      = settings.value("rhard/rAdamnet",      false).toBool();
+    m_fujiNetDirectRom = settings.value("rhard/fujiNetDirectRom", false).toBool();
     m_ctrlCartridge = settings.value("rhard/rCartridge", false).toBool();
 
     // --- BIOS ---
@@ -1241,7 +2115,7 @@ void MainWindow::loadSettings()
         qDebug() << "[SETTINGS] First run: writing default media/tools paths to" << iniPath;
 
         const QStringList defaultDirs = {
-            m_romPath, m_diskPath, m_tapePath, m_statePath,
+            m_romPath, m_atariRomPath, m_diskPath, m_tapePath, m_statePath,
             m_breakpointPath, m_screenshotsPath, m_symbolsPath,
             m_adamBezelPath, m_cvBezelPath,
             m_cvbasicSourcePath, m_cvbasicBuildPath,
@@ -1255,6 +2129,7 @@ void MainWindow::loadSettings()
         }
 
         settings.setValue("romPath",        m_romPath);
+        settings.setValue("aromPath",       m_atariRomPath);
         settings.setValue("diskPath",       m_diskPath);
         settings.setValue("tapePath",       m_tapePath);
         settings.setValue("statePath",      m_statePath);
@@ -1304,6 +2179,7 @@ void MainWindow::saveSettings()
 
     // Paths / media
     put("romPath",        m_romPath);
+    put("aromPath",       m_atariRomPath);
     put("diskPath",       m_diskPath);
     put("tapePath",       m_tapePath);
     put("statePath",      m_statePath);
@@ -1314,6 +2190,10 @@ void MainWindow::saveSettings()
     // Machine / UI
     put("machine/type",   m_machineType);
     put("machine/realhardware", m_realhardware);
+    put("Atari/Color", m_atariColor);
+    put("Atari/LeftDifficultyA", m_atariLeftDifficultyA);
+    put("Atari/RightDifficultyA", m_atariRightDifficultyA);
+    put("Atari/PhosphorEffect", m_atariPhosphorEffect);
     put("video/palette",  m_paletteIndex);
     put("video/vdp",      m_vdpType);
     put("video/f18a80SelfTest", m_f18a80SelfTest);
@@ -1328,10 +2208,13 @@ void MainWindow::saveSettings()
     // Controller
     put("controller/joystickType",   m_joystickType);
     put("controller/usePaddleMode",  m_usePaddleMode);
+    put("controller/useDrivingControllerMode", m_useDrivingControllerMode);
+    put("controller/paddleDirectionUpDown", m_paddleDirectionUpDown);
 
     // Real Hardware
     put("rhard/rJoys",       m_ctrlJoys);
     put("rhard/rAdamnet",         m_ctrlAdamNet);
+    put("rhard/fujiNetDirectRom", m_fujiNetDirectRom);
     put("rhard/rCartridge",    m_ctrlCartridge);
 
     // Video
@@ -1367,7 +2250,7 @@ void MainWindow::saveSettings()
 
     qDebug() << "[VIDEO] saveSettings BEFORE sync:"
              << "m_vdpType =" << m_vdpType
-             << (m_vdpType == 1 ? "F18A" : "TMS9928A/TMS9918A")
+             << vdpTypeName(m_vdpType)
              << "file =" << iniPath;
 
     settings.sync();
@@ -1469,7 +2352,7 @@ void MainWindow::onOpenHardware()
 {
     HardwareConfig cur;
 
-    cur.machine = (m_machineType ? MACHINE_ADAM : MACHINE_COLECO); // 1:0
+    cur.machine = static_cast<MachineType>(m_machineType);
     cur.realhardware = m_realhardware;
     cur.palette = m_paletteIndex;
     cur.vdpType = m_vdpType;
@@ -1480,6 +2363,7 @@ void MainWindow::onOpenHardware()
 
     cur.Joys = m_ctrlJoys;
     cur.AdamNet    = m_ctrlAdamNet;
+    cur.fujiNetDirectRom = m_fujiNetDirectRom;
     cur.Cartridge   = m_ctrlCartridge;
 
     const int prevPalette = m_paletteIndex;
@@ -1487,8 +2371,10 @@ void MainWindow::onOpenHardware()
     HardwareWindow dlg(cur, this);
 
     dlg.setLoadedMediaDisplayNames(
+        static_cast<MachineType>(m_machineType),
         m_currentRomName,         // CC (Coleco Cartridge)
         m_currentARomName,        // CA (ADAM Cartridge)
+        m_currentAtari2600RomName,// VCS (Atari 2600 Cartridge)
         m_loadedTapeNames[0],     // D1
         m_loadedTapeNames[1],     // D2
         m_loadedDiskNames[0],     // D5
@@ -1513,6 +2399,8 @@ void MainWindow::onOpenHardware()
         if (oldMachine != newMachine) {
             if (newMachine == MACHINE_ADAM) {
                 switchToAdamMode();
+            } else if (newMachine == MACHINE_ATARI2600) {
+                switchToAtari2600Mode();
             } else {
                 switchToColecoMode();
             }
@@ -1532,8 +2420,10 @@ void MainWindow::updateHardwareWindowMediaDisplay()
 {
     if (m_hardwareWindow) {
         m_hardwareWindow->setLoadedMediaDisplayNames(
+            static_cast<MachineType>(m_machineType),
             m_currentRomName,          // CC (Coleco Cartridge)
             m_currentARomName,         // CA (ADAM Cartridge)
+            m_currentAtari2600RomName, // VCS (Atari 2600 Cartridge)
             m_loadedTapeNames[0],      // D1
             m_loadedTapeNames[1],      // D2
             m_loadedDiskNames[0],      // D5
@@ -1557,10 +2447,34 @@ void MainWindow::onCartridgeStatusChanged(const QString& colecoName, const QStri
 {
     m_currentRomName = colecoName;  // Coleco Cartridge (CC)
     m_currentARomName = adamName;   // ADAM Cartridge (CA)
-    const QString display = (m_machineType == 1) ? m_currentARomName : m_currentRomName;
+    const QString display = (m_machineType == MACHINE_ATARI2600)
+                                ? m_currentAtari2600RomName
+                                : ((m_machineType == MACHINE_ADAM) ? m_currentARomName : m_currentRomName);
     updateRomLabelForStatusBar(statusBar(), m_sepLabel4, m_romLabel, display);
 
     updateHardwareWindowMediaDisplay();
+}
+
+void MainWindow::onAtari2600CartridgeStatusChanged(const QString& fileName)
+{
+    m_currentAtari2600RomName = fileName;
+    updateAtariStatusBar();
+}
+
+void MainWindow::updateAtariStatusBar()
+{
+    if (m_machineType != MACHINE_ATARI2600 || !m_romLabel)
+        return;
+
+    const QString cartName = m_currentAtari2600RomName.isEmpty()
+                                 ? QStringLiteral("No cart")
+                                 : m_currentAtari2600RomName;
+    const QString display = QStringLiteral("C/B=%1  DL=%2  DR=%3 | %4")
+                                .arg(m_atariColor ? QStringLiteral("C") : QStringLiteral("B"))
+                                .arg(m_atariLeftDifficultyA ? QStringLiteral("A") : QStringLiteral("B"))
+                                .arg(m_atariRightDifficultyA ? QStringLiteral("A") : QStringLiteral("B"))
+                                .arg(cartName);
+    updateRomLabelForStatusBar(statusBar(), m_sepLabel4, m_romLabel, display);
 }
 
 //---------------------------------------------------------------------------------------------
@@ -1605,7 +2519,8 @@ void MainWindow::showAboutDialog()
                            "Wavemotion-dave, for improving compatibility issues.<br>"
                            "Parts of EightyOne created by Michael D Wynne.<br>"
                            "Z80 core taken from Juergen Buchmueller.<br>"
-                           "AY8910 code from Z81 ©1995–2001 Russell Marks.<br><br>"
+                           "AY8910 code from Z81 ©1995–2001 Russell Marks.<br>"
+                           "PICO9918 integration by visrealm.<br><br>"
                            "And all the ones that were involved and that I forgot to mention.<br><br>"
                            ).arg(appVersion));
 
@@ -1711,6 +2626,32 @@ void MainWindow::onToggleVideoStandard()
     QMetaObject::invokeMethod(m_colecoController, "setVideoStandard",
                               Qt::QueuedConnection,
                               Q_ARG(bool, isNTSC));
+}
+
+void MainWindow::onResetGeometry()
+{
+    QScreen *primaryScreen = QGuiApplication::primaryScreen();
+    if (!primaryScreen)
+        return;
+
+    const QRect desktop = primaryScreen->availableGeometry();
+
+    // Verplaats uitsluitend vensters die momenteel geopend/zichtbaar zijn.
+    // Gesloten hulpmiddelen worden door RESET GEOMETRY niet geopend.
+    const QWidgetList windows = QApplication::topLevelWidgets();
+    for (QWidget *window : windows)
+    {
+        if (!window || !window->isWindow() || !window->isVisible())
+            continue;
+
+        const QRect frame = window->frameGeometry();
+        const QPoint centeredPosition(
+            desktop.center().x() - frame.width() / 2,
+            desktop.center().y() - frame.height() / 2
+            );
+
+        window->move(centeredPosition);
+    }
 }
 
 void MainWindow::onCycleScalingMode()
@@ -1865,6 +2806,7 @@ void MainWindow::setupEmulatorThread()
     }
 
     connect(m_emulatorThread, &QThread::started, m_colecoController, [this]() {
+        m_colecoController->setAtari2600Mode(m_machineType == MACHINE_ATARI2600);
         m_colecoController->startWithBios(m_colecoBiosPath, m_eosBiosPath, m_writerBiosPath);
     });
 
@@ -1878,7 +2820,7 @@ void MainWindow::setupEmulatorThread()
             m_colecoController, &QObject::deleteLater);
 
 
-    coleco_set_machine_type(m_machineType);
+    coleco_set_machine_type(m_machineType == MACHINE_ADAM ? MACHINE_ADAM : MACHINE_COLECO);
 
     m_emulatorThread->start();
 
@@ -1906,6 +2848,9 @@ void MainWindow::setupEmulatorThread()
             Qt::QueuedConnection);
     connect(m_colecoController, &ColecoController::cartridgeStatusChanged, // NIEUW
             this, &MainWindow::onCartridgeStatusChanged,
+            Qt::QueuedConnection);
+    connect(m_colecoController, &ColecoController::atari2600CartridgeStatusChanged,
+            this, &MainWindow::onAtari2600CartridgeStatusChanged,
             Qt::QueuedConnection);
 
     qDebug() << "[UI] --- EMULATOR RUNNING ---";
@@ -1935,6 +2880,12 @@ void MainWindow::setVideoStandard(const QString& standard)
     if (upper == "NTSC" || upper == "PAL") {
         m_currentStd = upper;
         m_stdLabel->setText(QString("%1").arg(m_currentStd));
+        // When the Atari core detects the cartridge region from its raster,
+        // keep the VIDEO menu in sync with the actual standard in use.
+        if(m_machineType==MACHINE_ATARI2600){
+            m_actToggleNTSC->setChecked(upper=="NTSC");
+            m_actTogglePAL->setChecked(upper=="PAL");
+        }
     } else {
         m_currentStd = "NTSC";
         m_stdLabel->setText("NTSC");
@@ -2120,6 +3071,74 @@ void MainWindow::onBiosCFramesDone()
     updateHardwareWindowMediaDisplay();
 }
 
+void MainWindow::onOpenAtari2600Rom()
+{
+    if (m_machineType != MACHINE_ATARI2600 || !m_colecoController)
+        return;
+
+    if (!m_atariRomPath.trimmed().isEmpty())
+        QDir().mkpath(m_atariRomPath);
+
+    const QString filePath = CustomFileDialog::getOpenFileName(
+        this,
+        tr("Open Atari 2600 Cartridge"),
+        QDir::cleanPath(m_atariRomPath),
+        tr("Atari 2600 ROM files (*.a26 *.bin *.rom);;All files (*.*)"),
+        nullptr,
+        CustomFileDialog::PathAtariRom,
+        QFileDialog::Options()
+        );
+
+    if (filePath.isEmpty())
+        return;
+
+    QFileInfo fi(filePath);
+    CustomFileDialog::s_lastOpenDir = fi.absolutePath();
+    m_currentAtari2600RomName = fi.fileName();
+
+    // Een cartridge wordt elektrisch met losgelaten joystickknoppen en
+    // momentary console-switches geplaatst. Wis ook de Qt-side status;
+    // anders kan een oude fire/start-toestand bij de eerstvolgende richting
+    // opnieuw naar de pas geresette Atari-core worden gestuurd.
+    if(m_inputWidget)
+        m_inputWidget->releaseAtari2600Controls();
+
+    // Stella's database identifies this class of dump as PAL.  For ROM sets
+    // that carry the standard region marker in their filename, select the
+    // matching Atari video standard before the cartridge starts.
+    const QString regionName = fi.completeBaseName().toUpper();
+    if (regionName.contains("(PAL)")) {
+        m_actTogglePAL->setChecked(true);
+        setVideoStandard("PAL");
+        QMetaObject::invokeMethod(m_colecoController, "setVideoStandard",
+                                  Qt::QueuedConnection, Q_ARG(bool, false));
+    } else if (regionName.contains("(NTSC)")) {
+        m_actToggleNTSC->setChecked(true);
+        setVideoStandard("NTSC");
+        QMetaObject::invokeMethod(m_colecoController, "setVideoStandard",
+                                  Qt::QueuedConnection, Q_ARG(bool, true));
+    }
+
+    QMetaObject::invokeMethod(
+        m_colecoController,
+        "loadAtari2600Rom",
+        Qt::QueuedConnection,
+        Q_ARG(QString, filePath)
+        );
+
+    updateAtariStatusBar();
+}
+
+void MainWindow::onEjectAtari2600Rom()
+{
+    if (!m_colecoController)
+        return;
+    QMetaObject::invokeMethod(m_colecoController, "ejectAtari2600Rom",
+                              Qt::QueuedConnection);
+    m_currentAtari2600RomName.clear();
+    updateAtariStatusBar();
+}
+
 void MainWindow::onOpenColecoRom()
 {
     if (m_machineType != 0)
@@ -2183,7 +3202,9 @@ void MainWindow::onEjectColecoRom()
                               Qt::QueuedConnection);
 
     m_isColecoRomLoaded = false;
-    m_currentARomName.clear();
+    m_currentRomName.clear();
+    m_pendingColecoBoot = false;
+    m_pendingColecoRomPath.clear();
     updateMediaMenuState();
     updateMediaStatusLabels();
 }
@@ -2270,6 +3291,8 @@ void MainWindow::onLoadDisk(int drive)
     //QDir appDir(QCoreApplication::applicationDirPath());
     CustomFileDialog::s_lastOpenDir = fileInfo.absolutePath();
 
+    m_hardwareDiskMedia[drive] = false;
+    mcu2_block_set_device_enabled(byte(0x04 + drive), false);
     m_loadedDiskNames[drive] = fileInfo.fileName();
 
     switch (drive) {
@@ -2321,6 +3344,10 @@ void MainWindow::onLoadTape(int drive)
     //QDir appDir(QCoreApplication::applicationDirPath());
     CustomFileDialog::s_lastOpenDir = fileInfo.absolutePath();
 
+    m_hardwareTapeMedia[drive] = false;
+    const byte tapeDeviceId = drive == 0 ? 0x08 : drive == 1 ? 0x18
+                              : drive == 2 ? 0x09 : 0x19;
+    mcu2_block_set_device_enabled(tapeDeviceId, false);
     m_loadedTapeNames[drive] = fileInfo.fileName();
 
     switch (drive) {
@@ -2350,12 +3377,177 @@ void MainWindow::onLoadTape(int drive)
     m_AdamTMedia_insert = true;
 }
 
+void MainWindow::onPrepareHardwareMedia()
+{
+    if (!m_ctrlAdamNet) {
+        QMessageBox::information(
+            this, tr("Manual MCU2 hardware media"),
+            tr("Select 'Disk 1 + FujiNet: MCU2 hardware' in Hardware first."));
+        return;
+    }
+
+    const QStringList targets = {
+        tr("Disk D5 (address 4)"), tr("Disk D6 (address 5)"),
+        tr("Disk D7 (address 6)"), tr("Disk D8 (address 7)"),
+        tr("Tape D1 (address 8, unit 0)"), tr("Tape D2 (address 8, unit 1)"),
+        tr("Tape D3 (address 9, unit 0)"), tr("Tape D4 (address 9, unit 1)"),
+        tr("Coleco cartridge ROM (manual file fallback)"),
+        tr("ADAM cartridge ROM (manual file fallback)")
+    };
+    bool accepted = false;
+    const QString target = QInputDialog::getItem(
+        this, tr("Manual MCU2 hardware media"),
+        tr("Manual fallback: which physical medium must be prepared?"),
+        targets, 0, false, &accepted);
+    if (!accepted)
+        return;
+    const int targetIndex = targets.indexOf(target);
+
+    /* A physical FujiNet ROM is not exposed as a 1 KiB block drive.  Until
+     * the gateway has a ROM download command, use the same proven cartridge
+     * loader with a local copy and keep the reset/keypad path identical. */
+    if (targetIndex == 8 || targetIndex == 9) {
+        const bool colecoRom = targetIndex == 8;
+        const QString filePath = CustomFileDialog::getOpenFileName(
+            this,
+            colecoRom ? tr("Select Coleco ROM") : tr("Select ADAM ROM"),
+            QDir::cleanPath(m_romPath),
+            tr("ROM files (*.rom *.bin *.col);;All files (*.*)"),
+            nullptr, CustomFileDialog::PathRom, QFileDialog::Options());
+        if (filePath.isEmpty())
+            return;
+        if (colecoRom) {
+            loadColecoRomFromPath(filePath, false);
+        } else {
+            if (m_machineType != MACHINE_ADAM) {
+                QMessageBox::information(this, tr("ADAM ROM"),
+                                         tr("Select ADAM mode before preparing an ADAM cartridge."));
+                return;
+            }
+            QFileInfo info(filePath);
+            m_currentARomName = info.fileName();
+            m_isAdamRomLoaded = true;
+            QMetaObject::invokeMethod(m_colecoController, "AdamCartridge",
+                                      Qt::QueuedConnection,
+                                      Q_ARG(QString, filePath));
+            if (m_resetAdamBlinkTimer && !m_resetAdamBlinkTimer->isActive())
+                m_resetAdamBlinkTimer->start(300);
+        }
+        return;
+    }
+
+    if (m_machineType != MACHINE_ADAM) {
+        QMessageBox::information(
+            this, tr("Hardware ADAM media"),
+            tr("Select ADAM mode first. Preparing media must not perform an early reset."));
+        return;
+    }
+
+    const bool tape = targetIndex >= 4;
+    const int logicalDrive = tape ? targetIndex - 4 : targetIndex;
+    const int address = tape ? (logicalDrive < 2 ? 8 : 9) : 4 + logicalDrive;
+    const int deviceNumber = tape ? (logicalDrive & 1) : 0;
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    QByteArray inspected;
+    QString inspectError;
+    for (quint32 block = 0; block < 3; ++block) {
+        const Mcu2Gateway::DcbResult result =
+            Mcu2Gateway::inspectBlock(address, deviceNumber, block);
+        if (!result.transportOk || result.masterResult != 0
+            || result.data.size() != 1024) {
+            inspectError = result.error.isEmpty()
+                ? tr("The physical drive did not return a complete block.")
+                : result.error;
+            break;
+        }
+        inspected.append(result.data);
+    }
+    QApplication::restoreOverrideCursor();
+
+    const HardwareMediaProfile detected = classifyHardwareHeader(inspected);
+    QStringList profiles = { tr("EOS"), tr("CP/M"), tr("T-DOS") };
+    int suggested = detected == HardwareCpm ? 1 : detected == HardwareTdos ? 2 : 0;
+    const QString prompt = inspected.isEmpty()
+        ? tr("Automatic inspection was unavailable:\n%1\n\nSelect the boot type manually.")
+              .arg(inspectError)
+        : detected == HardwareUnknown
+            ? tr("The header was not recognised with certainty. Select the boot type.")
+            : tr("Detected from the first blocks: %1\nConfirm or correct it.")
+                  .arg(hardwareProfileName(detected));
+    const QString selected = QInputDialog::getItem(
+        this, tr("Manual hardware boot type"), prompt,
+        profiles, suggested, false, &accepted);
+    if (!accepted)
+        return;
+    const int profile = profiles.indexOf(selected);
+
+    const QString defaultName = QStringLiteral("[HW] %1 (%2)")
+        .arg(tape ? QStringLiteral("D%1").arg(logicalDrive + 1)
+                  : QStringLiteral("D%1").arg(logicalDrive + 5),
+             selected);
+    const QString displayName = QInputDialog::getText(
+        this, tr("Hardware media name"),
+        tr("Name shown in the status bar:"),
+        QLineEdit::Normal, defaultName, &accepted).trimmed();
+    if (!accepted)
+        return;
+
+    /* Set the OS router before Reset ADAM.  The software load routines are
+     * deliberately not called: the bytes remain owned by physical FujiNet. */
+    QMetaObject::invokeMethod(
+        m_colecoController, "prepareHardwareBootProfile",
+        Qt::QueuedConnection, Q_ARG(int, profile));
+    m_cpm_status = profile != HardwareEos;
+
+    if (tape) {
+        const byte deviceId = logicalDrive == 0 ? 0x08 : logicalDrive == 1 ? 0x18
+                            : logicalDrive == 2 ? 0x09 : 0x19;
+        mcu2_block_set_device_enabled(deviceId, true);
+        m_hardwareTapeMedia[logicalDrive] = true;
+        m_loadedTapeNames[logicalDrive] = displayName.isEmpty() ? defaultName : displayName;
+        m_AdamTMedia_insert = true;
+        onTapeStatusChanged(logicalDrive, m_loadedTapeNames[logicalDrive]);
+    } else {
+        mcu2_block_set_device_enabled(byte(0x04 + logicalDrive), true);
+        m_hardwareDiskMedia[logicalDrive] = true;
+        m_loadedDiskNames[logicalDrive] = displayName.isEmpty() ? defaultName : displayName;
+        m_AdamDMedia_insert = true;
+        onDiskStatusChanged(logicalDrive, m_loadedDiskNames[logicalDrive]);
+    }
+
+    if (m_inputWidget)
+        m_inputWidget->setAdamGameMode(false);
+    if (m_actAdamGameOff)
+        m_actAdamGameOff->setChecked(true);
+    adamnet_set_game_mode(false);
+
+    m_resetAdamLocked = true;
+    if (m_resetAdamBlinkTimer && !m_resetAdamBlinkTimer->isActive()) {
+        onToggleResetAdamBlink();
+        m_resetAdamBlinkTimer->start(300);
+    }
+    updateMediaMenuState();
+    updateMediaStatusLabels();
+    updateHardwareWindowMediaDisplay();
+
+    QMessageBox::information(
+        this, tr("Hardware media prepared"),
+        tr("%1 is prepared as %2. Press Reset ADAM to boot it.")
+            .arg(displayName.isEmpty() ? defaultName : displayName, selected));
+}
+
 void MainWindow::onEjectDisk(int drive)
 {
     qDebug() << "[UI] Eject/Save Disk " << drive + 5;
+    /* Always clear the software core as well. This is harmless for a purely
+     * physical drive and prevents a stale software image from surviving when
+     * the hardware flag changed since it was mounted. */
     QMetaObject::invokeMethod(m_colecoController, "ejectDisk",
                               Qt::QueuedConnection,
-                              Q_ARG(int, drive)); // Drive 0
+                              Q_ARG(int, drive));
+    m_hardwareDiskMedia[drive] = false;
+    mcu2_block_set_device_enabled(byte(0x04 + drive), false);
 
     m_loadedDiskNames[drive].clear();
 
@@ -2365,6 +3557,10 @@ void MainWindow::onEjectDisk(int drive)
     case 2: m_isDiskLoadedC = false; break;
     case 3: m_isDiskLoadedD = false; break;
     }
+
+    QMenu* diskMenus[] = { m_diskMenuA, m_diskMenuB, m_diskMenuC, m_diskMenuD };
+    if (diskMenus[drive])
+        diskMenus[drive]->setIcon(QIcon());
 
     m_AdamDMedia_insert =
         !m_loadedDiskNames[0].isEmpty() ||
@@ -2383,7 +3579,11 @@ void MainWindow::onEjectTape(int drive)
     qDebug() << "[UI] Eject/Save Tape " << drive;
     QMetaObject::invokeMethod(m_colecoController, "ejectTape",
                               Qt::QueuedConnection,
-                              Q_ARG(int, drive)); // Drive 0
+                              Q_ARG(int, drive));
+    m_hardwareTapeMedia[drive] = false;
+    const byte tapeDeviceId = drive == 0 ? 0x08 : drive == 1 ? 0x18
+                              : drive == 2 ? 0x09 : 0x19;
+    mcu2_block_set_device_enabled(tapeDeviceId, false);
 
     m_loadedTapeNames[drive].clear();
 
@@ -2393,6 +3593,10 @@ void MainWindow::onEjectTape(int drive)
     case 2: m_isTapeLoadedC = false; break;
     case 3: m_isTapeLoadedD = false; break;
     }
+
+    QMenu* tapeMenus[] = { m_tapeMenuA, m_tapeMenuB, m_tapeMenuC, m_tapeMenuD };
+    if (tapeMenus[drive])
+        tapeMenus[drive]->setIcon(QIcon());
 
     m_AdamTMedia_insert =
         !m_loadedTapeNames[0].isEmpty() ||
@@ -2497,6 +3701,7 @@ void MainWindow::onTapeStatusChanged(int drive, const QString& fileName)
 void MainWindow::updateMediaStatusLabels()
 {
     const bool isAdam = (m_machineType == MACHINE_ADAM);
+    const bool isAtari2600 = (m_machineType == MACHINE_ATARI2600);
 
     const bool showDisk = isAdam;
     const bool showTape = isAdam;
@@ -2521,13 +3726,18 @@ void MainWindow::updateMediaStatusLabels()
     for (QLabel* w : diskWidgets)
         if (w) w->setVisible(showDisk);
 
-    const QString display = isAdam ? m_currentARomName : m_currentRomName;
-    updateRomLabelForStatusBar(statusBar(), m_sepLabel4, m_romLabel, display);
+    if (isAtari2600) {
+        updateAtariStatusBar();
+    } else {
+        const QString display = isAdam ? m_currentARomName : m_currentRomName;
+        updateRomLabelForStatusBar(statusBar(), m_sepLabel4, m_romLabel, display);
+    }
 }
 
 void MainWindow::updateMediaMenuState()
 {
     const bool isAdam = (m_machineType == MACHINE_ADAM);
+    const bool isAtari2600 = (m_machineType == MACHINE_ATARI2600);
 
     auto setEnabledIf = [](QWidget* w, bool en) {
         if (w) w->setEnabled(en);
@@ -2538,7 +3748,8 @@ void MainWindow::updateMediaMenuState()
 
     // ROM menus: Coleco vs ADAM
     setActionEnabledIf(m_openAdamRomAction,   isAdam);
-    setActionEnabledIf(m_openColecoRomAction, !isAdam);
+    setActionEnabledIf(m_openColecoRomAction, !isAdam && !isAtari2600);
+    setActionEnabledIf(m_openAtari2600RomAction, isAtari2600);
 
     // Als geen ADAM: alles media uit en klaar
     if (!isAdam) {
@@ -2713,6 +3924,21 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
 
+    if (m_windowBorderOverlay) {
+        m_windowBorderOverlay->setGeometry(rect());
+        m_windowBorderOverlay->raise();
+    }
+
+    // Frameless windows do not receive Windows' automatic rounded corners.
+    // Clip the normal window to a rounded shape, but keep maximized mode square.
+    if (isMaximized() || isFullScreen()) {
+        clearMask();
+    } else {
+        QPainterPath windowShape;
+        windowShape.addRoundedRect(QRectF(rect()), 10.0, 10.0);
+        setMask(QRegion(windowShape.toFillPolygon().toPolygon()));
+    }
+
     if (!m_screenWidget || m_screenWidget->height() == 0) return;
     int currentHeight = m_screenWidget->height();
     int gameScreenWidth = (currentHeight * 256) / 192;
@@ -2750,8 +3976,12 @@ void MainWindow::resizeEvent(QResizeEvent *event)
         18           // vaste hoogte
         );
 
-    const QString display = (m_machineType == MACHINE_ADAM) ? m_currentARomName : m_currentRomName;
-    updateRomLabelForStatusBar(statusBar(), m_sepLabel4, m_romLabel, display);
+    if (m_machineType == MACHINE_ATARI2600) {
+        updateAtariStatusBar();
+    } else {
+        const QString display = (m_machineType == MACHINE_ADAM) ? m_currentARomName : m_currentRomName;
+        updateRomLabelForStatusBar(statusBar(), m_sepLabel4, m_romLabel, display);
+    }
 
 }
 
@@ -2934,6 +4164,12 @@ void MainWindow::onJoystickTypeChanged(QAction* action)
 void MainWindow::onTogglePaddleMode(bool checked)
 {
     m_usePaddleMode = checked;
+    if (checked && m_actToggleDrivingControllerMode
+            && m_actToggleDrivingControllerMode->isChecked()) {
+        m_actToggleDrivingControllerMode->setChecked(false);
+    }
+    if (m_actPaddleDirectionUpDown)
+        m_actPaddleDirectionUpDown->setEnabled(checked);
     qDebug() << "[UI] Paddle Mode set to" << (checked ? "ON" : "OFF");
 
     // Sla de status op (toe te voegen in save/loadSettings later)
@@ -2948,9 +4184,31 @@ void MainWindow::onTogglePaddleMode(bool checked)
     // Stuur de status naar de InputWidget voor lokale filtering
     if (m_inputWidget) {
         m_inputWidget->setPaddleMode(checked);
+        m_inputWidget->setPaddleVertical(m_paddleDirectionUpDown);
     }
 
     // (Optioneel: Herstart de polling als de setJoystickType dit nodig heeft)
+}
+
+void MainWindow::onToggleDrivingControllerMode(bool checked)
+{
+    m_useDrivingControllerMode = checked;
+
+    if (checked && m_actTogglePaddleMode && m_actTogglePaddleMode->isChecked()) {
+        m_actTogglePaddleMode->setChecked(false);
+    }
+
+    qDebug() << "[UI] Driving Controller Mode set to"
+             << (checked ? "ON" : "OFF");
+
+    QSettings settings;
+    settings.setValue("controller/useDrivingControllerMode", checked);
+
+    extern volatile uint8_t ib_paddle_mode;
+    ib_paddle_mode = m_usePaddleMode ? 1 : 0;
+
+    if (m_inputWidget)
+        m_inputWidget->setDrivingControllerMode(checked);
 }
 
 void MainWindow::onToggleKeyboard(bool on)
@@ -3135,6 +4393,13 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
 
 void MainWindow::powerOff()
 {
+    /* Capture the user-visible source machine before this routine clears the
+     * cartridge/status state.  The C core's currentMachineType can already
+     * say ADAM during startup/config synchronisation while the active session
+     * and UI are still Coleco, which incorrectly selected a warm BIOS reset. */
+    const bool forceAdamCoreBeforeMenu =
+        m_ctrlAdamNet && m_machineType != MACHINE_ADAM;
+
     m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
     m_resetCartBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_cartridge_off.png"));
     loadExternalBiosRoms();
@@ -3155,11 +4420,13 @@ void MainWindow::powerOff()
     // BUTTON POWER OFF
     qDebug() << "[UI] Button pressed do power off emulator.";
     QMetaObject::invokeMethod(m_colecoController, "powerOffMachine",
-                             Qt::QueuedConnection);
+                             Qt::QueuedConnection,
+                             Q_ARG(bool, m_ctrlAdamNet),
+                             Q_ARG(bool, forceAdamCoreBeforeMenu));
 
 
-    m_resetAdamLocked  = false;
-    m_AdamDMedia_insert = false;
+    m_resetAdamLocked  = m_ctrlAdamNet;
+    m_AdamDMedia_insert = m_ctrlAdamNet;
     m_AdamTMedia_insert = false;
     forceStatusBarMediaFlags();
     m_ColecoMedia_insert = false;
@@ -3171,6 +4438,9 @@ void MainWindow::onResetAdamBtnClicked()
 {
     if (!m_resetAdamBtn)
         return;
+
+    if (m_ctrlAdamNet)
+        mcu2_arm_fuji_reset_boot_probe();
 
     // Als er nog een pending Coleco cartridge klaarstond, annuleren.
     m_pendingColecoBoot = false;
@@ -3207,7 +4477,8 @@ void MainWindow::onResetAdamBtnClicked()
     m_resetAdamBtn->setIcon(QIcon(":/images/images/adamp_logo_reset_adam_off.png"));
 
     // Als er ADAM media aanwezig is, ADAM reset lock actief zetten.
-    if (m_AdamDMedia_insert || m_AdamTMedia_insert || !m_currentARomName.isEmpty())
+    if (m_AdamDMedia_insert || m_AdamTMedia_insert
+        || !m_currentARomName.isEmpty() || m_ctrlAdamNet)
         m_resetAdamLocked = true;
 
     // Naar ADAM mode.
@@ -3231,7 +4502,7 @@ void MainWindow::onResetAdamBtnClicked()
     // Tapes D1-D4 opnieuw koppelen.
     for (int drive = 0; drive < 4; ++drive)
     {
-        if (!m_loadedTapeNames[drive].isEmpty())
+        if (!m_loadedTapeNames[drive].isEmpty() && !m_hardwareTapeMedia[drive])
         {
             QString absolutePath = QDir::cleanPath(
                 CustomFileDialog::s_lastOpenDir + QDir::separator() + m_loadedTapeNames[drive]
@@ -3252,7 +4523,7 @@ void MainWindow::onResetAdamBtnClicked()
     // Disks D5-D8 opnieuw koppelen.
     for (int drive = 0; drive < 4; ++drive)
     {
-        if (!m_loadedDiskNames[drive].isEmpty())
+        if (!m_loadedDiskNames[drive].isEmpty() && !m_hardwareDiskMedia[drive])
         {
             QString absolutePath = QDir::cleanPath(
                 CustomFileDialog::s_lastOpenDir + QDir::separator() + m_loadedDiskNames[drive]
@@ -3313,6 +4584,12 @@ void MainWindow::onResetCartBtnClicked()
 {
     if (!m_resetCartBtn)
         return;
+
+    if (m_machineType == MACHINE_ATARI2600) {
+        // Atari RESET is a momentary console switch.  The pressed/released
+        // handlers above operate it; clicking must not cold-reset the core.
+        return;
+    }
 
     if (m_resetAdamLocked)
     {
@@ -3451,7 +4728,26 @@ void MainWindow::stopResetCartBlinkAndSetFinalIcon()
 
 void MainWindow::switchToAdamMode()
 {
+    if (m_toolsMenu) m_toolsMenu->menuAction()->setVisible(true);
+    if (m_atariInputsMenu) m_atariInputsMenu->menuAction()->setVisible(false);
     if (!m_colecoController) return;
+
+    const bool changingMachine = (m_machineType != MACHINE_ADAM);
+    if (changingMachine) {
+        // A real machine change releases both reset buttons and all media.
+        // A normal Reset ADAM never enters this block and keeps its media.
+        releaseAllMedia(false);
+    }
+
+    /* switchToColecoMode()/Release All disconnects logical D5.  Re-arm the
+     * physical FujiNet drive whenever ADAMNet is selected again, otherwise
+     * CONFIG appears but a newly selected image cannot be read until the
+     * whole application is restarted. */
+    if (m_ctrlAdamNet) {
+        mcu2_disk_set_enabled(true);
+        mcu2_block_set_device_enabled(0x04, true);
+        qDebug() << "[UI][BOOT] ADAM mode re-armed physical FujiNet D5";
+    }
 
 
     coleco_hide_current_vdp_sprites();
@@ -3476,6 +4772,7 @@ void MainWindow::switchToAdamMode()
     newCfg.c80Enabled = m_c80Enabled;
     newCfg.Joys = m_ctrlJoys;
     newCfg.AdamNet = m_ctrlAdamNet;
+    newCfg.fujiNetDirectRom = m_fujiNetDirectRom;
     newCfg.Cartridge = m_ctrlCartridge;
 
    applyHardwareConfig(newCfg);
@@ -3486,7 +4783,8 @@ void MainWindow::switchToAdamMode()
     const bool hasAdamMedia =
         m_AdamDMedia_insert ||
         m_AdamTMedia_insert ||
-        !m_currentARomName.isEmpty();
+        !m_currentARomName.isEmpty() ||
+        m_ctrlAdamNet;
 
     if (emutype == false  && !hasAdamMedia)  {
        //powerOff();
@@ -3510,11 +4808,18 @@ void MainWindow::switchToAdamMode()
 
 void MainWindow::switchToColecoMode()
 {
+    if (m_toolsMenu) m_toolsMenu->menuAction()->setVisible(true);
+    if (m_atariInputsMenu) m_atariInputsMenu->menuAction()->setVisible(false);
     if (!m_colecoController) return;
 
+    const bool changingMachine = (m_machineType != MACHINE_COLECO);
     emutype=false;
 
-    onReleaseAll();
+    if (changingMachine) {
+        // Only an actual ADAM/Atari -> Coleco transition releases media.
+        // Reset Coleco stays in the same machine and must keep its ROM/icon.
+        releaseAllMedia(false);
+    }
 
     if (m_c80Enabled) m_c80Enabled = false;
 
@@ -3528,6 +4833,7 @@ void MainWindow::switchToColecoMode()
     newCfg.c80Enabled = m_c80Enabled;
     newCfg.Joys = m_ctrlJoys;
     newCfg.AdamNet = m_ctrlAdamNet;
+    newCfg.fujiNetDirectRom = m_fujiNetDirectRom;
     newCfg.Cartridge = m_ctrlCartridge;
     applyHardwareConfig(newCfg);
 
@@ -3548,17 +4854,50 @@ void MainWindow::switchToColecoMode()
     updateMediaStatusLabels();
 }
 
+void MainWindow::switchToAtari2600Mode()
+{
+    if (!m_colecoController)
+        return;
+
+    onReleaseAll();
+    emutype = false;
+    m_machineType = MACHINE_ATARI2600;
+    m_sgmEnabled = false;
+    m_c80Enabled = false;
+    if (m_toolsMenu) m_toolsMenu->menuAction()->setVisible(false);
+    if (m_atariInputsMenu) m_atariInputsMenu->menuAction()->setVisible(true);
+
+    if (m_screenWidget)
+        m_screenWidget->set80ColumnMode(false);
+    if (m_inputWidget) {
+        m_inputWidget->setMachineType(MACHINE_ATARI2600);
+        m_inputWidget->setAdamGameMode(false);
+    }
+
+    QMetaObject::invokeMethod(
+        m_colecoController,
+        "setAtari2600Mode",
+        Qt::QueuedConnection,
+        Q_ARG(bool, true)
+        );
+
+    updateMediaMenuState();
+    updateMediaStatusLabels();
+    updateFullScreenWallpaper();
+}
+
 void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
 {
 
-    m_vdpType = (cfg.vdpType == 1) ? 1 : 0;
-    m_f18a80SelfTest = (m_vdpType == 1) ? cfg.f18a80SelfTest : false;
+    m_vdpType = (cfg.vdpType >= VDP_TMS && cfg.vdpType <= VDP_PICO9918)
+                    ? cfg.vdpType : VDP_TMS;
+    m_f18a80SelfTest = vdpHasF18A(m_vdpType) ? cfg.f18a80SelfTest : false;
 
     coleco_set_vdp_type(m_vdpType);
     f18a_set_80col_selftest_enabled(m_f18a80SelfTest ? 1 : 0);
 
     qDebug() << "[VIDEO] Selected VDP:"
-             << (m_vdpType == 1 ? "F18A" : "TMS9928A/TMS9918A")
+             << vdpTypeName(m_vdpType)
              << "80col self-test=" << m_f18a80SelfTest;
 
     // C80 eerst toepassen, vóór resetAdam/resetColeco.
@@ -3569,11 +4908,29 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
         m_screenWidget->set80ColumnMode(cfg.c80Enabled);
     }
 
+    if (cfg.machine == MACHINE_ATARI2600)
+    {
+        QMetaObject::invokeMethod(
+            m_colecoController, "setAtari2600Mode",
+            Qt::QueuedConnection, Q_ARG(bool, true)
+            );
+    }
+    else
+    {
+        QMetaObject::invokeMethod(
+            m_colecoController, "setAtari2600Mode",
+            Qt::QueuedConnection, Q_ARG(bool, false)
+            );
+    }
+
     if  (cfg.machine == MACHINE_ADAM)
     {
+            const bool forceAdamCoreBeforeMenu =
+                m_machineType != MACHINE_ADAM;
             QMetaObject::invokeMethod(
                 m_colecoController, "resetAdam",
-                Qt::QueuedConnection
+                Qt::QueuedConnection,
+                Q_ARG(bool, forceAdamCoreBeforeMenu)
                 );
    }
     if  (cfg.machine == MACHINE_COLECO)
@@ -3587,6 +4944,14 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
 
     m_machineType = cfg.machine;
     m_realhardware = cfg.realhardware;
+
+    // applyHardwareConfig() wordt ook rechtstreeks tijdens startup gebruikt.
+    // Daardoor loopt een opgeslagen Atari-keuze niet via switchToAtari2600Mode().
+    // Houd de menuzichtbaarheid daarom centraal gelijk aan de actieve machine.
+    if (m_toolsMenu)
+        m_toolsMenu->menuAction()->setVisible(m_machineType != MACHINE_ATARI2600);
+    if (m_atariInputsMenu)
+        m_atariInputsMenu->menuAction()->setVisible(m_machineType == MACHINE_ATARI2600);
 
     if (m_paletteIndex != cfg.palette) {
         m_paletteIndex = cfg.palette;
@@ -3613,9 +4978,18 @@ void MainWindow::applyHardwareConfig(const HardwareConfig& cfg)
 
     m_ctrlJoys    = cfg.Joys;
     m_ctrlAdamNet      = cfg.AdamNet;
+    m_fujiNetDirectRom = cfg.fujiNetDirectRom;
+    mcu2_disk_set_enabled(cfg.machine == MACHINE_ADAM && m_ctrlAdamNet);
+    mcu2_set_fuji_direct_rom_enabled(
+        cfg.machine == MACHINE_ADAM && m_ctrlAdamNet && m_fujiNetDirectRom);
     m_ctrlCartridge = cfg.Cartridge;
 
-    if (m_sysLabel) m_sysLabel->setText(cfg.machine == MACHINE_COLECO ? "COLECO" : "ADAM");
+    if (m_sysLabel) {
+        if (cfg.machine == MACHINE_ATARI2600)
+            m_sysLabel->setText("ATARI 2600");
+        else
+            m_sysLabel->setText(cfg.machine == MACHINE_COLECO ? "COLECO" : "ADAM");
+    }
 
     bool isAdam = (cfg.machine == MACHINE_ADAM);
     if (m_adamInputMenu) m_adamInputMenu->setEnabled(isAdam);
@@ -3671,12 +5045,24 @@ void MainWindow::onPowerBtnClicked()
         }
     });
 
-    onReleaseAll();
+    // Power Off is always a real cold power cycle. In Coleco mode this first
+    // ejects and erases the cartridge; only Reset Coleco keeps/restarts it.
+    releaseAllMedia(true);
+    if (m_ctrlAdamNet)
+        mcu2_arm_fuji_reset_boot_probe();
     powerOff();
 }
 
 void MainWindow::onReleaseAll()
 {
+    releaseAllMedia(false);
+}
+
+void MainWindow::releaseAllMedia(bool preservePhysicalFujiD5)
+{
+    // Atari 2600 Cartridge
+    onEjectAtari2600Rom();
+
     // Coleco Cartridge
     onEjectColecoRom();
 
@@ -3701,7 +5087,19 @@ void MainWindow::onReleaseAll()
 
     // Disks (D5-D8)
     for (int drive = 0; drive < 4; ++drive) {
-        onEjectDisk(drive);
+        if (drive == 0 && preservePhysicalFujiD5 && m_ctrlAdamNet) {
+            /* D5 is a physical FujiNet device, not an in-memory image. Keep
+             * it connected across the emulated power cycle so the ADAM BIOS
+             * can boot FujiNet's start disk or its retained mounted medium. */
+            m_hardwareDiskMedia[0] = true;
+            mcu2_block_set_device_enabled(0x04, true);
+            if (m_loadedDiskNames[0].isEmpty())
+                m_loadedDiskNames[0] = QStringLiteral("[HW] FujiNet D5");
+            m_AdamDMedia_insert = true;
+            qDebug() << "[UI][BOOT] preserving physical FujiNet D5 across power-off";
+        } else {
+            onEjectDisk(drive);
+        }
     }
 
     updateMediaMenuState();
@@ -3766,7 +5164,7 @@ void MainWindow::mountAdamStartupImageIfNeeded()
 
     // Niet over bestaande ADAM media heen gaan. Writer blijft dan netjes Writer,
     // en geladen D1/D5 media blijven de baas. Geen ADAM-chaos-lasagne.
-    if (m_AdamTMedia_insert || m_AdamDMedia_insert ||
+    if (m_ctrlAdamNet || m_AdamTMedia_insert || m_AdamDMedia_insert ||
         !m_loadedTapeNames[0].isEmpty() || !m_loadedDiskNames[0].isEmpty())
         return;
 
@@ -4126,6 +5524,7 @@ void MainWindow::onShowCvBasicEditor()
         m_cvbasicBuildPath,
         m_cvbasicSourcePath
     );
+    m_cvBasicEditor->setDarkTheme(m_darkTheme);
 
     m_cvBasicEditor->show();
     m_cvBasicEditor->raise();
@@ -4137,10 +5536,27 @@ void MainWindow::loadColecoRomFromPath(const QString& filePath, bool autoRun)
     if (filePath.isEmpty())
         return;
 
-    if (m_machineType != 0)
+    if (m_machineType != 0) {
+        /* Reproduce the proven manual sequence exactly.  Switching ADAM to
+         * Coleco queues a hard core initialisation; arming/loading the ROM in
+         * the same GUI turn races that initialisation and leaves a black
+         * screen.  Finish the machine switch first, then perform the normal
+         * media-map cartridge flow in a fresh turn. */
         switchToColecoMode();
+        qDebug() << "[UI][BOOT] waiting for real Coleco mode before arming ROM:"
+                 << filePath;
+        QTimer::singleShot(750, this, [this, filePath, autoRun]() {
+            loadColecoRomFromPath(filePath, autoRun);
+        });
+        return;
+    }
 
     QFileInfo fi(filePath);
+
+    /* Reset Cartridge historically reconstructs the active ROM path from
+     * s_lastOpenDir + m_currentRomName.  A generated FujiNet ROM did not pass
+     * through the file dialog, so retain its actual directory explicitly. */
+    CustomFileDialog::s_lastOpenDir = fi.absolutePath();
 
     m_pendingColecoRomPath = filePath;
     m_pendingColecoBoot = true;

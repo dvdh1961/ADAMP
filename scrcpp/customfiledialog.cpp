@@ -3,6 +3,7 @@
 #include <QHBoxLayout>
 #include <QGridLayout>
 #include <QTreeView>
+#include <QItemSelectionModel>
 #include <QLineEdit>
 #include <QComboBox>
 #include <QPushButton>
@@ -21,6 +22,9 @@
 #include <QUrl>
 #include <QDateTime>
 #include <QFile>
+#include <QShowEvent>
+#include <QScrollBar>
+#include <QPersistentModelIndex>
 
 QString CustomFileDialog::s_lastOpenDir;
 QString CustomFileDialog::s_lastSaveDir;
@@ -37,6 +41,10 @@ CustomFileDialog::CustomFileDialog(QWidget *parent)
 
     m_treeView = new QTreeView(this);
     m_treeView->setModel(m_model);
+    // Pixel scrolling allows PositionAtCenter to place a row at the actual
+    // viewport centre.  The default item scrolling can only align whole rows
+    // and was also prone to losing the requested position after sorting.
+    m_treeView->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
 
     // Hide the Size, Type, and Date columns
     //m_treeView->hideColumn(1); // Hides Size
@@ -49,7 +57,10 @@ CustomFileDialog::CustomFileDialog(QWidget *parent)
     m_treeView->setDragDropOverwriteMode(false);
 
     m_treeView->viewport()->setAcceptDrops(true);
-    m_treeView->setDragEnabled(true);
+    // Accept files dragged in from Explorer, but never start an internal drag
+    // from the file list itself.  Internal dragging made it possible to move
+    // or copy the previously selected disk while navigating folders.
+    m_treeView->setDragEnabled(false);
     m_treeView->setDropIndicatorShown(true);
     m_treeView->setDragDropMode(QAbstractItemView::DragDrop);
     m_treeView->viewport()->installEventFilter(this);
@@ -120,6 +131,18 @@ CustomFileDialog::CustomFileDialog(QWidget *parent)
     connect(m_upButton, &QPushButton::clicked, this, &CustomFileDialog::onUpButtonClicked);
     connect(m_createDirButton, &QPushButton::clicked, this, &CustomFileDialog::onCreateDirClicked);
     connect(m_deleteDirButton, &QPushButton::clicked, this, &CustomFileDialog::onDeleteDirClicked);
+    connect(m_model, &QFileSystemModel::directoryLoaded, this, [this](const QString &path) {
+        if (QDir::cleanPath(path) == QDir::cleanPath(m_pathEdit->text())) {
+            QTimer::singleShot(0,this,[this](){
+                restoreLastSelection();
+                if(isVisible()&&!m_restoreFilePath.isEmpty())m_treeView->setFocus(Qt::OtherFocusReason);
+            });
+        }
+    });
+    connect(m_model, &QAbstractItemModel::layoutChanged, this, [this](){
+        if(isVisible()&&!m_restoreFilePath.isEmpty())
+            QTimer::singleShot(0,this,&CustomFileDialog::centerRestoredSelection);
+    });
 
     setFixedSize(700, 510);
 }
@@ -151,10 +174,14 @@ void CustomFileDialog::onTreeViewDoubleClicked(const QModelIndex &index) {
         QTimer::singleShot(0, this, [this, path]() {
             QModelIndex newRoot = m_model->index(path);
             if (newRoot.isValid()) {
+                m_restoreFilePath.clear();
+                m_fileNameEdit->clear();
                 m_treeView->setRootIndex(newRoot);
                 m_pathEdit->setText(path);
+                saveCurrentDirectory();
                 updateFileSystemFilter(path);
                 m_treeView->doItemsLayout();
+                m_treeView->scrollToTop();
             }
         });
     } else {
@@ -172,10 +199,14 @@ void CustomFileDialog::onUpButtonClicked() {
     if (dir.cdUp()) {
         QString path = dir.absolutePath();
         QTimer::singleShot(0, this, [this, path]() {
+            m_restoreFilePath.clear();
+            m_fileNameEdit->clear();
             m_treeView->setRootIndex(m_model->index(path));
             m_pathEdit->setText(path);
+            saveCurrentDirectory();
             updateFileSystemFilter(path);
             m_treeView->doItemsLayout();
+            m_treeView->scrollToTop();
         });
     }
 }
@@ -199,15 +230,81 @@ void CustomFileDialog::loadLastVisitedPath(const QString &initialDir, AcceptMode
                        : settings.value(key, m_limitPath).toString();
     if (!QDir(path).exists()) path = m_limitPath;
 
+    m_restoreFilePath=settings.value(selectionKeyFromPathType(m_pathType,mode)).toString();
+    if(QFileInfo(m_restoreFilePath).absolutePath()!=QFileInfo(path).absoluteFilePath())
+        m_restoreFilePath.clear();
+
     m_treeView->setRootIndex(m_model->index(path));
     m_pathEdit->setText(path);
     updateFileSystemFilter(path);
+    QTimer::singleShot(0,this,&CustomFileDialog::restoreLastSelection);
 }
 
 void CustomFileDialog::saveLastVisitedPath() {
     QSettings settings(QCoreApplication::applicationDirPath() + "/settings.ini", QSettings::IniFormat);
     QString key = keyFromPathType(m_pathType, m_acceptMode);
     settings.setValue(key, m_pathEdit->text());
+    if(!m_fileNameEdit->text().isEmpty())
+        settings.setValue(selectionKeyFromPathType(m_pathType,m_acceptMode),selectedFile());
+}
+
+void CustomFileDialog::saveCurrentDirectory()
+{
+    QSettings settings(QCoreApplication::applicationDirPath() + "/settings.ini", QSettings::IniFormat);
+    settings.setValue(keyFromPathType(m_pathType,m_acceptMode),m_pathEdit->text());
+}
+
+void CustomFileDialog::restoreLastSelection()
+{
+    if(m_restoreFilePath.isEmpty()||!QFileInfo::exists(m_restoreFilePath))return;
+    const QModelIndex index=m_model->index(m_restoreFilePath);
+    if(!index.isValid())return;
+    m_treeView->selectionModel()->setCurrentIndex(index,QItemSelectionModel::ClearAndSelect|QItemSelectionModel::Rows);
+    m_treeView->selectionModel()->select(index,QItemSelectionModel::ClearAndSelect|QItemSelectionModel::Rows);
+    m_fileNameEdit->setText(QFileInfo(m_restoreFilePath).fileName());
+    m_treeView->doItemsLayout();
+    centerRestoredSelection();
+}
+
+void CustomFileDialog::centerRestoredSelection()
+{
+    if(m_restoreFilePath.isEmpty())return;
+    const QPersistentModelIndex index(m_model->index(m_restoreFilePath));
+    if(!index.isValid())return;
+
+    m_treeView->scrollTo(index,QAbstractItemView::EnsureVisible);
+    // First make the row visible, then measure where Qt really placed it.
+    // With ScrollPerPixel the measured offset can be applied directly to the
+    // scrollbar, independent of row height, font or icon size.
+    QTimer::singleShot(0,this,[this,index](){
+        if(!index.isValid())return;
+        const QRect rowRect=m_treeView->visualRect(index);
+        if(!rowRect.isValid())return;
+        const int wantedY=m_treeView->viewport()->rect().center().y();
+        const int delta=rowRect.center().y()-wantedY;
+        QScrollBar *bar=m_treeView->verticalScrollBar();
+        bar->setValue(qBound(bar->minimum(),bar->value()+delta,bar->maximum()));
+        m_treeView->viewport()->update();
+    });
+}
+
+void CustomFileDialog::showEvent(QShowEvent *event)
+{
+    QDialog::showEvent(event);
+    // QFileSystemModel builds and sorts the visible rows asynchronously.  A
+    // selection restored before show() has no final scrollbar geometry yet.
+    // Repeat after the dialog is visible, then once more after Qt has laid out
+    // the rows so the selected game is genuinely centred and owns focus.
+    const auto restoreVisibleSelection=[this](){
+        restoreLastSelection();
+        if(!m_restoreFilePath.isEmpty())m_treeView->setFocus(Qt::OtherFocusReason);
+    };
+    // QFileSystemModel loads quickly, but sorting and scrollbar geometry can
+    // settle a little later.  Reapply at each relevant stage; the last pass
+    // guarantees that the selected row remains centred.
+    QTimer::singleShot(0,this,restoreVisibleSelection);
+    QTimer::singleShot(100,this,restoreVisibleSelection);
+    QTimer::singleShot(300,this,restoreVisibleSelection);
 }
 
 void CustomFileDialog::onOkButtonClicked() {
@@ -220,6 +317,7 @@ void CustomFileDialog::onOkButtonClicked() {
 bool CustomFileDialog::isFileAccepted(const QString &fileName) {
     QString suffix = QFileInfo(fileName).suffix().toLower();
     if (m_pathType == PathRom) return (suffix == "col" || suffix == "bin" || suffix == "rom");
+    if (m_pathType == PathAtariRom) return (suffix == "a26" || suffix == "bin" || suffix == "rom");
     if (m_pathType == PathDisk) return (suffix == "dsk");
     if (m_pathType == PathTape) return (suffix == "dpp");
     return true;
@@ -278,12 +376,20 @@ QString CustomFileDialog::selectedFile() const { return QDir(m_pathEdit->text())
 QString CustomFileDialog::keyFromPathType(PathType type, AcceptMode mode) const {
     QString base;
     switch (type) {
-    case PathRom: base = "Rom"; break; case PathDisk: base = "Disk"; break; case PathTape: base = "Tape"; break;
+    case PathRom: base = "Rom"; break; case PathAtariRom: base = "AtariRom"; break;
+    case PathDisk: base = "Disk"; break; case PathTape: base = "Tape"; break;
     case PathState: base = "State"; break; case PathScreenshot: base = "Screenshot"; break; case PathSymbol: base = "Symbol"; break;
     case PathInjected: base = "Injected"; break;
     default: base = (mode == AcceptOpen) ? "DefaultOpen" : "DefaultSave"; break;
     }
     return "CustomFileDialog/Last" + base + "Dir";
+}
+
+QString CustomFileDialog::selectionKeyFromPathType(PathType type,AcceptMode mode) const
+{
+    QString key=keyFromPathType(type,mode);
+    if(key.endsWith("Dir"))key.chop(3);
+    return key+"File";
 }
 
 void CustomFileDialog::setNameFilters(const QString &filter) {
@@ -296,6 +402,7 @@ void CustomFileDialog::onFilterChanged(const QString &filter) {
     int start = filter.indexOf("(*"), end = filter.indexOf(")", start);
     if (start != -1 && end != -1) m_filterPatterns = filter.mid(start + 1, end - start - 1).split(" ", Qt::SkipEmptyParts);
     m_model->setNameFilters((m_filterPatterns.contains("*.*") || m_filterPatterns.isEmpty()) ? QStringList() : m_filterPatterns);
+    QTimer::singleShot(0,this,&CustomFileDialog::restoreLastSelection);
 }
 
 void CustomFileDialog::onCreateDirClicked() {

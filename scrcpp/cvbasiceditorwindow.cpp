@@ -1,8 +1,10 @@
 #include "cvbasiceditorwindow.h"
+#include "modreferenceplayer.h"
 
 #include <QAction>
 #include <QPixmap>
 #include <QRadioButton>
+#include <QStandardItemModel>
 #include <QIcon>
 #include <QActionGroup>
 #include <QAbstractItemView>
@@ -12,6 +14,7 @@
 #include <QCheckBox>
 #include <functional>
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <QScrollArea>
 #include <QSizePolicy>
@@ -2726,6 +2729,8 @@ public:
     explicit CvBasicPaintEditorPage(QWidget* parent = nullptr)
         : QWidget(parent)
     {
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        setMinimumSize(0, 0);
         setupUi();
     }
 
@@ -2806,6 +2811,8 @@ private:
         return box;
     }
 
+
+
     void setupUi()
     {
         setObjectName(QStringLiteral("cvBasicPaintEditorPage"));
@@ -2836,6 +2843,8 @@ private:
         QVBoxLayout* root = new QVBoxLayout(this);
         root->setContentsMargins(8, 8, 8, 8);
         root->setSpacing(6);
+        root->setStretch(0, 0);
+        root->setStretch(1, 1);
 
         QToolBar* paintToolbar = new QToolBar(tr("Paint"), this);
         paintToolbar->setObjectName(QStringLiteral("paintPageToolbar"));
@@ -2871,6 +2880,8 @@ private:
 
         QFrame* card = new QFrame(this);
         card->setObjectName(QStringLiteral("paintCard"));
+        card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        card->setMinimumSize(0, 0);
         QVBoxLayout* cardLayout = new QVBoxLayout(card);
         cardLayout->setContentsMargins(10, 10, 10, 10);
         cardLayout->setSpacing(8);
@@ -2878,6 +2889,9 @@ private:
 
         QHBoxLayout* workLayout = new QHBoxLayout();
         workLayout->setSpacing(8);
+        workLayout->setStretch(0, 0);
+        workLayout->setStretch(1, 1);
+        workLayout->setStretch(2, 0);
 
         QWidget* paletteWidget = new QWidget(this);
         QVBoxLayout* paletteLayout = new QVBoxLayout(paletteWidget);
@@ -2949,6 +2963,8 @@ private:
         m_canvas = new CvBasicPaintCanvas(this);
 
         m_canvasScroll = new QScrollArea(this);
+        m_canvasScroll->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        m_canvasScroll->setMinimumSize(0, 0);
         m_canvasScroll->setWidget(m_canvas);
         m_canvasScroll->setWidgetResizable(false);
         m_canvasScroll->setFrameShape(QFrame::NoFrame);
@@ -2963,6 +2979,8 @@ private:
 
         QTabWidget* sideTabs = new QTabWidget(this);
         sideTabs->setObjectName(QStringLiteral("paintSideTabs"));
+        sideTabs->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+        sideTabs->setMinimumHeight(0);
         sideTabs->setTabPosition(QTabWidget::East);
         sideTabs->setDocumentMode(false);
         sideTabs->setUsesScrollButtons(true);
@@ -3252,6 +3270,7 @@ private:
             combo->setCurrentIndex(qBound(0, defaultColor, 15));
             combo->setMinimumWidth(46);
             combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            combo->setMaximumHeight(72);
             combo->setToolTip(tr("Text color"));
             updateGradientComboColor(combo);
 
@@ -3660,6 +3679,7 @@ private:
         workLayout->addWidget(sideTabs, 0);
 
         cardLayout->addLayout(workLayout, 1);
+        cardLayout->setStretch(0, 1);
 
         auto addPaintShortcut = [this](const QKeySequence& key, const std::function<void()>& fn) {
             QAction* action = new QAction(this);
@@ -6298,7 +6318,7 @@ private:
         QJsonObject root;
         root["format"] = "ADAMP_CVBasic_SpriteProject";
         root["type"] = "project";
-        root["version"] = 2;
+        root["version"] = 3;
         root["backend"] = "TMS9918";
         root["grid"] = m_grid;
 
@@ -7434,82 +7454,116 @@ public:
     {
         setObjectName("soundKeyboardOverlayWidget");
         setMinimumHeight(120);
-        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
-        m_keyboardPixmap = soundResourcePixmap("SNDKEYS");
-
-        // Breedtes per knop. Deze waarden zijn relatieve gewichten.
-        // De knoppen blijven automatisch aan elkaar hangen, zonder gaten.
-        //
-        // Bovenste rij = 20 zones.
-        // Onderste rij = 12 zones.
-        //
-        // Voorbeeld:
-        //   zet m_topKeyWidths[0] groter, dan wordt knop 1 breder,
-        //   en alle volgende knoppen schuiven automatisch op.
-        m_topKeyWidths = {
-            45, 40, 45, 40, 60,
-            60, 40, 45, 40, 60,
-            60, 40, 45, 40, 45,
-            40, 60, 60, 45, 45
+        static const QStringList whiteLabels = {
+            "C", "D", "E", "F", "G", "A", "B"
         };
 
-        m_bottomKeyWidths = {
-            45, 50, 50, 52, 50, 50,
-            50, 54, 50, 52, 52, 41
-        };
-
-        // Top row: 20 buttons over the upper keys / zones.
-        // Tijdelijk uitgeschakeld: ze blijven zichtbaar, maar triggeren geen noot.
-        for (int i = 0; i < 20; ++i) {
-            QPushButton* btn = new QPushButton(QString::number(i + 1), this);
-            btn->setObjectName("soundKeyboardOverlayButtonDisabled");
-            btn->setFocusPolicy(Qt::NoFocus);
-            btn->setCursor(Qt::ArrowCursor);
-            btn->setEnabled(false);
-            btn->setToolTip(tr("Top keys temporarily disabled"));
-            btn->show();
-
-            m_topButtons.append(btn);
-        }
-
-        // Bottom row: 12 buttons over the full-width piano keys.
-        const QStringList bottomLabels = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-        for (int i = 0; i < bottomLabels.size(); ++i) {
-            QPushButton* btn = new QPushButton(bottomLabels[i], this);
-            btn->setObjectName("soundKeyboardOverlayButton");
+        for (int i = 0; i < 21; ++i) {
+            QPushButton* btn = new QPushButton(this);
+            btn->setObjectName("soundKeyboardWhiteKeyButton");
             btn->setFocusPolicy(Qt::NoFocus);
             btn->setCursor(Qt::PointingHandCursor);
+            btn->setText(whiteLabels.at(i % whiteLabels.size()));
             btn->show();
-
-            connect(btn, &QPushButton::clicked, this, [this, bottomLabels, i]() {
+            connect(btn, &QPushButton::clicked, this, [this, i]() {
+                const QString note = whiteNoteForIndex(i);
+                flashNote(note);
                 if (onKeyPressed)
-                    onKeyPressed(bottomLabels[i]);
+                    onKeyPressed(note);
             });
-
-            m_bottomButtons.append(btn);
+            m_whiteButtons.append(btn);
         }
 
-        applyKeyboardHelpToolStyle();
+        for (int i = 0; i < 15; ++i) {
+            QPushButton* btn = new QPushButton(this);
+            btn->setObjectName("soundKeyboardBlackKeyButton");
+            btn->setFocusPolicy(Qt::NoFocus);
+            btn->setCursor(Qt::PointingHandCursor);
+            btn->setText(QString());
+            btn->show();
+            connect(btn, &QPushButton::clicked, this, [this, i]() {
+                const QString note = blackNoteForIndex(i);
+                flashNote(note);
+                if (onKeyPressed)
+                    onKeyPressed(note);
+            });
+            m_blackButtons.append(btn);
+        }
+
+        applyKeyboardKeyStyles();
+        updateOctaveToolTips();
     }
 
     std::function<void(const QString&)> onKeyPressed;
 
     void setKeyboardHelpTool(bool enabled)
     {
-        keyboard_helptool = enabled;
-        applyKeyboardHelpToolStyle();
+        m_keyboardHelpTool = enabled;
+        applyKeyboardKeyStyles();
+    }
+
+    void setCenterOctave(int octave)
+    {
+        m_centerOctave = qBound(1, octave, 8);
+        updateOctaveToolTips();
+        applyKeyboardKeyStyles();
+        update();
+    }
+
+    void flashNote(const QString& noteText, int durationMs = 180)
+    {
+        const QString normalized = normalizeNoteToken(noteText);
+        if (normalized.isEmpty())
+            return;
+
+        m_manualFlashNotes.insert(normalized);
+        applyKeyboardKeyStyles();
+
+        QTimer::singleShot(durationMs, this, [this, normalized]() {
+            m_manualFlashNotes.remove(normalized);
+            applyKeyboardKeyStyles();
+        });
+    }
+
+    void setPlaybackHighlightedNotes(const QStringList& noteTexts)
+    {
+        m_playbackNotes.clear();
+        for (const QString& noteText : noteTexts) {
+            const QString normalized = normalizeNoteToken(noteText);
+            if (!normalized.isEmpty())
+                m_playbackNotes.insert(normalized);
+        }
+        applyKeyboardKeyStyles();
+    }
+
+    void clearPlaybackHighlightedNotes()
+    {
+        if (m_playbackNotes.isEmpty())
+            return;
+        m_playbackNotes.clear();
+        applyKeyboardKeyStyles();
     }
 
 protected:
     void paintEvent(QPaintEvent*) override
     {
         QPainter p(this);
-        p.fillRect(rect(), QColor("#242424"));
+        p.fillRect(rect(), QColor("#5A5A5A"));
 
-        if (!m_keyboardPixmap.isNull()) {
-            p.setRenderHint(QPainter::SmoothPixmapTransform, true);
-            p.drawPixmap(rect(), m_keyboardPixmap);
+        const int labelHeight = octaveLabelHeight();
+        const int sectionWidth = width() / 3;
+        const QColor labelColor = QColor("#FFFFFF");
+
+        p.setPen(labelColor);
+        p.setFont(QFont(font().family(), font().pointSize() + 1, QFont::Bold));
+        for (int group = 0; group < 3; ++group) {
+            const QRect labelRect(group * sectionWidth, 0,
+                                  group == 2 ? width() - group * sectionWidth : sectionWidth,
+                                  labelHeight);
+            p.drawText(labelRect, Qt::AlignCenter,
+                       QString::number(displayOctaveForGroup(group)));
         }
     }
 
@@ -7517,123 +7571,210 @@ protected:
     {
         QWidget::resizeEvent(event);
 
-        const QRect r = rect().adjusted(0, 0, -1, -1);
-        const int totalW = qMax(1, r.width() + 1);
-        const int totalH = qMax(1, r.height() + 1);
+        const int totalW = qMax(21, width());
+        const int totalH = qMax(80, height());
+        const int labelHeight = octaveLabelHeight();
+        const int keyTop = labelHeight;
+        const int whiteKeyHeight = qMax(50, totalH - keyTop - 2);
+        const int blackKeyHeight = qMax(28, int(whiteKeyHeight * 0.58));
+        const int whiteKeyCount = 21;
 
-        // Approximate split based on the PNG example: upper row / lower row.
-        const int topY = 0;
-        const int topH = qMax(24, int(totalH * 0.52));
-        const int bottomY = topH;
-        const int bottomH = qMax(24, totalH - topH);
+        m_whiteRects.clear();
+        m_whiteRects.reserve(whiteKeyCount);
 
-        applyWeightedButtonGeometry(m_topButtons, m_topKeyWidths, topY, topH, totalW);
-        applyWeightedButtonGeometry(m_bottomButtons, m_bottomKeyWidths, bottomY, bottomH, totalW);
-    }
-
-private:
-    void applyKeyboardHelpToolStyle()
-    {
-        const QStringList bottomLabels = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-
-        for (int i = 0; i < m_topButtons.size(); ++i)
-            m_topButtons[i]->setText(keyboard_helptool ? QString::number(i + 1) : QString());
-
-        for (int i = 0; i < m_bottomButtons.size(); ++i)
-            m_bottomButtons[i]->setText(keyboard_helptool ? bottomLabels.value(i) : QString());
-
-        if (keyboard_helptool) {
-            setStyleSheet(
-                "QPushButton#soundKeyboardOverlayButton {"
-                " background: rgba(255,255,255,35);"
-                " color: #FF4040;"
-                " border: 1px solid #FF0000;"
-                " font-weight: bold;"
-                " padding: 0px;"
-                " }"
-                "QPushButton#soundKeyboardOverlayButton:hover {"
-                " background: rgba(255,255,255,60);"
-                " }"
-                "QPushButton#soundKeyboardOverlayButton:pressed {"
-                " background: rgba(255,150,150,90);"
-                " }"
-                "QPushButton#soundKeyboardOverlayButtonDisabled {"
-                " background: rgba(80,80,80,35);"
-                " color: rgba(180,180,180,130);"
-                " border: 1px solid rgba(120,120,120,80);"
-                " font-weight: bold;"
-                " padding: 0px;"
-                " }"
-            );
-        } else {
-            // Helper uit: geen rode kaders en geen cijfers/labels.
-            // Wel duidelijke klik-feedback + handcursor blijft actief.
-            setStyleSheet(
-                "QPushButton#soundKeyboardOverlayButton {"
-                " background: rgba(255,255,255,0);"
-                " color: rgba(255,255,255,0);"
-                " border: none;"
-                " padding: 0px;"
-                " }"
-                "QPushButton#soundKeyboardOverlayButton:hover {"
-                " background: rgba(255,255,255,0);"
-                " border: none;"
-                " }"
-                "QPushButton#soundKeyboardOverlayButton:pressed {"
-                " background: rgba(255,255,255,105);"
-                " border: 1px solid rgba(255,255,255,140);"
-                " }"
-                "QPushButton#soundKeyboardOverlayButtonDisabled {"
-                " background: rgba(255,255,255,0);"
-                " color: rgba(255,255,255,0);"
-                " border: none;"
-                " padding: 0px;"
-                " }"
-            );
-        }
-    }
-
-    void applyWeightedButtonGeometry(const QVector<QPushButton*>& buttons,
-                                     const QVector<int>& widths,
-                                     int y,
-                                     int h,
-                                     int totalW)
-    {
-        if (buttons.isEmpty())
-            return;
+        const int baseWhiteWidth = totalW / whiteKeyCount;
+        const int whiteRemainder = totalW % whiteKeyCount;
 
         int x = 0;
-        int remainingTotalWidth = totalW;
+        for (int i = 0; i < whiteKeyCount; ++i) {
+            const int whiteWidth = baseWhiteWidth + (i < whiteRemainder ? 1 : 0);
+            QRect r(x, keyTop, qMax(8, whiteWidth), whiteKeyHeight);
+            m_whiteRects.append(r);
+            m_whiteButtons[i]->setGeometry(r);
+            x += whiteWidth;
+        }
 
-        for (int i = 0; i < buttons.size(); ++i) {
-            int remainingWeight = 0;
-            for (int j = i; j < buttons.size(); ++j) {
-                const int w = (j < widths.size()) ? widths[j] : 50;
-                remainingWeight += qMax(1, w);
+        static const int blackOffsets[5] = { 0, 1, 3, 4, 5 };
+        const int blackKeyWidth = qMax(8, int((baseWhiteWidth > 0 ? baseWhiteWidth : 1) * 0.62));
+
+        for (int group = 0; group < 3; ++group) {
+            for (int local = 0; local < 5; ++local) {
+                const int blackIndex = group * 5 + local;
+                const int leftWhiteIndex = group * 7 + blackOffsets[local];
+                if (leftWhiteIndex < 0 || leftWhiteIndex >= m_whiteRects.size())
+                    continue;
+
+                const QRect leftRect = m_whiteRects[leftWhiteIndex];
+                int blackX = leftRect.x() + leftRect.width() - (blackKeyWidth / 2);
+                blackX = qBound(0, blackX, qMax(0, totalW - blackKeyWidth));
+                m_blackButtons[blackIndex]->setGeometry(blackX, keyTop, blackKeyWidth, blackKeyHeight);
+                m_blackButtons[blackIndex]->raise();
             }
-
-            const int w = (i < widths.size()) ? widths[i] : 50;
-            const int weight = qMax(1, w);
-
-            const int buttonWidth = (i == buttons.size() - 1 || remainingWeight <= 0)
-                                        ? remainingTotalWidth
-                                        : qRound((static_cast<double>(weight) / static_cast<double>(remainingWeight)) * remainingTotalWidth);
-
-            buttons[i]->setGeometry(x, y, qMax(1, buttonWidth), h);
-            x += buttonWidth;
-            remainingTotalWidth = qMax(0, totalW - x);
         }
     }
 
 private:
-    QPixmap m_keyboardPixmap;
-    QVector<QPushButton*> m_topButtons;
-    QVector<QPushButton*> m_bottomButtons;
+    int octaveLabelHeight() const
+    {
+        return 18;
+    }
 
-    QVector<int> m_topKeyWidths;
-    QVector<int> m_bottomKeyWidths;
+    int displayOctaveForGroup(int group) const
+    {
+        const int octave = m_centerOctave + group - 1;
+        return qBound(1, octave, 8);
+    }
 
-    bool keyboard_helptool = false;
+    QString whiteNoteForIndex(int index) const
+    {
+        static const QStringList whiteLabels = {
+            "C", "D", "E", "F", "G", "A", "B"
+        };
+        const int group = index / 7;
+        const int local = index % 7;
+        return QString("%1%2").arg(whiteLabels.value(local)).arg(displayOctaveForGroup(group));
+    }
+
+    QString blackNoteForIndex(int index) const
+    {
+        static const QStringList blackLabels = {
+            "C#", "D#", "F#", "G#", "A#"
+        };
+        const int group = index / 5;
+        const int local = index % 5;
+        return QString("%1%2").arg(blackLabels.value(local)).arg(displayOctaveForGroup(group));
+    }
+
+    QString normalizeNoteToken(const QString& noteText) const
+    {
+        const QString key = noteText.trimmed().toUpper();
+        const QRegularExpression explicitNoteRe(QStringLiteral("^([A-G])(#?)(?:-)?([1-8])$"));
+        const QRegularExpressionMatch explicitMatch = explicitNoteRe.match(key);
+        if (!explicitMatch.hasMatch())
+            return QString();
+        return explicitMatch.captured(1) + explicitMatch.captured(2) + explicitMatch.captured(3);
+    }
+
+    bool isManualFlashed(const QString& noteText) const
+    {
+        return m_manualFlashNotes.contains(normalizeNoteToken(noteText));
+    }
+
+    bool isPlaybackHighlighted(const QString& noteText) const
+    {
+        return m_playbackNotes.contains(normalizeNoteToken(noteText));
+    }
+
+    void updateOctaveToolTips()
+    {
+        for (int i = 0; i < m_whiteButtons.size(); ++i)
+            m_whiteButtons[i]->setToolTip(whiteNoteForIndex(i));
+
+        for (int i = 0; i < m_blackButtons.size(); ++i)
+            m_blackButtons[i]->setToolTip(blackNoteForIndex(i));
+    }
+
+    void applyKeyboardKeyStyles()
+    {
+        static const QStringList whiteLabels = { "C", "D", "E", "F", "G", "A", "B" };
+        static const QStringList blackLabels = { "C#", "D#", "F#", "G#", "A#" };
+
+        const QColor whiteGroupColors[3] = {
+            QColor("#F2DEC8"), QColor("#D8D6FF"), QColor("#D6F4D2")
+        };
+        const QColor blackGroupColors[3] = {
+            QColor("#9A5A00"), QColor("#1A18C5"), QColor("#11A611")
+        };
+
+        for (int i = 0; i < m_whiteButtons.size(); ++i) {
+            const int group = i / 7;
+            const QString note = whiteNoteForIndex(i);
+            const bool manual = isManualFlashed(note);
+            const bool playback = isPlaybackHighlighted(note);
+            QColor background = whiteGroupColors[group];
+            QColor hover = whiteGroupColors[group].lighter(108);
+            QString border = QStringLiteral("1px solid #505050");
+            QString textColor = QStringLiteral("#101010");
+
+            if (playback) {
+                background = QColor("#FFF46B");
+                hover = QColor("#FFF89A");
+                border = QStringLiteral("3px solid #00C83A");
+            }
+            if (manual) {
+                background = QColor("#FFBA4A");
+                hover = QColor("#FFD47B");
+                border = QStringLiteral("3px solid #FF3B00");
+            }
+
+            m_whiteButtons[i]->setText(whiteLabels.value(i % 7));
+            const QString style = QString(
+                "QPushButton#soundKeyboardWhiteKeyButton {"
+                " background:%1; color:%2;"
+                " border:%3;"
+                " padding-top:30px; padding-bottom:4px;"
+                " text-align: center bottom;"
+                " font-weight:bold;"
+                " }"
+                "QPushButton#soundKeyboardWhiteKeyButton:hover { background:%4; }"
+                "QPushButton#soundKeyboardWhiteKeyButton:pressed { background:#FFFFFF; border:3px solid #FF0000; }"
+            )
+            .arg(background.name())
+            .arg(textColor)
+            .arg(border)
+            .arg(hover.name());
+            m_whiteButtons[i]->setStyleSheet(style);
+        }
+
+        for (int i = 0; i < m_blackButtons.size(); ++i) {
+            const int group = i / 5;
+            const QString note = blackNoteForIndex(i);
+            const bool manual = isManualFlashed(note);
+            const bool playback = isPlaybackHighlighted(note);
+            QColor background = blackGroupColors[group];
+            QColor hover = blackGroupColors[group].lighter(112);
+            QString border = QStringLiteral("1px solid #202020");
+            QString textColor = QStringLiteral("#F8F8F8");
+
+            if (playback) {
+                background = QColor("#2CCF4E");
+                hover = QColor("#53E26F");
+                border = QStringLiteral("3px solid #B4FF4A");
+                textColor = QStringLiteral("#101010");
+            }
+            if (manual) {
+                background = QColor("#FF5B39");
+                hover = QColor("#FF7A5D");
+                border = QStringLiteral("3px solid #FFF26A");
+            }
+
+            const QString label = m_keyboardHelpTool ? blackLabels.value(i % 5) : QString();
+            m_blackButtons[i]->setText(label);
+            const QString style = QString(
+                "QPushButton#soundKeyboardBlackKeyButton {"
+                " background:%1; color:%2;"
+                " border:%3;"
+                " padding:0px; font-weight:bold;"
+                " }"
+                "QPushButton#soundKeyboardBlackKeyButton:hover { background:%4; }"
+                "QPushButton#soundKeyboardBlackKeyButton:pressed { background:#FFFFFF; color:#000000; border:3px solid #FF0000; }"
+            )
+            .arg(background.name())
+            .arg(textColor)
+            .arg(border)
+            .arg(hover.name());
+            m_blackButtons[i]->setStyleSheet(style);
+        }
+    }
+
+private:
+    QVector<QPushButton*> m_whiteButtons;
+    QVector<QPushButton*> m_blackButtons;
+    QVector<QRect> m_whiteRects;
+    QSet<QString> m_manualFlashNotes;
+    QSet<QString> m_playbackNotes;
+    bool m_keyboardHelpTool = false;
+    int m_centerOctave = 4;
 };
 
 
@@ -7679,6 +7820,15 @@ public:
         case 16:
             borderColor = QColor("#FFB24A");
             break; // NOISE Fx right border - orange
+        case 20:
+            borderColor = QColor("#70D6FF");
+            break; // AY A
+        case 24:
+            borderColor = QColor("#B8F35A");
+            break; // AY B
+        case 28:
+            borderColor = QColor("#FF7A90");
+            break; // AY C
         default:
             return;
         }
@@ -7699,11 +7849,12 @@ public:
     explicit SoundVuLedBarWidget(QWidget* parent = nullptr)
         : QWidget(parent)
     {
-        setMinimumSize(168, 92);
-        setFixedSize(168, 92);
-        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        setMinimumWidth(180);
+        setMinimumHeight(104);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        setFixedHeight(104);
 
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 7; ++i) {
             m_targetLevels[i] = 0;
             m_displayLevels[i] = 0;
             m_peakLevels[i] = 0;
@@ -7712,36 +7863,33 @@ public:
         }
 
         m_animTimer = new QTimer(this);
-        m_animTimer->setInterval(35);
+        m_animTimer->setInterval(50);
         m_animTimer->setTimerType(Qt::PreciseTimer);
 
         connect(m_animTimer, &QTimer::timeout, this, [this]() {
             bool changed = false;
             bool needsTimer = false;
+            const int channels = m_sgmMode ? 7 : 4;
 
-            for (int ch = 0; ch < 4; ++ch) {
-                // Display meter: fast up, realistic faster down.
+            for (int ch = 0; ch < channels; ++ch) {
                 if (m_displayLevels[ch] < m_targetLevels[ch]) {
                     m_displayLevels[ch] = m_targetLevels[ch];
                     changed = true;
                 } else if (m_displayLevels[ch] > m_targetLevels[ch]) {
                     const int diff = m_displayLevels[ch] - m_targetLevels[ch];
-
-                    // Grotere verschillen vallen sneller. Zo zie je echt beweging.
                     const int step = (diff >= 8) ? 3 : (diff >= 4 ? 2 : 1);
                     m_displayLevels[ch] = qMax(m_targetLevels[ch], m_displayLevels[ch] - step);
                     changed = true;
                 }
 
-                // Peak marker: blijft kort hangen en valt dan apart terug.
                 if (m_peakLevels[ch] < m_displayLevels[ch]) {
                     m_peakLevels[ch] = m_displayLevels[ch];
                     m_peakHoldTicks[ch] = 8;
                     changed = true;
                 } else if (m_peakLevels[ch] > m_displayLevels[ch]) {
-                    if (m_peakHoldTicks[ch] > 0) {
+                    if (m_peakHoldTicks[ch] > 0)
                         --m_peakHoldTicks[ch];
-                    } else {
+                    else {
                         --m_peakLevels[ch];
                         changed = true;
                     }
@@ -7749,38 +7897,52 @@ public:
 
                 if (m_displayLevels[ch] != m_targetLevels[ch] ||
                     m_peakLevels[ch] != m_displayLevels[ch] ||
-                    m_peakHoldTicks[ch] > 0) {
+                    m_peakHoldTicks[ch] > 0)
                     needsTimer = true;
-                }
             }
 
             if (changed)
                 update();
-
             if (!needsTimer)
                 m_animTimer->stop();
         });
     }
 
+    void setSgmMode(bool enabled)
+    {
+        if (m_sgmMode == enabled)
+            return;
+        m_sgmMode = enabled;
+        if (!enabled) {
+            for (int ch = 4; ch < 7; ++ch) {
+                m_targetLevels[ch] = 0;
+                m_displayLevels[ch] = 0;
+                m_peakLevels[ch] = 0;
+                m_peakHoldTicks[ch] = 0;
+            }
+        }
+        setFixedHeight(enabled ? 182 : 104);
+        updateGeometry();
+        update();
+    }
+
     void setChannelLevel(int channel, int level)
     {
-        if (channel < 0 || channel >= 4)
+        if (channel < 0 || channel >= 7)
             return;
 
         level = qBound(0, level, 15);
+        if (m_targetLevels[channel] == level && m_displayLevels[channel] == level)
+            return;
 
-        // Kleine smoothing tegen zenuwachtig flikkeren bij snelle preview-calls.
-        // Stijgen blijft direct, dalen wordt door de timer afgehandeld.
         m_targetLevels[channel] = level;
 
         if (level > m_displayLevels[channel]) {
             m_displayLevels[channel] = level;
-
             if (level >= m_peakLevels[channel]) {
                 m_peakLevels[channel] = level;
                 m_peakHoldTicks[channel] = 8;
             }
-
             update();
         }
 
@@ -7790,35 +7952,10 @@ public:
 
     void setLevels(int ch1, int ch2, int ch3, int noise)
     {
-        const int levels[4] = {
-            qBound(0, ch1, 15),
-            qBound(0, ch2, 15),
-            qBound(0, ch3, 15),
-            qBound(0, noise, 15)
-        };
-
-        bool changed = false;
-
-        for (int ch = 0; ch < 4; ++ch) {
-            m_targetLevels[ch] = levels[ch];
-
-            if (levels[ch] > m_displayLevels[ch]) {
-                m_displayLevels[ch] = levels[ch];
-                changed = true;
-            }
-
-            if (levels[ch] >= m_peakLevels[ch]) {
-                m_peakLevels[ch] = levels[ch];
-                m_peakHoldTicks[ch] = 8;
-                changed = true;
-            }
-        }
-
-        if (changed)
-            update();
-
-        if (m_animTimer && !m_animTimer->isActive())
-            m_animTimer->start();
+        setChannelLevel(0, ch1);
+        setChannelLevel(1, ch2);
+        setChannelLevel(2, ch3);
+        setChannelLevel(3, noise);
     }
 
 protected:
@@ -7827,42 +7964,30 @@ protected:
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
 
-        // Transparant: geen zwart veld achter de VU-meter.
-
-        const QString labels[4] = {
-            QStringLiteral("CH1"),
-            QStringLiteral("CH2"),
-            QStringLiteral("CH3"),
-            QStringLiteral("NOI")
-        };
-
-        const int leftLabelW = 34;
+        const int channels = m_sgmMode ? 7 : 4;
         const int rightValueW = 22;
         const int rowGap = 5;
         const int topMargin = 2;
         const int bottomMargin = 2;
-        const int usableH = qMax(1, height() - topMargin - bottomMargin - rowGap * 3);
-        const int rowH = qMax(20, usableH / 4);
+        const int usableH = qMax(1, height() - topMargin - bottomMargin - rowGap * (channels - 1));
+        const int rowH = qMax(20, usableH / channels);
 
-        const int barX = 8 + leftLabelW;
-        const int barW = qMax(80, width() - barX - rightValueW - 5);
-
+        const int barX = 2;
+        const int barW = qMax(100, width() - barX - rightValueW - 4);
         const int segGap = 3;
         const int fullSegW = qMax(4, (barW - segGap * 14) / 15);
         const int segW = qMax(3, fullSegW / 2);
 
         QFont labelFont = p.font();
         labelFont.setBold(true);
-        labelFont.setPointSizeF(labelFont.pointSizeF() - 0.5);
+        labelFont.setPointSizeF(qMax(7.0, labelFont.pointSizeF() - 0.5));
         p.setFont(labelFont);
 
-        for (int ch = 0; ch < 4; ++ch) {
+        for (int ch = 0; ch < channels; ++ch) {
             const int y = topMargin + ch * (rowH + rowGap);
-            const QRect labelRect(8, y, leftLabelW - 4, rowH);
             const QRect valueRect(width() - rightValueW - 2, y, rightValueW, rowH);
 
             p.setPen(QColor("#DADADA"));
-            p.drawText(labelRect, Qt::AlignVCenter | Qt::AlignLeft, labels[ch]);
             p.drawText(valueRect, Qt::AlignVCenter | Qt::AlignRight,
                        QString::number(qBound(0, m_displayLevels[ch], 15)).rightJustified(2, QLatin1Char('0')));
 
@@ -7883,22 +8008,18 @@ protected:
 
                 QColor offColor = onColor;
                 offColor.setAlpha(34);
-
                 const bool isOn = i < qBound(0, m_displayLevels[ch], 15);
                 const bool isPeak = (i + 1) == qBound(0, m_peakLevels[ch], 15) && m_peakLevels[ch] > 0;
 
                 if (isPeak && !isOn) {
-                    QColor peakColor = onColor.lighter(160);
                     p.setPen(QColor("#FFFFFF"));
-                    p.setBrush(peakColor);
+                    p.setBrush(onColor.lighter(160));
                 } else {
                     p.setPen(QColor(0, 0, 0, isOn ? 90 : 50));
                     p.setBrush(isOn ? onColor : offColor);
                 }
+                p.drawRoundedRect(segRect, 1.2, 1.2);
 
-                p.drawRoundedRect(segRect, 1.5, 1.5);
-
-                // Extra witte highlight op de actieve peak, ook als die binnen de huidige bar valt.
                 if (isPeak) {
                     p.setPen(QPen(QColor("#FFFFFF"), 1));
                     p.drawLine(segRect.left() + 1, segRect.top() + 1,
@@ -7909,11 +8030,12 @@ protected:
     }
 
 private:
-    int m_targetLevels[4] = {0, 0, 0, 0};
-    int m_displayLevels[4] = {0, 0, 0, 0};
-    int m_peakLevels[4] = {0, 0, 0, 0};
-    int m_peakHoldTicks[4] = {0, 0, 0, 0};
-    int m_silenceTicks[4] = {0, 0, 0, 0};
+    bool m_sgmMode = false;
+    int m_targetLevels[7] = {0, 0, 0, 0, 0, 0, 0};
+    int m_displayLevels[7] = {0, 0, 0, 0, 0, 0, 0};
+    int m_peakLevels[7] = {0, 0, 0, 0, 0, 0, 0};
+    int m_peakHoldTicks[7] = {0, 0, 0, 0, 0, 0, 0};
+    int m_silenceTicks[7] = {0, 0, 0, 0, 0, 0, 0};
     QTimer* m_animTimer = nullptr;
 };
 
@@ -7922,6 +8044,142 @@ private:
 // ============================================================================
 // Sound instrument visual editor widgets
 // ============================================================================
+
+class SoundMacroGraphWidget final : public QWidget
+{
+public:
+    enum Mode { Bars, Bipolar, Steps };
+
+    explicit SoundMacroGraphWidget(Mode mode, int minimum, int maximum, QWidget* parent = nullptr)
+        : QWidget(parent), m_mode(mode), m_minimum(minimum), m_maximum(maximum)
+    {
+        setMinimumHeight(58);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        setMouseTracking(true);
+    }
+
+    void setMacroText(const QString& text)
+    {
+        m_values.clear();
+        const QStringList parts = text.split(',', Qt::SkipEmptyParts);
+        for (const QString& p : parts) {
+            bool ok = false;
+            int v = p.trimmed().toInt(&ok);
+            if (ok)
+                m_values.push_back(qBound(m_minimum, v, m_maximum));
+        }
+        update();
+    }
+
+    QString macroText() const
+    {
+        QStringList out;
+        for (int v : m_values)
+            out << (m_mode == Bipolar && v > 0 ? QString("+%1").arg(v) : QString::number(v));
+        return out.join(',');
+    }
+
+    std::function<void(const QString&)> onMacroEdited;
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.fillRect(rect(), palette().base());
+
+        QRect r = rect().adjusted(5, 5, -5, -16);
+        p.setPen(palette().mid().color());
+        p.drawRect(r);
+
+        if (m_mode == Bipolar) {
+            const int zy = valueToY(0, r);
+            QPen zeroPen(palette().mid().color());
+            zeroPen.setStyle(Qt::DashLine);
+            p.setPen(zeroPen);
+            p.drawLine(r.left(), zy, r.right(), zy);
+        }
+
+        if (m_values.isEmpty()) {
+            p.setPen(palette().mid().color());
+            p.drawText(r, Qt::AlignCenter, tr("Draw macro with mouse"));
+            return;
+        }
+
+        const qreal stepW = qMax<qreal>(8.0, r.width() / qreal(qMax(1, m_values.size())));
+        p.setPen(palette().text().color());
+
+        if (m_mode == Bars) {
+            const int baseY = valueToY(m_minimum, r);
+            for (int i = 0; i < m_values.size(); ++i) {
+                const int y = valueToY(m_values[i], r);
+                QRectF bar(r.left() + i * stepW + 1, qMin(y, baseY),
+                           qMax<qreal>(2.0, stepW - 2), qAbs(baseY - y) + 1);
+                p.fillRect(bar, palette().highlight());
+            }
+        } else {
+            QPainterPath path;
+            for (int i = 0; i < m_values.size(); ++i) {
+                const qreal x = r.left() + (i + 0.5) * stepW;
+                const qreal y = valueToY(m_values[i], r);
+                if (i == 0) path.moveTo(x, y);
+                else path.lineTo(x, y);
+                p.fillRect(QRectF(x - 2, y - 2, 5, 5), palette().highlight());
+            }
+            p.setPen(QPen(palette().highlight().color(), 2));
+            p.drawPath(path);
+        }
+
+        p.setPen(palette().mid().color());
+        p.drawText(QRect(r.left(), r.bottom()+2, r.width(), 13),
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   QString("%1..%2   %3 steps").arg(m_minimum).arg(m_maximum).arg(m_values.size()));
+    }
+
+    void mousePressEvent(QMouseEvent* e) override { editAt(e->position().toPoint()); }
+    void mouseMoveEvent(QMouseEvent* e) override
+    {
+        if (e->buttons() & Qt::LeftButton)
+            editAt(e->position().toPoint());
+    }
+
+private:
+    int valueToY(int value, const QRect& r) const
+    {
+        if (m_maximum == m_minimum) return r.center().y();
+        const double f = double(value - m_minimum) / double(m_maximum - m_minimum);
+        return r.bottom() - qRound(f * r.height());
+    }
+
+    void editAt(const QPoint& pos)
+    {
+        QRect r = rect().adjusted(5, 5, -5, -16);
+        if (!r.contains(pos))
+            return;
+
+        const int desiredSteps = qMax(16, m_values.size());
+        if (m_values.isEmpty())
+            m_values.fill(0, desiredSteps);
+
+        const int index = qBound(0,
+            int(double(pos.x() - r.left()) / qMax(1, r.width()) * m_values.size()),
+            m_values.size() - 1);
+
+        const double f = qBound(0.0, double(r.bottom() - pos.y()) / qMax(1, r.height()), 1.0);
+        int value = qRound(m_minimum + f * (m_maximum - m_minimum));
+        value = qBound(m_minimum, value, m_maximum);
+
+        m_values[index] = value;
+        update();
+
+        if (onMacroEdited)
+            onMacroEdited(macroText());
+    }
+
+    Mode m_mode;
+    int m_minimum;
+    int m_maximum;
+    QVector<int> m_values;
+};
 
 class SoundInstrumentWavePreviewWidget final : public QWidget
 {
@@ -7948,13 +8206,15 @@ protected:
     {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
-        p.fillRect(rect(), QColor("#121B2A"));
+        p.fillRect(rect(), palette().base());
 
         QRectF r = rect().adjusted(8, 8, -8, -22);
-        p.setPen(QPen(QColor("#566983"), 1));
+        p.setPen(QPen(palette().mid().color(), 1));
         p.drawRect(r);
 
-        p.setPen(QPen(QColor(255, 255, 255, 25), 1));
+        QPen waveGridPen(palette().mid().color());
+        waveGridPen.setStyle(Qt::DotLine);
+        p.setPen(waveGridPen);
         for (int i = 1; i < 4; ++i) {
             const qreal y = r.top() + i * r.height() / 4.0;
             p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y));
@@ -7994,10 +8254,10 @@ protected:
                 path.lineTo(x, y);
         }
 
-        p.setPen(QPen(QColor("#50C43A"), 1.4));
+        p.setPen(QPen(palette().highlight().color(), 1.8));
         p.drawPath(path);
 
-        p.setPen(QColor("#B8C6D8"));
+        p.setPen(palette().text().color());
         QFont f = p.font();
         f.setPixelSize(10);
         p.setFont(f);
@@ -8023,15 +8283,19 @@ public:
     explicit SoundInstrumentEnvelopePreviewWidget(QWidget* parent = nullptr)
         : QWidget(parent)
     {
-        setMinimumHeight(110);
-        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        // V9.16: the ENV graph must be fully controlled by its parent layout.
+        // No fixed/minimum height: it grows and shrinks with Envelope / Modulation.
+        setMinimumHeight(0);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     }
 
-    void setEnvelopeParams(int env, int volume, int fadeout)
+    void setEnvelopeParams(int env, int volume, int fadeout, int waveX, int waveY)
     {
         m_env = qBound(0, env, 15);
         m_volume = qBound(0, volume, 15);
         m_fadeout = qBound(0, fadeout, 15);
+        m_waveX = qBound(0, waveX, 100);
+        m_waveY = qBound(0, waveY, 100);
         update();
     }
 
@@ -8040,17 +8304,30 @@ protected:
     {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
-        p.fillRect(rect(), QColor("#121B2A"));
 
-        QRectF r = rect().adjusted(8, 8, -8, -22);
-        p.setPen(QPen(QColor("#566983"), 1));
-        p.drawRect(r);
+        // Deliberately use the exact AY preview look-and-feel: palette based
+        // background, dotted grid and theme highlight/link colours.
+        const QRectF r = rect().adjusted(10, 10, -10, -10);
+        p.fillRect(rect(), palette().base());
 
-        p.setPen(QPen(QColor(60, 130, 170, 60), 1, Qt::DotLine));
+        QPen gridPen(palette().mid().color());
+        gridPen.setStyle(Qt::DotLine);
+        p.setPen(gridPen);
         for (int i = 1; i < 4; ++i) {
-            const qreal y = r.top() + i * r.height() / 4.0;
+            const qreal y = r.top() + (r.height() * i / 4.0);
             p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y));
         }
+
+        p.setPen(palette().text().color());
+        p.drawText(QRectF(r.left(), r.top(), 70, 18), Qt::AlignLeft | Qt::AlignTop, tr("ENV"));
+
+        const qreal x0 = r.left();
+        const qreal x1 = r.left() + r.width() * 0.22;
+        const qreal x2 = r.left() + r.width() * 0.43;
+        const qreal x3 = r.left() + r.width() * 0.70;
+        const qreal x4 = r.right();
+        const qreal yBottom = r.bottom() - 14;
+        const qreal yTop = r.top() + 18;
 
         auto envValue = [this](double x) -> double {
             switch (m_env & 0x0F) {
@@ -8069,57 +8346,65 @@ protected:
             }
         };
 
-        QPainterPath path;
-        const int samples = qMax(24, width() - 20);
+        QPainterPath envPath;
+        const int points = qMax(80, width() - 20);
         const double volScale = m_volume / 15.0;
-
-        for (int i = 0; i < samples; ++i) {
-            const double xNorm = static_cast<double>(i) / qMax(1, samples - 1);
-            double v = envValue(xNorm) * volScale;
-
+        for (int i = 0; i <= points; ++i) {
+            const double t = i / double(points);
+            double v = envValue(t) * volScale;
             if (m_fadeout > 0)
-                v *= qMax(0.0, 1.0 - xNorm * (m_fadeout / 18.0));
+                v *= qMax(0.0, 1.0 - t * (m_fadeout / 18.0));
 
-            const qreal x = r.left() + xNorm * r.width();
-            const qreal y = r.bottom() - v * r.height();
+            // Wave Y controls the visible modulation depth. Wave X controls
+            // its rate/spacing. This represents the existing SN software
+            // modulation without pretending the SN76489 has an AY ADSR unit.
+            const double modulationDepth = (m_waveY / 100.0) * 0.11;
+            const double cycles = 1.0 + (m_waveX / 100.0) * 8.0;
+            if (m_waveY > 0)
+                v = qBound(0.0, v + std::sin(t * cycles * 2.0 * M_PI) * modulationDepth, 1.0);
 
-            if (i == 0)
-                path.moveTo(x, y);
-            else
-                path.lineTo(x, y);
+            const qreal x = x0 + t * (x4 - x0);
+            const qreal y = yBottom - v * (yBottom - yTop);
+            if (i == 0) envPath.moveTo(x, y);
+            else envPath.lineTo(x, y);
         }
 
-        p.setPen(QPen(QColor("#7DE34D"), 1.5));
-        p.drawPath(path);
+        QPen envPen(palette().highlight().color(), 2.0);
+        p.setPen(envPen);
+        p.drawPath(envPath);
 
-        p.setBrush(QColor("#FFC430"));
-        p.setPen(QPen(QColor("#111111"), 1));
-        for (double xNorm : {0.0, 0.25, 0.55, 0.85, 1.0}) {
-            double v = envValue(xNorm) * volScale;
-            if (m_fadeout > 0)
-                v *= qMax(0.0, 1.0 - xNorm * (m_fadeout / 18.0));
-            QPointF pt(r.left() + xNorm * r.width(), r.bottom() - v * r.height());
-            p.drawEllipse(pt, 3.5, 3.5);
+        // Same secondary modulation colour convention as AY.
+        if (m_waveY > 0) {
+            QPainterPath mod;
+            const qreal centerY = yTop + 11;
+            const qreal amp = 2.0 + (m_waveY / 100.0) * 8.0;
+            const qreal cycles = 1.5 + (m_waveX / 100.0) * 7.5;
+            for (int i = 0; i <= 160; ++i) {
+                const qreal t = i / 160.0;
+                const qreal x = x2 + (x3 - x2) * t;
+                const qreal y = centerY - qSin(t * cycles * 2.0 * M_PI) * amp;
+                if (i == 0) mod.moveTo(x, y);
+                else mod.lineTo(x, y);
+            }
+            QPen modPen(palette().link().color(), 1.6);
+            p.setPen(modPen);
+            p.drawPath(mod);
         }
 
-        p.setPen(QColor("#B8C6D8"));
-        QFont f = p.font();
-        f.setPixelSize(10);
-        p.setFont(f);
-        p.drawText(rect().adjusted(8, 0, -8, -4), Qt::AlignLeft | Qt::AlignBottom,
-                   QString("Volume envelope  Vol:%1  Env:%2  Fade:%3")
-                       .arg(m_volume)
-                       .arg(m_env, 2, 16, QLatin1Char('0')).toUpper()
-                       .arg(m_fadeout));
+        p.setPen(palette().text().color());
+        p.drawText(QRectF(x0, yBottom, 55, 14), Qt::AlignLeft | Qt::AlignTop, tr("VOL"));
+        p.drawText(QRectF(x1, yBottom, 55, 14), Qt::AlignLeft | Qt::AlignTop, tr("ENV"));
+        p.drawText(QRectF(x2, yBottom, 55, 14), Qt::AlignLeft | Qt::AlignTop, tr("FADE"));
+        p.drawText(QRectF(x3, yBottom, 55, 14), Qt::AlignLeft | Qt::AlignTop, tr("WAVE"));
     }
 
 private:
     int m_env = 3;
     int m_volume = 15;
     int m_fadeout = 0;
+    int m_waveX = 50;
+    int m_waveY = 50;
 };
-
-
 
 
 
@@ -8150,6 +8435,118 @@ protected:
 };
 
 
+
+class AyEnvelopeModulationPreviewWidget : public QWidget
+{
+public:
+    explicit AyEnvelopeModulationPreviewWidget(QWidget* parent = nullptr)
+        : QWidget(parent)
+    {
+        // V9.16: the ENV graph must be fully controlled by its parent layout.
+        // No fixed/minimum height: it grows and shrinks with Envelope / Modulation.
+        setMinimumHeight(0);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    }
+
+    void setParameters(int attack, int decay, int sustain, int release, int vibrato)
+    {
+        m_attack = qBound(0, attack, 15);
+        m_decay = qBound(0, decay, 15);
+        m_sustain = qBound(0, sustain, 15);
+        m_release = qBound(0, release, 15);
+        m_vibrato = qBound(0, vibrato, 15);
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+
+        const QRectF r = rect().adjusted(10, 10, -10, -10);
+        p.fillRect(rect(), palette().base());
+
+        QPen gridPen(palette().mid().color());
+        gridPen.setStyle(Qt::DotLine);
+        p.setPen(gridPen);
+
+        for (int i = 1; i < 4; ++i) {
+            const qreal y = r.top() + (r.height() * i / 4.0);
+            p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y));
+        }
+
+        p.setPen(palette().text().color());
+        p.drawText(QRectF(r.left(), r.top(), 50, 18), Qt::AlignLeft | Qt::AlignTop, tr("ENV"));
+
+        const qreal x0 = r.left();
+        const qreal x1 = r.left() + r.width() * 0.22;
+        const qreal x2 = r.left() + r.width() * 0.43;
+        const qreal x3 = r.left() + r.width() * 0.70;
+        const qreal x4 = r.right();
+
+        const qreal yBottom = r.bottom() - 14;
+        const qreal yTop = r.top() + 18;
+        const qreal sustainLevel = yBottom - (yBottom - yTop) * (m_sustain / 15.0);
+
+        // Envelope line
+        QPainterPath env;
+        env.moveTo(x0, yBottom);
+
+        const qreal attackFactor = 1.0 - (m_attack / 15.0) * 0.65;
+        const qreal decayFactor = 1.0 - (m_decay / 15.0) * 0.55;
+        const qreal releaseFactor = 1.0 - (m_release / 15.0) * 0.55;
+
+        const qreal attackX = x0 + (x1 - x0) * attackFactor;
+        const qreal decayX = attackX + (x2 - attackX) * decayFactor;
+        const qreal releaseX = x3 + (x4 - x3) * releaseFactor;
+
+        env.lineTo(attackX, yTop);
+        env.lineTo(decayX, sustainLevel);
+        env.lineTo(x3, sustainLevel);
+        env.lineTo(releaseX, yBottom);
+        env.lineTo(x4, yBottom);
+
+        QPen envPen(palette().highlight().color(), 2.0);
+        p.setPen(envPen);
+        p.drawPath(env);
+
+        // Vibrato sine overlay around sustain segment.
+        if (m_vibrato > 0) {
+            QPainterPath vib;
+            const int points = 160;
+            const qreal amp = 2.0 + m_vibrato * 0.65;
+            const qreal cycles = 2.0 + m_vibrato * 0.45;
+
+            for (int i = 0; i <= points; ++i) {
+                const qreal t = i / qreal(points);
+                const qreal x = decayX + (x3 - decayX) * t;
+                const qreal y = sustainLevel - qSin(t * cycles * 2.0 * M_PI) * amp;
+                if (i == 0) vib.moveTo(x, y);
+                else vib.lineTo(x, y);
+            }
+
+            QPen vibPen(palette().link().color(), 1.6);
+            p.setPen(vibPen);
+            p.drawPath(vib);
+        }
+
+        p.setPen(palette().text().color());
+        p.drawText(QRectF(x0, yBottom, 42, 14), Qt::AlignLeft | Qt::AlignTop, tr("A"));
+        p.drawText(QRectF(x1, yBottom, 42, 14), Qt::AlignLeft | Qt::AlignTop, tr("D"));
+        p.drawText(QRectF(x2, yBottom, 42, 14), Qt::AlignLeft | Qt::AlignTop, tr("S"));
+        p.drawText(QRectF(x3, yBottom, 42, 14), Qt::AlignLeft | Qt::AlignTop, tr("R"));
+    }
+
+private:
+    int m_attack = 0;
+    int m_decay = 0;
+    int m_sustain = 15;
+    int m_release = 0;
+    int m_vibrato = 0;
+};
+
+// V8.10: playback/UI decoupling and repaint throttling
 class CvBasicSoundEditorPage final : public QWidget
 {
 public:
@@ -8179,16 +8576,53 @@ public:
     std::function<void()> onStopAllPreviewRequested;
     std::function<void(const QVariantList&, int, bool)> onStreamPlayRequested;
     std::function<void()> onStreamStopRequested;
+    std::function<void(int, bool)> onChannelAudibleChanged;
+
+    void setDarkTheme(bool dark)
+    {
+        const QString suffix = dark ? QString() : QStringLiteral("_D");
+
+        const auto setPlaybackIcon = [suffix](QPushButton* button, const QString& resourceName) {
+            if (!button)
+                return;
+
+            const QPixmap pixmap = soundResourcePixmap(resourceName + suffix);
+            if (!pixmap.isNull())
+                button->setIcon(QIcon(pixmap));
+        };
+
+        setPlaybackIcon(m_playbackLoopBtn,   QStringLiteral("SND_LOOP"));
+        setPlaybackIcon(m_playbackPlayBtn,   QStringLiteral("SND_PLAY"));
+        setPlaybackIcon(m_playbackRewindBtn, QStringLiteral("SND_RESTART"));
+        setPlaybackIcon(m_playbackStopBtn,   QStringLiteral("SND_STOP"));
+    }
 
     void setSoundChannelVuLevel(int channel, int level)
     {
-        channel = qBound(0, channel, 3);
+        channel = qBound(0, channel, 6);
         level = qBound(0, level, 15);
 
         m_vuLevels[channel] = level;
+        m_pendingVuLevels[channel] = level;
 
-        if (m_vuLedBar)
-            m_vuLedBar->setChannelLevel(channel, level);
+        // V9.05: a final zero must NEVER be swallowed by the 50 ms GUI throttle.
+        // Otherwise the last non-zero LED can remain painted indefinitely until
+        // playback is stopped/restarted. Positive activity remains throttled so
+        // audio timing still does not depend on GUI repaint load.
+        if (level == 0) {
+            if (m_vuLedBar)
+                m_vuLedBar->setChannelLevel(channel, 0);
+            return;
+        }
+
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if ((now - m_lastVuUiUpdateMs) >= 50) {
+            m_lastVuUiUpdateMs = now;
+            if (m_vuLedBar) {
+                for (int ch = 0; ch < 7; ++ch)
+                    m_vuLedBar->setChannelLevel(ch, m_pendingVuLevels[ch]);
+            }
+        }
 
         // Headers must not recolor with music/VU.
     }
@@ -8200,8 +8634,25 @@ public:
         m_vuLevels[2] = qBound(0, ch3, 15);
         m_vuLevels[3] = qBound(0, noise, 15);
 
-        if (m_vuLedBar)
-            m_vuLedBar->setLevels(m_vuLevels[0], m_vuLevels[1], m_vuLevels[2], m_vuLevels[3]);
+        for (int ch = 0; ch < 4; ++ch)
+            m_pendingVuLevels[ch] = m_vuLevels[ch];
+
+        // V9.05: clear silent channels immediately. In particular, the final
+        // all-zero update at the end of a decay must always reach the widget.
+        if (m_vuLedBar) {
+            for (int ch = 0; ch < 4; ++ch) {
+                if (m_pendingVuLevels[ch] == 0)
+                    m_vuLedBar->setChannelLevel(ch, 0);
+            }
+        }
+
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if ((now - m_lastVuUiUpdateMs) >= 50) {
+            m_lastVuUiUpdateMs = now;
+            if (m_vuLedBar)
+                m_vuLedBar->setLevels(m_pendingVuLevels[0], m_pendingVuLevels[1],
+                                      m_pendingVuLevels[2], m_pendingVuLevels[3]);
+        }
 
         // Headers must not recolor with music/VU.
     }
@@ -8245,21 +8696,18 @@ private:
     }
     void updateSoundVuHeader(int channel)
     {
-        if (channel < 0 || channel >= 4 || !m_channelHeaderLabels[channel])
+        if (channel < 0 || channel >= 7 || !m_channelHeaderLabels[channel])
             return;
 
-        static const QString baseText[4] = {
-            QStringLiteral("CH1 (Tone1)"),
-            QStringLiteral("CH2 (Tone 2)"),
-            QStringLiteral("CH3 (Tone 3)"),
-            QStringLiteral("Noise")
+        static const QString baseText[7] = {
+            QStringLiteral("CH1 (Tone 1)"), QStringLiteral("CH2 (Tone 2)"),
+            QStringLiteral("CH3 (Tone 3)"), QStringLiteral("Noise"),
+            QStringLiteral("AY1"), QStringLiteral("AY2"), QStringLiteral("AY3")
         };
 
-        static const QColor baseColor[4] = {
-            QColor("#50E35A"),
-            QColor("#66D9EF"),
-            QColor("#C586C0"),
-            QColor("#FFB24A")
+        static const QColor baseColor[7] = {
+            QColor("#FFE340"), QColor("#B04CFF"), QColor("#68FF87"), QColor("#FFB24A"),
+            QColor("#70D6FF"), QColor("#B8F35A"), QColor("#FF7A90")
         };
 
         // STATIC HEADER COLORS ONLY.
@@ -8288,7 +8736,7 @@ private:
 
     void setChannelAudible(int channel, bool audible)
     {
-        channel = qBound(0, channel, 3);
+        channel = qBound(0, channel, 6);
 
         if (m_channelAudible[channel] == audible)
             return;
@@ -8302,8 +8750,9 @@ private:
         // - state is not saved in .adpsnd
         if (!audible) {
             m_vuLevels[channel] = 0;
+            setSoundChannelVuLevel(channel, 0);
 
-            if (m_vuLedBar)
+            if (m_vuLedBar && channel < 4)
                 m_vuLedBar->setChannelLevel(channel, 0);
 
             requestPreviewTone(channel, 0, 0);
@@ -8311,15 +8760,15 @@ private:
 
         updateSoundVuHeader(channel);
         autoRebuildSoundOutput();
-        scheduleLiveInstrumentPlaybackRefresh();
+
+        if (onChannelAudibleChanged)
+            onChannelAudibleChanged(channel, audible);
+
+        if (!m_isPatternPlaying)
+            scheduleLiveInstrumentPlaybackRefresh();
 
         if (m_noteInfoLabel) {
-            static const QString names[4] = {
-                QStringLiteral("CH1"),
-                QStringLiteral("CH2"),
-                QStringLiteral("CH3"),
-                QStringLiteral("Noise")
-            };
+            static const QString names[7] = { QStringLiteral("CH1"), QStringLiteral("CH2"), QStringLiteral("CH3"), QStringLiteral("Noise"), QStringLiteral("AY1"), QStringLiteral("AY2"), QStringLiteral("AY3") };
 
             m_noteInfoLabel->setText(QString("%1 %2")
                                          .arg(names[channel])
@@ -8329,15 +8778,1885 @@ private:
 
     void toggleChannelAudible(int channel)
     {
-        channel = qBound(0, channel, 3);
+        channel = qBound(0, channel, 6);
         setChannelAudible(channel, !m_channelAudible[channel]);
     }
 
+    void updateAyInstrumentsTabVisibility(bool enabled)
+    {
+        if (!m_editorTabs || !m_ayInstrumentsPage)
+            return;
+
+        // Keep the AY page permanently owned by the QTabWidget.
+        // Never remove/orphan it: on some Qt builds a pre-created page that is
+        // not inserted in the tab widget can become visible like a floating window.
+        int idx = m_editorTabs->indexOf(m_ayInstrumentsPage);
+        if (idx < 0)
+            idx = m_editorTabs->addTab(m_ayInstrumentsPage, tr("AY Instruments"));
+
+        m_editorTabs->setTabEnabled(idx, enabled);
+
+        if (!enabled && m_editorTabs->currentWidget() == m_ayInstrumentsPage)
+            m_editorTabs->setCurrentIndex(0);
+    }
+
+    QJsonArray ayBankRows(int channel) const
+    {
+        const int idx = qBound(0, channel - 4, 2);
+        return m_ayInstrumentBanks[idx];
+    }
+
+    QString ayBankText(int channel, int instrument, int col, const QString& fallback) const
+    {
+        const int idx = qBound(0, channel - 4, 2);
+        const QJsonArray rows = m_ayInstrumentBanks[idx];
+        if (instrument < 0 || instrument >= rows.size())
+            return fallback;
+        const QJsonArray row = rows.at(instrument).toArray();
+        if (col < 0 || col >= row.size())
+            return fallback;
+        const QString text = row.at(col).toString().trimmed();
+        return text.isEmpty() ? fallback : text;
+    }
+
+    void saveVisibleAyBank()
+    {
+        if (!m_ayInstrumentsTable)
+            return;
+        m_ayInstrumentBanks[qBound(0, m_currentAyBank, 2)] = tableToJson(m_ayInstrumentsTable);
+    }
+
+    void loadVisibleAyBank(int bank)
+    {
+        if (!m_ayInstrumentsTable)
+            return;
+        bank = qBound(0, bank, 2);
+        saveVisibleAyBank();
+        m_currentAyBank = bank;
+        QSignalBlocker blocker(m_ayInstrumentsTable);
+        jsonToTable(m_ayInstrumentsTable, m_ayInstrumentBanks[bank]);
+        if (m_ayInstrumentsTable->rowCount() > 1)
+            m_ayInstrumentsTable->selectRow(1);
+    }
+
+    void resetCurrentAyBankToDefaults()
+    {
+        if (!m_ayInstrumentsTable)
+            return;
+        const int bank = qBound(0, m_currentAyBank, 2);
+        resetDefaultAyInstrumentsTable();
+        m_ayInstrumentBanks[bank] = tableToJson(m_ayInstrumentsTable);
+    }
+
+    void resetDefaultAyInstrumentsTable()
+    {
+        if (!m_ayInstrumentsTable)
+            return;
+
+        struct AyRow {
+            const char* id; const char* name; const char* tone; const char* noise;
+            const char* env; const char* shape; const char* envPeriod; const char* noisePeriod;
+            const char* attack; const char* decay; const char* sustain; const char* release;
+            const char* vibrato; const char* arp;
+        };
+
+        // Values are editable synthesis parameters for the SGM AY-3-8910 layer.
+        // Tone/Noise/Env are on/off. Shape is AY envelope shape 0..F.
+        // Periods are hexadecimal. ADSR/Vibrato/Arp are editor/player parameters.
+        static const AyRow rows[32] = {
+            {"00","---","ON","OFF","OFF","00","0100","00","00","00","0F","00","00","---"},
+            // Musical AY patches deliberately avoid fast single-channel chord arpeggios.
+            // The AY is far more convincing when each of A/B/C carries a stable voice and
+            // timbre comes from amplitude contour, a little vibrato and careful register use.
+            {"01","Finger Bass","ON","OFF","OFF","00","0100","00","00","03","0C","03","00","---"},
+            {"02","Round Bass","ON","OFF","OFF","00","0100","00","01","05","0D","05","00","---"},
+            {"03","Synth Bass","ON","OFF","OFF","00","0100","00","00","02","0F","04","01","---"},
+            {"04","Picked Bass","ON","OFF","OFF","00","0100","00","00","04","09","02","00","---"},
+            {"05","Pipe Organ","ON","OFF","OFF","00","0100","00","01","03","0F","05","01","---"},
+            {"06","Full Organ","ON","OFF","OFF","00","0100","00","00","02","0F","04","01","---"},
+            {"07","Brass Section","ON","OFF","OFF","00","0100","00","02","04","0E","04","02","---"},
+            {"08","String Ensemble","ON","OFF","OFF","00","0100","00","08","08","0D","0A","02","---"},
+            {"09","Warm Pad","ON","OFF","OFF","00","0100","00","0A","0C","0C","0D","02","---"},
+            {"0A","Synth Lead","ON","OFF","OFF","00","0100","00","00","02","0F","02","03","---"},
+            {"0B","Flute / Reed","ON","OFF","OFF","00","0100","00","03","04","0E","04","04","---"},
+            {"0C","Crystal Lead","ON","OFF","OFF","00","0100","00","01","04","0B","05","03","---"},
+            {"0D","Soft Lead","ON","OFF","OFF","00","0100","00","02","04","0D","04","02","---"},
+            {"0E","Piano Pluck","ON","OFF","OFF","00","0100","00","00","05","07","02","00","---"},
+            {"0F","Harp","ON","OFF","OFF","00","0100","00","00","06","08","03","00","---"},
+            {"10","Electric Piano","ON","OFF","OFF","00","0100","00","01","06","09","04","01","---"},
+            {"11","Chime","ON","OFF","OFF","00","0100","00","00","05","08","04","01","---"},
+            {"12","Bell","ON","OFF","OFF","00","0100","00","00","07","09","05","01","---"},
+            {"13","Dungeon Drone","ON","ON","ON","0A","1800","09","0A","0F","0F","0F","01","---"},
+            {"14","Dark Drone","ON","ON","ON","0E","2400","10","0C","0F","0C","0F","03","---"},
+            {"15","Magic Sweep","ON","ON","ON","0E","0180","05","00","09","0C","08","08","---"},
+            {"16","Wind","OFF","ON","ON","0A","0800","08","04","0D","08","0D","00","---"},
+            {"17","Laser","ON","ON","OFF","00","0100","02","00","01","0F","01","0C","---"},
+            {"18","Kick","ON","ON","OFF","00","0100","03","00","03","00","00","00","---"},
+            {"19","Snare","OFF","ON","OFF","00","0100","09","00","03","00","00","00","---"},
+            {"1A","HiHat Closed","OFF","ON","OFF","00","0100","01","00","01","00","00","00","---"},
+            {"1B","HiHat Open","OFF","ON","OFF","00","0100","02","00","07","00","00","00","---"},
+            {"1C","Tom","ON","ON","OFF","00","0100","04","00","04","03","00","00","---"},
+            {"1D","Explosion","OFF","ON","ON","0A","0280","1F","00","0F","00","00","00","---"},
+            {"1E","Power Up","ON","ON","ON","0E","0060","04","00","05","0F","04","0B","0,+4,+7,+12"},
+            {"1F","Shimmer FX","ON","ON","ON","0E","0030","02","00","04","0B","0A","0F","0,+7,+12,+19"}
+        };
+
+        m_ayInstrumentsTable->clearContents();
+        m_ayInstrumentsTable->setRowCount(32);
+        for (int r = 0; r < 32; ++r) {
+            const QStringList values = { rows[r].id, rows[r].name, rows[r].tone, rows[r].noise, rows[r].env,
+                                         rows[r].shape, rows[r].envPeriod, rows[r].noisePeriod, rows[r].attack,
+                                         rows[r].decay, rows[r].sustain, rows[r].release, rows[r].vibrato, rows[r].arp };
+            for (int c = 0; c < values.size(); ++c) {
+                auto* item = new QTableWidgetItem(values[c]);
+                if (c != 1 && c != 13) item->setTextAlignment(Qt::AlignCenter);
+                m_ayInstrumentsTable->setItem(r, c, item);
+            }
+            for (int c = 14; c <= 21; ++c) {
+                auto* item = new QTableWidgetItem("---");
+                item->setTextAlignment(Qt::AlignCenter);
+                m_ayInstrumentsTable->setItem(r, c, item);
+            }
+        }
+        m_ayInstrumentsTable->selectRow(1);
+    }
+
+    void setSgmSoundEnabled(bool enabled)
+    {
+        if (m_sgmSoundCheck && m_sgmSoundCheck->isChecked() != enabled) {
+            QSignalBlocker blocker(m_sgmSoundCheck);
+            m_sgmSoundCheck->setChecked(enabled);
+        }
+
+        // SGM compact layout: take 10 px from the group-box panel beside
+        // the Pattern Editor, so all 7 SGM channel blocks get more room.
+        if (m_soundRightPanel) {
+            m_soundRightPanel->setMinimumWidth(enabled ? 415 : 425);
+            m_soundRightPanel->setMaximumWidth(enabled ? 415 : 425);
+        }
+
+        // AY1/AY2/AY3 occupy channel blocks 4..6 (columns 17..28).
+        if (m_patternTable) {
+            for (int col = 17; col <= 28 && col < m_patternTable->columnCount(); ++col)
+                m_patternTable->setColumnHidden(col, !enabled);
+
+            // In SGM mode all seven channel blocks must fit comfortably on screen.
+            // Normal ColecoVision mode keeps the original wider tracker columns.
+            const int noteW = enabled ? 36 : 49;
+            const int instW = enabled ? 28 : 49;
+            const int volW  = enabled ? 30 : 49;
+            const int fxW   = enabled ? 28 : 49;
+            m_patternTable->horizontalHeader()->setMinimumSectionSize(enabled ? 24 : 36);
+            m_patternTable->setColumnWidth(0, enabled ? 28 : 50);
+            for (int block = 0; block < 7; ++block) {
+                const int base = 1 + block * 4;
+                m_patternTable->setColumnWidth(base + 0, noteW);
+                m_patternTable->setColumnWidth(base + 1, instW);
+                m_patternTable->setColumnWidth(base + 2, volW);
+                m_patternTable->setColumnWidth(base + 3, fxW);
+            }
+        }
+
+        // In SGM mode the top-left ROW caption is intentionally blank.
+        // Its cell width is exactly the same as column 0 below, so every
+        // channel title starts on the same X position as its pattern block.
+        if (m_patternRowHeaderLabel) {
+            m_patternRowHeaderLabel->setText(enabled ? QString() : tr("ROW"));
+            m_patternRowHeaderLabel->setFixedWidth(enabled ? 28 : 50);
+        }
+
+        // Keep the grouped channel headers exactly aligned with the table below.
+        const int channelHeaderW = enabled ? (36 + 28 + 30 + 28) : (49 * 4);
+        for (int ch = 0; ch < 7; ++ch) {
+            if (m_channelHeaderLabels[ch])
+                m_channelHeaderLabels[ch]->setFixedWidth(channelHeaderW);
+        }
+
+        for (int ch = 4; ch < 7; ++ch) {
+            if (m_channelHeaderLabels[ch])
+                m_channelHeaderLabels[ch]->setVisible(enabled);
+        }
+
+        if (m_vuLedBar)
+            m_vuLedBar->setSgmMode(enabled);
+
+        updateAyInstrumentsTabVisibility(enabled);
+        refreshActiveInstrumentSummary();
+
+        if (m_activeChannelCombo) {
+            if (!enabled && m_activeChannelCombo->currentData().toInt() >= 4)
+                m_activeChannelCombo->setCurrentIndex(0);
+            for (int i = 0; i < m_activeChannelCombo->count(); ++i) {
+                const int ch = m_activeChannelCombo->itemData(i).toInt();
+                if (auto* model = qobject_cast<QStandardItemModel*>(m_activeChannelCombo->model())) {
+                    if (QStandardItem* item = model->item(i))
+                        item->setEnabled(enabled || ch < 4);
+                }
+            }
+        }
+
+        if (!enabled) {
+            // V8.56: switching to a standard ColecoVision/SN-only song must never
+            // leave latched AY output from an earlier SGM song or instrument test.
+            for (int ch = 4; ch < 7; ++ch) {
+                m_channelAudible[ch] = true;
+                m_vuLevels[ch] = 0;
+                setSoundChannelVuLevel(ch, 0);
+                updateSoundVuHeader(ch);
+            }
+
+            if (onStreamStopRequested)
+                onStreamStopRequested();
+
+            if (onStopAllPreviewRequested)
+                onStopAllPreviewRequested();
+        }
+
+        if (m_noteInfoLabel)
+            m_noteInfoLabel->setText(enabled
+                ? tr("SGM Sound ON: SN76489 + AY-3-8910 A/B/C")
+                : tr("SGM Sound OFF: standard SN76489 only"));
+
+        autoRebuildSoundOutput();
+        restartCurrentStreamPlayback();
+    }
+
+    bool sgmSoundEnabled() const
+    {
+        return m_sgmSoundCheck && m_sgmSoundCheck->isChecked();
+    }
+
+    int patternInstrumentColumnForChannel(int channel) const
+    {
+        return (channel >= 0 && channel < 7) ? (2 + channel * 4) : -1;
+    }
+
+    QString replaceInstrumentName(int channel, int instrument) const
+    {
+        QString name;
+        if (channel >= 4) {
+            name = ayBankText(channel, instrument, 1, QString());
+        } else {
+            const QTableWidget* table = m_instrumentsTable;
+            if (table && instrument >= 0 && instrument < table->rowCount()) {
+                if (QTableWidgetItem* item = table->item(instrument, 1))
+                    name = item->text().trimmed();
+            }
+        }
+        const QString id = QString("%1").arg(instrument, 2, 16, QLatin1Char('0')).toUpper();
+        return name.isEmpty() ? id : QString("%1 - %2").arg(id, name);
+    }
+
+    void moveToneChannelsBetweenSnAndAy(bool snToAy)
+    {
+        if (!m_patternTable || !m_instrumentsTable)
+            return;
+
+        // CH1/CH2/CH3 <-> AY1/AY2/AY3.
+        // V8.82 also converts/copies the INSTRUMENT DEFINITIONS, not only the
+        // instrument numbers in the tracker rows.
+        pushSoundUndoState();
+        saveCurrentPatternToMemory();
+        saveVisibleAyBank();
+
+        auto snCell = [this](int inst, int col, const QString& fallback) {
+            if (!m_instrumentsTable || inst < 0 || inst >= m_instrumentsTable->rowCount())
+                return fallback;
+            QTableWidgetItem* item = m_instrumentsTable->item(inst, col);
+            const QString t = item ? item->text().trimmed() : QString();
+            return t.isEmpty() ? fallback : t;
+        };
+
+        auto setAyRowFromSn = [&](int ayBank, int inst) {
+            ayBank = qBound(0, ayBank, 2);
+            inst = qBound(0, inst, 31);
+
+            QJsonArray bank = m_ayInstrumentBanks[ayBank];
+            while (bank.size() < 32)
+                bank.append(QJsonArray());
+
+            QJsonArray row = bank.at(inst).toArray();
+            while (row.size() < 22)
+                row.append(QStringLiteral("---"));
+
+            const QString name = snCell(inst, 1, QStringLiteral("---"));
+            const QString type = snCell(inst, 2, QStringLiteral("Tone"));
+            const bool noise = type.compare(QStringLiteral("Noise"), Qt::CaseInsensitive) == 0;
+
+            bool ok = false;
+            int env = snCell(inst, 4, QStringLiteral("03")).toInt(&ok, 16);
+            if (!ok) env = 3;
+            int fade = snCell(inst, 5, QStringLiteral("03")).toInt(&ok, 16);
+            if (!ok) fade = 3;
+            int wx = snCell(inst, 6, QStringLiteral("50")).toInt(&ok, 10);
+            if (!ok) wx = 50;
+
+            row[0] = QString("%1").arg(inst, 2, 16, QLatin1Char('0')).toUpper();
+            row[1] = name;                         // preserve original case/name
+            row[2] = noise ? QStringLiteral("OFF") : QStringLiteral("ON");
+            row[3] = noise ? QStringLiteral("ON") : QStringLiteral("OFF");
+            row[4] = QStringLiteral("OFF");       // software envelope by default
+            row[5] = QStringLiteral("00");
+            row[6] = QStringLiteral("0100");
+            row[7] = QString("%1").arg(qBound(0, qRound(wx * 31.0 / 100.0), 31),
+                                       2, 16, QLatin1Char('0')).toUpper();
+
+            // Translate the SN envelope/fade character into a useful AY ADSR.
+            const int attack = (env == 5 || env == 8) ? 6 : ((env == 3) ? 1 : 2);
+            const int decay = qBound(0, 2 + fade / 2, 15);
+            const int sustain = qBound(0, 15 - fade / 2, 15);
+            const int release = qBound(0, fade, 15);
+            const int vibrato = (env == 6) ? 4 : 0;
+
+            row[8]  = QString("%1").arg(attack,  2, 16, QLatin1Char('0')).toUpper();
+            row[9]  = QString("%1").arg(decay,   2, 16, QLatin1Char('0')).toUpper();
+            row[10] = QString("%1").arg(sustain, 2, 16, QLatin1Char('0')).toUpper();
+            row[11] = QString("%1").arg(release, 2, 16, QLatin1Char('0')).toUpper();
+            row[12] = QString("%1").arg(vibrato, 2, 16, QLatin1Char('0')).toUpper();
+
+            row[13] = snCell(inst, 10, QStringLiteral("---")); // arpeggio
+            row[14] = snCell(inst, 8,  QStringLiteral("---")); // volume macro
+            row[15] = snCell(inst, 9,  QStringLiteral("---")); // pitch macro
+            row[16] = noise ? snCell(inst, 11, QStringLiteral("---"))
+                            : QStringLiteral("---");
+            row[17] = QStringLiteral("---");                    // AutoEnv
+            row[18] = noise ? QStringLiteral("2") : QStringLiteral("1"); // mixer
+            row[19] = QStringLiteral("---");
+            row[20] = QStringLiteral("---");
+            row[21] = QStringLiteral("0");
+
+            bank[inst] = row;
+            m_ayInstrumentBanks[ayBank] = bank;
+        };
+
+        auto setSnRowFromAy = [&](int ayBank, int inst) {
+            ayBank = qBound(0, ayBank, 2);
+            inst = qBound(0, inst, 31);
+            const QJsonArray bank = m_ayInstrumentBanks[ayBank];
+            if (inst >= bank.size())
+                return;
+
+            const QJsonArray ay = bank.at(inst).toArray();
+            auto av = [&](int col, const QString& fallback) {
+                if (col < 0 || col >= ay.size()) return fallback;
+                const QString t = ay.at(col).toString().trimmed();
+                return t.isEmpty() ? fallback : t;
+            };
+
+            const QString name = av(1, QStringLiteral("---"));
+            const bool toneOn = av(2, QStringLiteral("ON")).compare(QStringLiteral("ON"), Qt::CaseInsensitive) == 0;
+            const bool noiseOn = av(3, QStringLiteral("OFF")).compare(QStringLiteral("ON"), Qt::CaseInsensitive) == 0;
+
+            auto setSn = [this, inst](int col, const QString& value) {
+                setInstrumentCell(inst, col, value);
+            };
+
+            bool ok = false;
+            int decay = av(9, QStringLiteral("03")).toInt(&ok, 16);
+            if (!ok) decay = 3;
+            int attack = av(8, QStringLiteral("00")).toInt(&ok, 16);
+            if (!ok) attack = 0;
+            int vibrato = av(12, QStringLiteral("00")).toInt(&ok, 16);
+            if (!ok) vibrato = 0;
+
+            int env = 3;
+            if (vibrato > 0) env = 6;
+            else if (attack >= 6) env = 5;
+            else if (decay >= 7) env = 8;
+
+            setSn(0, QString("%1").arg(inst, 2, 16, QLatin1Char('0')).toUpper());
+            setSn(1, name); // preserve original AY name/case
+            setSn(2, (!toneOn && noiseOn) ? QStringLiteral("Noise") : QStringLiteral("Tone"));
+            setSn(3, QStringLiteral("0F"));
+            setSn(4, QString("%1").arg(env, 2, 16, QLatin1Char('0')).toUpper());
+            setSn(5, QString("%1").arg(qBound(0, decay, 15), 2, 16, QLatin1Char('0')).toUpper());
+            setSn(6, QStringLiteral("50"));
+            setSn(7, QStringLiteral("50"));
+            setSn(8, av(14, QStringLiteral("---")));
+            setSn(9, av(15, QStringLiteral("---")));
+            setSn(10, av(13, QStringLiteral("---")));
+            setSn(11, av(16, QStringLiteral("---")));
+        };
+
+        // Determine exactly which instrument slots are used by each source channel.
+        bool used[3][32] = {};
+        auto scanRows = [&](const QJsonArray& rows) {
+            for (const QJsonValue& rv : rows) {
+                const QJsonArray row = rv.toArray();
+                for (int i = 0; i < 3; ++i) {
+                    const int base = snToAy ? (1 + i * 4) : (17 + i * 4);
+                    if (base + 1 >= row.size())
+                        continue;
+                    bool ok = false;
+                    const int inst = row.at(base + 1).toString().trimmed().toInt(&ok, 16);
+                    if (ok && inst >= 0 && inst < 32)
+                        used[i][inst] = true;
+                }
+            }
+        };
+
+        for (auto it = m_soundPatterns.constBegin(); it != m_soundPatterns.constEnd(); ++it)
+            scanRows(it.value());
+
+        for (int i = 0; i < 3; ++i) {
+            for (int inst = 1; inst < 32; ++inst) {
+                if (!used[i][inst])
+                    continue;
+                if (snToAy)
+                    setAyRowFromSn(i, inst);
+                else
+                    setSnRowFromAy(i, inst);
+            }
+        }
+
+        auto moveRows = [snToAy](QJsonArray rows) {
+            for (int r = 0; r < rows.size(); ++r) {
+                QJsonArray row = rows.at(r).toArray();
+                while (row.size() < 29)
+                    row.append(QStringLiteral("---"));
+
+                for (int i = 0; i < 3; ++i) {
+                    const int snBase = 1 + i * 4;
+                    const int ayBase = 17 + i * 4;
+                    const int srcBase = snToAy ? snBase : ayBase;
+                    const int dstBase = snToAy ? ayBase : snBase;
+
+                    for (int f = 0; f < 4; ++f)
+                        row[dstBase + f] = row.at(srcBase + f);
+
+                    row[srcBase + 0] = QStringLiteral("---");
+                    row[srcBase + 1] = QStringLiteral("--");
+                    row[srcBase + 2] = QStringLiteral("--");
+                    row[srcBase + 3] = QStringLiteral("---");
+                }
+                rows[r] = row;
+            }
+            return rows;
+        };
+
+        for (auto it = m_soundPatterns.begin(); it != m_soundPatterns.end(); ++it)
+            it.value() = moveRows(it.value());
+
+        if (!m_soundPatterns.contains(m_currentPatternIndex))
+            m_soundPatterns[m_currentPatternIndex] = moveRows(tableToJson(m_patternTable));
+
+        if (snToAy)
+            setSgmSoundEnabled(true);
+
+        // Refresh the visible AY bank without overwriting the converted data.
+        if (m_ayInstrumentsTable) {
+            QSignalBlocker blocker(m_ayInstrumentsTable);
+            jsonToTable(m_ayInstrumentsTable, m_ayInstrumentBanks[qBound(0, m_currentAyBank, 2)]);
+        }
+        refreshAyInstrumentSelectionCombo(m_aySelectedInstrument[qBound(0, m_currentAyBank, 2)]);
+        refreshSnInstrumentSelectionCombo(currentInstrumentRow());
+        refreshActiveInstrumentSummary();
+
+        loadPatternFromMemory(m_currentPatternIndex);
+        autoRebuildSoundOutput();
+
+        if (m_noteInfoLabel)
+            m_noteInfoLabel->setText(snToAy
+                ? tr("Moved CH1/CH2/CH3 + instruments to AY1/AY2/AY3")
+                : tr("Moved AY1/AY2/AY3 + instruments to CH1/CH2/CH3"));
+    }
+
+    int countReplaceInstrument(int channelFilter, int fromInstrument, bool entireSong)
+    {
+        if (!m_patternTable)
+            return 0;
+
+        // Keep current editor contents synchronized before counting the song.
+        saveCurrentPatternToMemory();
+
+        auto countRows = [&](const QJsonArray& rows) {
+            int n = 0;
+            for (const QJsonValue& rv : rows) {
+                const QJsonArray row = rv.toArray();
+                for (int ch = 0; ch < 7; ++ch) {
+                    if (channelFilter >= 0 && ch != channelFilter)
+                        continue;
+                    const int col = patternInstrumentColumnForChannel(ch);
+                    if (col < 0 || col >= row.size())
+                        continue;
+                    bool ok = false;
+                    const int inst = row.at(col).toString().trimmed().toInt(&ok, 16);
+                    if (ok && inst == fromInstrument)
+                        ++n;
+                }
+            }
+            return n;
+        };
+
+        if (!entireSong)
+            return countRows(tableToJson(m_patternTable));
+
+        int total = 0;
+        for (auto it = m_soundPatterns.constBegin(); it != m_soundPatterns.constEnd(); ++it)
+            total += countRows(it.value());
+        return total;
+    }
+
+    void doReplaceInstrument(int channelFilter, int fromInstrument, int toInstrument, bool entireSong)
+    {
+        if (!m_patternTable || fromInstrument == toInstrument)
+            return;
+
+        // The complete replacement is deliberately one undo operation.
+        pushSoundUndoState();
+        saveCurrentPatternToMemory();
+
+        auto patchRows = [&](QJsonArray rows) {
+            for (int r = 0; r < rows.size(); ++r) {
+                QJsonArray row = rows.at(r).toArray();
+                for (int ch = 0; ch < 7; ++ch) {
+                    if (channelFilter >= 0 && ch != channelFilter)
+                        continue;
+                    const int col = patternInstrumentColumnForChannel(ch);
+                    if (col < 0 || col >= row.size())
+                        continue;
+                    bool ok = false;
+                    const int inst = row.at(col).toString().trimmed().toInt(&ok, 16);
+                    if (ok && inst == fromInstrument)
+                        row[col] = QString("%1").arg(toInstrument, 2, 16, QLatin1Char('0')).toUpper();
+                }
+                rows[r] = row;
+            }
+            return rows;
+        };
+
+        if (entireSong) {
+            for (auto it = m_soundPatterns.begin(); it != m_soundPatterns.end(); ++it)
+                it.value() = patchRows(it.value());
+        } else {
+            m_soundPatterns[m_currentPatternIndex] =
+                patchRows(m_soundPatterns.value(m_currentPatternIndex));
+        }
+
+        loadPatternFromMemory(m_currentPatternIndex);
+        autoRebuildSoundOutput();
+    }
+
+    void showReplaceInstrumentDialog()
+    {
+        if (!m_patternTable)
+            return;
+
+        saveCurrentPatternToMemory();
+
+        QDialog dlg(this);
+        dlg.setWindowTitle(tr("Replace Instrument"));
+        dlg.setModal(true);
+        dlg.setMinimumWidth(430);
+
+        QVBoxLayout* layout = new QVBoxLayout(&dlg);
+        QFormLayout* form = new QFormLayout();
+
+        QComboBox* channel = new QComboBox(&dlg);
+        channel->addItem(tr("All Channels"), -1);
+        channel->addItem(tr("CH1"), 0);
+        channel->addItem(tr("CH2"), 1);
+        channel->addItem(tr("CH3"), 2);
+        channel->addItem(tr("Noise"), 3);
+        if (sgmSoundEnabled()) {
+            channel->addItem(tr("AY1"), 4);
+            channel->addItem(tr("AY2"), 5);
+            channel->addItem(tr("AY3"), 6);
+        }
+
+        QComboBox* from = new QComboBox(&dlg);
+        QComboBox* to = new QComboBox(&dlg);
+        QComboBox* scope = new QComboBox(&dlg);
+        scope->addItem(tr("Current Pattern"), false);
+        scope->addItem(tr("Entire Song"), true);
+        scope->setCurrentIndex(1);
+
+        QLabel* found = new QLabel(&dlg);
+
+        auto refill = [&]() {
+            const int ch = channel->currentData().toInt();
+            const int oldFrom = from->currentData().toInt();
+            const int oldTo = to->currentData().toInt();
+            from->clear();
+            to->clear();
+            for (int i = 0; i < 32; ++i) {
+                const QString text = ch < 0
+                    ? QString("%1").arg(i, 2, 16, QLatin1Char('0')).toUpper()
+                    : replaceInstrumentName(ch, i);
+                from->addItem(text, i);
+                to->addItem(text, i);
+            }
+            if (oldFrom >= 0 && oldFrom < 32) from->setCurrentIndex(oldFrom);
+            if (oldTo >= 0 && oldTo < 32) to->setCurrentIndex(oldTo);
+            else if (to->count() > 1) to->setCurrentIndex(1);
+        };
+
+        auto refresh = [&]() {
+            if (from->currentIndex() < 0) return;
+            const int n = countReplaceInstrument(
+                channel->currentData().toInt(),
+                from->currentData().toInt(),
+                scope->currentData().toBool());
+            found->setText(tr("Found: %1 occurrence(s)").arg(n));
+        };
+
+        refill();
+        refresh();
+
+        form->addRow(tr("Channel:"), channel);
+        form->addRow(tr("Replace:"), from);
+        form->addRow(tr("With:"), to);
+        form->addRow(tr("Scope:"), scope);
+        form->addRow(QString(), found);
+        layout->addLayout(form);
+
+        QDialogButtonBox* buttons = new QDialogButtonBox(
+            QDialogButtonBox::Cancel | QDialogButtonBox::Ok, &dlg);
+        buttons->button(QDialogButtonBox::Ok)->setText(tr("Replace"));
+        layout->addWidget(buttons);
+
+        connect(channel, qOverload<int>(&QComboBox::currentIndexChanged), &dlg, [&](int) {
+            refill(); refresh();
+        });
+        connect(from, qOverload<int>(&QComboBox::currentIndexChanged), &dlg, [&](int) { refresh(); });
+        connect(scope, qOverload<int>(&QComboBox::currentIndexChanged), &dlg, [&](int) { refresh(); });
+        connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        connect(buttons, &QDialogButtonBox::accepted, &dlg, [&]() {
+            const int fromInst = from->currentData().toInt();
+            const int toInst = to->currentData().toInt();
+            if (fromInst == toInst) {
+                QMessageBox::information(&dlg, tr("Replace Instrument"),
+                                         tr("Replace and With are the same instrument."));
+                return;
+            }
+            const int n = countReplaceInstrument(
+                channel->currentData().toInt(), fromInst, scope->currentData().toBool());
+            if (n == 0) {
+                QMessageBox::information(&dlg, tr("Replace Instrument"),
+                                         tr("No matching instrument occurrences were found."));
+                return;
+            }
+            doReplaceInstrument(channel->currentData().toInt(), fromInst, toInst,
+                                scope->currentData().toBool());
+            dlg.accept();
+        });
+
+        dlg.exec();
+    }
+
+
+
+    void refreshSnInstrumentSelectionCombo(int preferredRow = -1)
+    {
+        if (!m_snInstrumentSelectCombo || !m_instrumentsTable)
+            return;
+
+        int row = preferredRow;
+        if (row < 0 && m_snEditChannelCombo) {
+            const int ch = qBound(0, m_snEditChannelCombo->currentData().toInt(), 3);
+            row = m_snSelectedInstrument[ch];
+        }
+        row = qBound(0, row < 0 ? 1 : row, m_instrumentsTable->rowCount() - 1);
+
+        QSignalBlocker blocker(m_snInstrumentSelectCombo);
+        m_snInstrumentSelectCombo->clear();
+        for (int r = 0; r < m_instrumentsTable->rowCount(); ++r) {
+            const QString id = QString("%1").arg(r, 2, 16, QLatin1Char('0')).toUpper();
+            QString name = QStringLiteral("---");
+            if (QTableWidgetItem* item = m_instrumentsTable->item(r, 1)) {
+                const QString t = item->text().trimmed();
+                if (!t.isEmpty())
+                    name = t;
+            }
+            m_snInstrumentSelectCombo->addItem(QString("%1  %2").arg(id, name), r);
+        }
+        m_snInstrumentSelectCombo->setCurrentIndex(row);
+    }
+
+    QString activeInstrumentDisplayName(int channel) const
+    {
+        int instrument = 0;
+        QString name = QStringLiteral("---");
+
+        if (channel >= 0 && channel < 4) {
+            instrument = (m_isPatternPlaying && m_playbackActiveInstrument[channel] >= 0)
+                ? qBound(0, m_playbackActiveInstrument[channel], 31)
+                : qBound(0, m_snSelectedInstrument[channel], 31);
+            if (m_instrumentsTable && instrument < m_instrumentsTable->rowCount()) {
+                if (QTableWidgetItem* item = m_instrumentsTable->item(instrument, 1)) {
+                    const QString t = item->text().trimmed();
+                    if (!t.isEmpty())
+                        name = t;
+                }
+            }
+        } else if (channel >= 4 && channel < 7) {
+            const int ay = channel - 4;
+            instrument = (m_isPatternPlaying && m_playbackActiveInstrument[channel] >= 0)
+                ? qBound(0, m_playbackActiveInstrument[channel], 31)
+                : qBound(0, m_aySelectedInstrument[ay], 31);
+            name = ayBankText(channel, instrument, 1, QStringLiteral("---"));
+        }
+
+        const QString id = QString("%1").arg(instrument, 2, 16, QLatin1Char('0')).toUpper();
+        return QString("%1  %2").arg(id, name);
+    }
+
+    void updatePlaybackActiveInstrumentsFromRow(int row)
+    {
+        if (!m_patternTable || row < 0 || row >= m_patternTable->rowCount())
+            return;
+
+        for (int ch = 0; ch < (sgmSoundEnabled() ? 7 : 4); ++ch) {
+            const int base = 1 + ch * 4;
+            const QString note = patternText(row, base + 0).trimmed().toUpper();
+            const QString instText = patternText(row, base + 1).trimmed().toUpper();
+
+            if (note == "===") {
+                m_playbackActiveInstrument[ch] = -1;
+                continue;
+            }
+
+            bool ok = false;
+            const int inst = instText.toInt(&ok, 16);
+            // Instrument changes in tracker data are authoritative whenever a
+            // valid instrument number is present.  On HOLD rows without an
+            // instrument, keep the last sounding instrument visible.
+            if (ok && inst >= 0 && inst <= 31)
+                m_playbackActiveInstrument[ch] = inst;
+        }
+        refreshActiveInstrumentSummary();
+    }
+
+    void refreshActiveInstrumentSummary()
+    {
+        static const char* channelNames[7] = {"CH1", "CH2", "CH3", "CH4", "AY1", "AY2", "AY3"};
+        const bool sgm = sgmSoundEnabled();
+
+        for (int ch = 0; ch < 7; ++ch) {
+            if (!m_activeInstrumentLabels[ch])
+                continue;
+            const bool visible = (ch < 4) || sgm;
+            m_activeInstrumentLabels[ch]->setVisible(visible);
+            if (visible)
+                m_activeInstrumentLabels[ch]->setText(
+                    QString("%1   %2").arg(QString::fromLatin1(channelNames[ch]), activeInstrumentDisplayName(ch)));
+        }
+    }
+
+    void refreshAyInstrumentSelectionCombo(int preferredRow = -1)
+    {
+        if (!m_ayInstrumentSelectCombo || !m_ayInstrumentsTable)
+            return;
+
+        int row = preferredRow;
+        if (row < 0)
+            row = m_ayInstrumentsTable->currentRow();
+        if (row < 0)
+            row = 0;
+        row = qBound(0, row, m_ayInstrumentsTable->rowCount() - 1);
+
+        QSignalBlocker blocker(m_ayInstrumentSelectCombo);
+        m_ayInstrumentSelectCombo->clear();
+
+        for (int r = 0; r < m_ayInstrumentsTable->rowCount(); ++r) {
+            const QString id = QString("%1").arg(r, 2, 16, QLatin1Char('0')).toUpper();
+            QString name = QStringLiteral("---");
+            if (QTableWidgetItem* item = m_ayInstrumentsTable->item(r, 1)) {
+                const QString t = item->text().trimmed();
+                if (!t.isEmpty())
+                    name = t;
+            }
+            m_ayInstrumentSelectCombo->addItem(QString("%1  %2").arg(id, name), r);
+        }
+
+        m_ayInstrumentSelectCombo->setCurrentIndex(row);
+        if (m_currentAyBank >= 0 && m_currentAyBank < 3)
+            m_aySelectedInstrument[m_currentAyBank] = row;
+        refreshActiveInstrumentSummary();
+    }
+
+    int ayVisualHexValue(int col, int fallback = 0) const
+    {
+        if (!m_ayInstrumentsTable)
+            return fallback;
+        const int row = m_ayInstrumentsTable->currentRow();
+        if (row < 0)
+            return fallback;
+        QTableWidgetItem* item = m_ayInstrumentsTable->item(row, col);
+        if (!item)
+            return fallback;
+        bool ok = false;
+        const int value = item->text().trimmed().toInt(&ok, 16);
+        return ok ? value : fallback;
+    }
+
+    QString defaultAyVolumeMacro(int instrumentId) const
+    {
+        static const char* v[32] = {
+            "---","15,15,14,13,12,12","15,14,14,13,13,12","15,15,15,14,13,13","15,13,11,9,7,5","6,10,13,15,15,15",
+            "8,12,15,15,15,15","7,11,14,15,14,13","3,6,9,12,14,14,13","2,4,7,10,12,13,13","15,15,15,14,14,13",
+            "5,9,12,14,14,13","15,14,13,12,11,10","8,11,14,14,13,12","15,13,10,7,5,3","15,13,11,9,7,5",
+            "15,14,12,10,9,8","15,13,11,9,7,5","15,14,12,10,8,6","10,10,10,10","9,9,9,9","8,9,10,11","8,8,8,8",
+            "15,14,12,9,6,3","15,12,8,4,0","15,12,9,6,3,1,0","15,8,3,0","15,12,9,6,4,2,0","15,12,9,6,3,1,0",
+            "15,13,10,7,4,2,0","8,10,12,14,15","15,14,13,12,11,10"
+        };
+        return QString::fromLatin1(v[qBound(0, instrumentId, 31)]);
+    }
+
+    QString defaultAyPitchMacro(int instrumentId) const
+    {
+        switch (instrumentId) {
+        case 1: case 2: case 3: case 4: return QStringLiteral("-1,0,0,0");
+        case 7: return QStringLiteral("+2,+1,0,0");
+        case 14: case 15: case 16: return QStringLiteral("+1,0,0,0");
+        case 17: case 18: return QStringLiteral("+12,0,0,0");
+        case 23: return QStringLiteral("+12,+10,+8,+6,+4,+2,0,-2,-4,-6,-8,-10,-12");
+        case 30: return QStringLiteral("0,+2,+4,+5,+7,+9,+11,+12");
+        default: return QStringLiteral("0");
+        }
+    }
+
+    QString defaultAyNoiseMacro(int instrumentId) const
+    {
+        switch (instrumentId) {
+        case 4:  return QStringLiteral("06,09,0C");       // pick click
+        case 7:  return QStringLiteral("0C,10,14,18");    // brass breath transient
+        case 11: return QStringLiteral("12,16,1A,1E");    // flute/reed breath
+        case 14: case 15: case 16: return QStringLiteral("04,08,0C"); // hammer/pluck
+        case 19: return QStringLiteral("09,0A,0B,0C");
+        case 20: return QStringLiteral("10,12,14,16");
+        case 21: return QStringLiteral("05,04,03,02,01");
+        case 22: return QStringLiteral("08,09,0A,0B,0C,0D");
+        case 24: return QStringLiteral("03,04,05,06");
+        case 25: return QStringLiteral("09,0D,11,15");
+        case 26: return QStringLiteral("01,02,03,04");
+        case 27: return QStringLiteral("02,03,04,05,06");
+        case 28: return QStringLiteral("04,05,06,07");
+        case 29: return QStringLiteral("1F,18,14,10,0C,08,04");
+        default: return QStringLiteral("---");
+        }
+    }
+
+    QString defaultAyWaveMacro(int instrumentId) const
+    {
+        // Furnace-style PSG mode bits: bit0=tone, bit1=noise, bit2=hardware envelope.
+        // Short noise transients make attacks more recognisable without turning every
+        // melodic patch into a chiptune arpeggio. Values are evaluated at 60 Hz.
+        switch (instrumentId) {
+        case 4:  return QStringLiteral("3,1,1,1");       // Picked bass: pick transient
+        case 7:  return QStringLiteral("3,3,1,1,1");     // Brass: breath/noise attack
+        case 11: return QStringLiteral("3,1,1,1,1");     // Flute/reed: breath attack
+        case 14: return QStringLiteral("3,1,1");         // Piano: hammer transient
+        case 15: return QStringLiteral("3,1,1");         // Harp: pluck transient
+        case 16: return QStringLiteral("3,1,1,1");       // E-piano attack
+        case 17: case 18: return QStringLiteral("5");    // Chime/Bell: tone + HW env
+        case 19: case 20: case 21: case 22: return QStringLiteral("7"); // drones/sweep
+        case 23: return QStringLiteral("3");             // laser tone + noise
+        case 24: case 28: return QStringLiteral("3");    // kick/tom
+        case 25: case 26: case 27: case 29: return QStringLiteral("2"); // noise percussion
+        case 30: case 31: return QStringLiteral("7");    // deliberate FX
+        default: return QStringLiteral("1");             // pure tone
+        }
+    }
+
+    QString defaultAyEnvShapeMacro(int instrumentId) const
+    {
+        switch (instrumentId) {
+        case 17: case 18: return QStringLiteral("0A");
+        case 19: return QStringLiteral("0A");
+        case 20: case 21: return QStringLiteral("0E");
+        case 22: return QStringLiteral("0A");
+        case 29: return QStringLiteral("0A");
+        case 30: case 31: return QStringLiteral("0E");
+        default: return QStringLiteral("---");
+        }
+    }
+
+    QString defaultAyEnvPeriodMacro(int instrumentId) const
+    {
+        // Fixed envelope periods are mainly useful for drones/FX. Bell-like patches
+        // use AutoEnv below so their timbre follows the played note.
+        switch (instrumentId) {
+        case 19: return QStringLiteral("1800");
+        case 20: return QStringLiteral("2400");
+        case 21: return QStringLiteral("0180,0140,0100,00C0,0080");
+        case 22: return QStringLiteral("0800");
+        case 29: return QStringLiteral("0280,0340,0400,0500");
+        case 30: return QStringLiteral("0060,0050,0040,0030");
+        case 31: return QStringLiteral("0030,0028,0020,0018");
+        default: return QStringLiteral("---");
+        }
+    }
+
+    QString defaultAyAutoEnv(int instrumentId) const
+    {
+        // AY hardware envelope can act as a timbre generator when its frequency is
+        // tied to the note. Keep this to solo/bell/FX patches because the envelope
+        // generator is shared by A/B/C on real SGM hardware.
+        switch (instrumentId) {
+        case 17: return QStringLiteral("1/2");
+        case 18: return QStringLiteral("1/1");
+        default: return QStringLiteral("---");
+        }
+    }
+
+    QString defaultAyPhaseResetMacro(int instrumentId) const
+    {
+        switch (instrumentId) {
+        case 4: case 14: case 15: case 16:
+        case 17: case 18:
+        case 23: case 24: case 25: case 26: case 27: case 28:
+            return QStringLiteral("1,0");
+        default:
+            return QStringLiteral("0");
+        }
+    }
+
+    QString ayMacroCell(int channel, int instrumentId, int col) const
+    {
+        const QString stored = ayBankText(channel, instrumentId, col, "---").trimmed();
+        if (!stored.isEmpty() && stored != "---") return stored;
+        if (col == 14) return defaultAyVolumeMacro(instrumentId);
+        if (col == 15) return defaultAyPitchMacro(instrumentId);
+        if (col == 16) return defaultAyNoiseMacro(instrumentId);
+        if (col == 17) return defaultAyAutoEnv(instrumentId);
+        if (col == 18) return defaultAyWaveMacro(instrumentId);
+        if (col == 19) return defaultAyEnvShapeMacro(instrumentId);
+        if (col == 20) return defaultAyEnvPeriodMacro(instrumentId);
+        if (col == 21) return defaultAyPhaseResetMacro(instrumentId);
+        return QStringLiteral("---");
+    }
+
+    void loadAyInstrumentIntoVisualEditor(int row)
+    {
+        if (!m_ayInstrumentsTable || row < 0 || row >= m_ayInstrumentsTable->rowCount())
+            return;
+
+        m_updatingAyVisualEditor = true;
+
+        auto textAt = [&](int col, const QString& fallback = QString()) {
+            if (QTableWidgetItem* item = m_ayInstrumentsTable->item(row, col))
+                return item->text().trimmed();
+            return fallback;
+        };
+        auto hexAt = [&](int col, int fallback = 0) {
+            bool ok = false;
+            const int v = textAt(col).toInt(&ok, 16);
+            return ok ? v : fallback;
+        };
+
+        if (m_ayNameEdit) m_ayNameEdit->setText(textAt(1));
+        if (m_ayToneCheck) m_ayToneCheck->setChecked(textAt(2, "ON").compare("ON", Qt::CaseInsensitive) == 0);
+        if (m_ayNoiseCheck) m_ayNoiseCheck->setChecked(textAt(3, "OFF").compare("ON", Qt::CaseInsensitive) == 0);
+        if (m_ayEnvCheck) m_ayEnvCheck->setChecked(textAt(4, "OFF").compare("ON", Qt::CaseInsensitive) == 0);
+
+        if (m_ayShapeSpin) m_ayShapeSpin->setValue(qBound(0, hexAt(5, 0), 15));
+        if (m_ayEnvPeriodSpin) m_ayEnvPeriodSpin->setValue(qBound(0, hexAt(6, 0x100), 0xFFFF));
+        if (m_ayNoisePeriodSpin) m_ayNoisePeriodSpin->setValue(qBound(0, hexAt(7, 0), 31));
+        if (m_ayAttackSpin) m_ayAttackSpin->setValue(qBound(0, hexAt(8, 0), 15));
+        if (m_ayDecaySpin) m_ayDecaySpin->setValue(qBound(0, hexAt(9, 0), 15));
+        if (m_aySustainSpin) m_aySustainSpin->setValue(qBound(0, hexAt(10, 15), 15));
+        if (m_ayReleaseSpin) m_ayReleaseSpin->setValue(qBound(0, hexAt(11, 0), 15));
+        if (m_ayVibratoSpin) m_ayVibratoSpin->setValue(qBound(0, hexAt(12, 0), 15));
+        if (m_ayArpEdit) m_ayArpEdit->setText(textAt(13, "---"));
+        const int ayCh = qBound(0, m_currentAyBank, 2);
+        if (m_ayVolumeMacroEdit) m_ayVolumeMacroEdit->setText(ayMacroCell(ayCh, row, 14));
+        if (m_ayPitchMacroEdit) m_ayPitchMacroEdit->setText(ayMacroCell(ayCh, row, 15));
+        if (m_ayNoiseMacroEdit) m_ayNoiseMacroEdit->setText(ayMacroCell(ayCh, row, 16));
+        if (m_ayAutoEnvEdit) m_ayAutoEnvEdit->setText(ayMacroCell(ayCh, row, 17));
+        if (m_ayWaveMacroEdit) m_ayWaveMacroEdit->setText(ayMacroCell(ayCh, row, 18));
+        if (m_ayEnvShapeMacroEdit) m_ayEnvShapeMacroEdit->setText(ayMacroCell(ayCh, row, 19));
+        if (m_ayEnvPeriodMacroEdit) m_ayEnvPeriodMacroEdit->setText(ayMacroCell(ayCh, row, 20));
+        if (m_ayPhaseResetMacroEdit) m_ayPhaseResetMacroEdit->setText(ayMacroCell(ayCh, row, 21));
+
+        auto syncSlider = [](QSlider* slider, QSpinBox* spin) {
+            if (slider && spin) slider->setValue(spin->value());
+        };
+        syncSlider(m_ayAttackSlider, m_ayAttackSpin);
+        syncSlider(m_ayDecaySlider, m_ayDecaySpin);
+        syncSlider(m_aySustainSlider, m_aySustainSpin);
+        syncSlider(m_ayReleaseSlider, m_ayReleaseSpin);
+        syncSlider(m_ayVibratoSlider, m_ayVibratoSpin);
+
+        if (m_ayEnvelopePreview) {
+            m_ayEnvelopePreview->setParameters(
+                m_ayAttackSpin ? m_ayAttackSpin->value() : 0,
+                m_ayDecaySpin ? m_ayDecaySpin->value() : 0,
+                m_aySustainSpin ? m_aySustainSpin->value() : 15,
+                m_ayReleaseSpin ? m_ayReleaseSpin->value() : 0,
+                m_ayVibratoSpin ? m_ayVibratoSpin->value() : 0
+            );
+        }
+
+        m_updatingAyVisualEditor = false;
+    }
+
+    void applyAyVisualEditorToTable()
+    {
+        if (m_updatingAyVisualEditor || !m_ayInstrumentsTable)
+            return;
+
+        const int row = m_ayInstrumentsTable->currentRow();
+        if (row < 0 || row >= m_ayInstrumentsTable->rowCount())
+            return;
+
+        auto setText = [&](int col, const QString& value) {
+            QTableWidgetItem* item = m_ayInstrumentsTable->item(row, col);
+            if (!item) {
+                item = new QTableWidgetItem();
+                m_ayInstrumentsTable->setItem(row, col, item);
+            }
+            if (item->text() != value)
+                item->setText(value);
+        };
+        auto hex2 = [](int value) {
+            return QString("%1").arg(value, 2, 16, QLatin1Char('0')).toUpper();
+        };
+        auto hex4 = [](int value) {
+            return QString("%1").arg(value, 4, 16, QLatin1Char('0')).toUpper();
+        };
+
+        setText(0, hex2(row));
+        setText(1, m_ayNameEdit ? m_ayNameEdit->text().trimmed() : QString());
+        setText(2, (m_ayToneCheck && m_ayToneCheck->isChecked()) ? "ON" : "OFF");
+        setText(3, (m_ayNoiseCheck && m_ayNoiseCheck->isChecked()) ? "ON" : "OFF");
+        setText(4, (m_ayEnvCheck && m_ayEnvCheck->isChecked()) ? "ON" : "OFF");
+        setText(5, hex2(m_ayShapeSpin ? m_ayShapeSpin->value() : 0));
+        setText(6, hex4(m_ayEnvPeriodSpin ? m_ayEnvPeriodSpin->value() : 0x100));
+        setText(7, hex2(m_ayNoisePeriodSpin ? m_ayNoisePeriodSpin->value() : 0));
+        setText(8, hex2(m_ayAttackSpin ? m_ayAttackSpin->value() : 0));
+        setText(9, hex2(m_ayDecaySpin ? m_ayDecaySpin->value() : 0));
+        setText(10, hex2(m_aySustainSpin ? m_aySustainSpin->value() : 15));
+        setText(11, hex2(m_ayReleaseSpin ? m_ayReleaseSpin->value() : 0));
+        setText(12, hex2(m_ayVibratoSpin ? m_ayVibratoSpin->value() : 0));
+        setText(13, (m_ayArpEdit && !m_ayArpEdit->text().trimmed().isEmpty())
+                        ? m_ayArpEdit->text().trimmed() : QStringLiteral("---"));
+        setText(14, (m_ayVolumeMacroEdit && !m_ayVolumeMacroEdit->text().trimmed().isEmpty()) ? m_ayVolumeMacroEdit->text().trimmed() : QStringLiteral("---"));
+        setText(15, (m_ayPitchMacroEdit && !m_ayPitchMacroEdit->text().trimmed().isEmpty()) ? m_ayPitchMacroEdit->text().trimmed() : QStringLiteral("---"));
+        setText(16, (m_ayNoiseMacroEdit && !m_ayNoiseMacroEdit->text().trimmed().isEmpty()) ? m_ayNoiseMacroEdit->text().trimmed() : QStringLiteral("---"));
+        setText(17, (m_ayAutoEnvEdit && !m_ayAutoEnvEdit->text().trimmed().isEmpty()) ? m_ayAutoEnvEdit->text().trimmed() : QStringLiteral("---"));
+        setText(18, (m_ayWaveMacroEdit && !m_ayWaveMacroEdit->text().trimmed().isEmpty()) ? m_ayWaveMacroEdit->text().trimmed() : QStringLiteral("---"));
+        setText(19, (m_ayEnvShapeMacroEdit && !m_ayEnvShapeMacroEdit->text().trimmed().isEmpty()) ? m_ayEnvShapeMacroEdit->text().trimmed() : QStringLiteral("---"));
+        setText(20, (m_ayEnvPeriodMacroEdit && !m_ayEnvPeriodMacroEdit->text().trimmed().isEmpty()) ? m_ayEnvPeriodMacroEdit->text().trimmed() : QStringLiteral("---"));
+        setText(21, (m_ayPhaseResetMacroEdit && !m_ayPhaseResetMacroEdit->text().trimmed().isEmpty()) ? m_ayPhaseResetMacroEdit->text().trimmed() : QStringLiteral("0"));
+
+        saveVisibleAyBank();
+
+        if (m_ayEnvelopePreview) {
+            m_ayEnvelopePreview->setParameters(
+                m_ayAttackSpin ? m_ayAttackSpin->value() : 0,
+                m_ayDecaySpin ? m_ayDecaySpin->value() : 0,
+                m_aySustainSpin ? m_aySustainSpin->value() : 15,
+                m_ayReleaseSpin ? m_ayReleaseSpin->value() : 0,
+                m_ayVibratoSpin ? m_ayVibratoSpin->value() : 0
+            );
+        }
+
+        refreshAyInstrumentSelectionCombo(row);
+        refreshActiveInstrumentSummary();
+        autoRebuildSoundOutput();
+        scheduleLiveInstrumentPlaybackRefresh();
+    }
+
+
+    static int sfxVolumeNibbleFromCompactCell(const QString& cell)
+    {
+        const int slash = cell.indexOf('/');
+        if (slash < 0) return 15;
+        bool ok = false;
+        const int v = cell.mid(slash + 1).trimmed().toInt(&ok, 16);
+        return ok ? qBound(0, v, 15) : 15;
+    }
+
+    static QString sfxNoteFromCompactCell(const QString& cell)
+    {
+        const int slash = cell.indexOf('/');
+        return (slash < 0 ? cell : cell.left(slash)).trimmed().toUpper();
+    }
+
+    QJsonArray compactSfxRowToTrackerRow(const QString& src, int rowIndex) const
+    {
+        QJsonArray row;
+        row.append(QString("%1").arg(rowIndex, 2, 16, QLatin1Char('0')).toUpper());
+        const QStringList parts = src.split('|');
+        for (int ch = 0; ch < 7; ++ch) {
+            const QString cell = (ch < parts.size()) ? parts.at(ch).trimmed().toUpper() : QStringLiteral("---");
+            const QString note = sfxNoteFromCompactCell(cell);
+            const int vol = sfxVolumeNibbleFromCompactCell(cell);
+            if (note.isEmpty() || note == "---") {
+                row.append("---"); row.append("--"); row.append("---"); row.append("---");
+            } else {
+                row.append(note);
+                row.append("--");
+                row.append(QString("V0%1").arg(vol, 1, 16).toUpper());
+                row.append("---");
+            }
+        }
+        return row;
+    }
+
+    QJsonArray normalizeSfxTrackerRows(const QJsonArray& source) const
+    {
+        QJsonArray out;
+        for (int r = 0; r < qMin(256, source.size()); ++r) {
+            const QJsonArray in = source.at(r).toArray();
+            if (in.size() >= 29) {
+                QJsonArray row;
+                for (int c = 0; c < 29; ++c)
+                    row.append(c < in.size() ? in.at(c).toString() : QString());
+                row[0] = QString("%1").arg(r, 2, 16, QLatin1Char('0')).toUpper();
+                out.append(row);
+            } else {
+                QStringList compact;
+                for (int c = 1; c < 8; ++c)
+                    compact << (c < in.size() ? in.at(c).toString("---") : QStringLiteral("---"));
+                out.append(compactSfxRowToTrackerRow(compact.join('|'), r));
+            }
+        }
+        while (out.size() < 256)
+            out.append(compactSfxRowToTrackerRow(QString(), out.size()));
+        return out;
+    }
+
+    QJsonObject makeDefaultSfx(const QString& name, int length, const QStringList& rows) const
+    {
+        QJsonObject fx;
+        fx["name"] = name;
+        fx["length"] = qBound(1, length, 256);
+        fx["stepMs"] = 70;
+        QJsonArray data;
+        for (int r = 0; r < 256; ++r) {
+            const QString src = (r < rows.size()) ? rows.at(r) : QString();
+            data.append(compactSfxRowToTrackerRow(src, r));
+        }
+        fx["rows"] = data;
+        return fx;
+    }
+
+    void createDefaultSfxBank()
+    {
+        m_sfxBank = QJsonArray();
+        m_sfxBank.append(makeDefaultSfx("Jump", 8, {
+            "C-4/F|---|---|---|---|---|---",
+            "D-4/E|---|---|---|---|---|---",
+            "E-4/D|---|---|---|---|---|---",
+            "G-4/C|---|---|---|---|---|---",
+            "A-4/A|---|---|---|---|---|---",
+            "C-5/8|---|---|---|---|---|---",
+            "C-5/5|---|---|---|---|---|---",
+            "---|---|---|---|---|---|---"
+        }));
+        m_sfxBank.append(makeDefaultSfx("Coin", 7, {
+            "E-5/F|---|---|---|---|---|---",
+            "B-5/F|---|---|---|---|---|---",
+            "E-6/E|---|---|---|---|---|---",
+            "B-5/B|---|---|---|---|---|---",
+            "E-6/8|---|---|---|---|---|---",
+            "E-6/4|---|---|---|---|---|---",
+            "---|---|---|---|---|---|---"
+        }));
+        m_sfxBank.append(makeDefaultSfx("Shot", 6, {
+            "G-5/F|---|---|N02/F|---|---|---",
+            "E-5/D|---|---|N02/D|---|---|---",
+            "C-5/B|---|---|N03/B|---|---|---",
+            "A-4/8|---|---|N03/8|---|---|---",
+            "F-4/5|---|---|N03/5|---|---|---",
+            "---|---|---|---|---|---|---"
+        }));
+        m_sfxBank.append(makeDefaultSfx("Explosion", 12, {
+            "---|---|---|N00/F|---|---|---",
+            "---|---|---|N00/F|---|---|---",
+            "---|---|---|N01/E|---|---|---",
+            "---|---|---|N01/D|---|---|---",
+            "---|---|---|N02/C|---|---|---",
+            "---|---|---|N02/B|---|---|---",
+            "---|---|---|N03/A|---|---|---",
+            "---|---|---|N03/8|---|---|---",
+            "---|---|---|N03/6|---|---|---",
+            "---|---|---|N03/4|---|---|---",
+            "---|---|---|N03/2|---|---|---",
+            "---|---|---|---|---|---|---"
+        }));
+        m_sfxBank.append(makeDefaultSfx("Pickup", 6, {
+            "C-5/E|E-5/B|---|---|---|---|---",
+            "E-5/F|G-5/C|---|---|---|---|---",
+            "G-5/F|C-6/D|---|---|---|---|---",
+            "C-6/C|E-6/A|---|---|---|---|---",
+            "C-6/7|E-6/5|---|---|---|---|---",
+            "---|---|---|---|---|---|---"
+        }));
+        m_sfxBank.append(makeDefaultSfx("Damage", 8, {
+            "C-3/F|---|G-3/C|N01/D|---|---|---",
+            "B-2/E|---|F#3/B|N01/C|---|---|---",
+            "A-2/D|---|E-3/A|N02/B|---|---|---",
+            "G-2/B|---|D-3/8|N02/A|---|---|---",
+            "F-2/9|---|C-3/6|N03/8|---|---|---",
+            "E-2/6|---|B-2/4|N03/6|---|---|---",
+            "D-2/3|---|A-2/2|N03/3|---|---|---",
+            "---|---|---|---|---|---|---"
+        }));
+        m_sfxBank.append(makeDefaultSfx("Magic", 10, {
+            "C-5/C|E-5/A|G-5/8|---|C-6/F|---|---",
+            "D-5/D|F-5/B|A-5/9|---|D-6/E|---|---",
+            "E-5/E|G-5/C|B-5/A|---|E-6/D|---|---",
+            "G-5/F|B-5/D|D-6/B|---|G-6/C|---|---",
+            "A-5/E|C-6/C|E-6/A|---|A-6/A|---|---",
+            "G-5/C|B-5/A|D-6/8|---|G-6/8|---|---",
+            "E-5/A|G-5/8|B-5/6|---|E-6/6|---|---",
+            "C-5/7|E-5/5|G-5/4|---|C-6/4|---|---",
+            "C-5/3|E-5/2|G-5/2|---|C-6/2|---|---",
+            "---|---|---|---|---|---|---"
+        }));
+        m_sfxBank.append(makeDefaultSfx("Laser", 10, {
+            "C-6/F|---|---|N03/A|---|---|---",
+            "A-5/E|---|---|N03/9|---|---|---",
+            "F-5/D|---|---|N03/8|---|---|---",
+            "D-5/C|---|---|N03/7|---|---|---",
+            "B-4/B|---|---|N03/6|---|---|---",
+            "G-4/9|---|---|N03/5|---|---|---",
+            "E-4/7|---|---|N03/4|---|---|---",
+            "C-4/5|---|---|N03/3|---|---|---",
+            "A-3/3|---|---|N03/2|---|---|---",
+            "---|---|---|---|---|---|---"
+        }));
+        m_sfxBank.append(makeDefaultSfx("Power Up", 12, {
+            "C-4/C|E-4/A|G-4/8|---|---|---|---",
+            "E-4/D|G-4/B|C-5/9|---|---|---|---",
+            "G-4/E|C-5/C|E-5/A|---|---|---|---",
+            "C-5/F|E-5/D|G-5/B|---|---|---|---",
+            "E-5/F|G-5/E|C-6/C|---|---|---|---",
+            "G-5/F|C-6/F|E-6/D|---|---|---|---",
+            "C-6/F|E-6/F|G-6/E|---|---|---|---",
+            "E-6/E|G-6/E|C-7/D|---|---|---|---",
+            "G-6/C|C-7/C|E-7/B|---|---|---|---",
+            "C-7/9|E-7/8|G-7/7|---|---|---|---",
+            "C-7/5|E-7/4|G-7/3|---|---|---|---",
+            "---|---|---|---|---|---|---"
+        }));
+        m_sfxBank.append(makeDefaultSfx("Door", 10, {
+            "C-2/D|---|---|N02/9|---|---|---",
+            "C-2/D|---|---|N02/A|---|---|---",
+            "B-1/C|---|---|N02/9|---|---|---",
+            "A-1/B|---|---|N02/8|---|---|---",
+            "G-1/A|---|---|N02/7|---|---|---",
+            "F-1/8|---|---|N03/6|---|---|---",
+            "E-1/6|---|---|N03/5|---|---|---",
+            "D-1/4|---|---|N03/4|---|---|---",
+            "C-1/2|---|---|N03/2|---|---|---",
+            "---|---|---|---|---|---|---"
+        }));
+    }
+
+    void refreshSfxList(int selectIndex = -1)
+    {
+        if (!m_sfxList) return;
+        QSignalBlocker blocker(m_sfxList);
+        m_sfxList->clear();
+        for (int i = 0; i < m_sfxBank.size(); ++i) {
+            const QJsonObject fx = m_sfxBank.at(i).toObject();
+            m_sfxList->addItem(QString("%1  %2").arg(i, 2, 16, QLatin1Char('0')).toUpper().arg(fx.value("name").toString()));
+        }
+        if (!m_sfxBank.isEmpty()) {
+            if (selectIndex < 0) selectIndex = qBound(0, m_currentSfxIndex, m_sfxBank.size() - 1);
+            m_sfxList->setCurrentRow(qBound(0, selectIndex, m_sfxBank.size() - 1));
+        }
+    }
+
+    void storeCurrentSfxFromUi()
+    {
+        if (m_loadingSfx || !m_sfxTable || m_currentSfxIndex < 0 || m_currentSfxIndex >= m_sfxBank.size()) return;
+        QJsonObject fx = m_sfxBank.at(m_currentSfxIndex).toObject();
+        fx["name"] = m_sfxNameEdit ? m_sfxNameEdit->text().trimmed() : fx.value("name").toString();
+        fx["length"] = m_sfxLengthSpin ? m_sfxLengthSpin->value() : 16;
+        fx["stepMs"] = m_sfxStepMsSpin ? m_sfxStepMsSpin->value() : 70;
+        QJsonArray rows;
+        for (int r = 0; r < 256; ++r) {
+            QJsonArray row;
+            for (int c = 0; c < 29; ++c) {
+                QTableWidgetItem* it = m_sfxTable->item(r, c);
+                QString value = it ? it->text().trimmed().toUpper() : QString();
+                if (c == 0) value = QString("%1").arg(r, 2, 16, QLatin1Char('0')).toUpper();
+                row.append(value);
+            }
+            rows.append(row);
+        }
+        fx["rows"] = rows;
+        m_sfxBank[m_currentSfxIndex] = fx;
+    }
+
+    void loadSfxToUi(int index)
+    {
+        if (!m_sfxTable || index < 0 || index >= m_sfxBank.size()) return;
+        if (m_currentSfxIndex >= 0 && m_currentSfxIndex < m_sfxBank.size() && index != m_currentSfxIndex)
+            storeCurrentSfxFromUi();
+        m_currentSfxIndex = index;
+        const QJsonObject fx = m_sfxBank.at(index).toObject();
+        m_loadingSfx = true;
+        if (m_sfxNameEdit) m_sfxNameEdit->setText(fx.value("name").toString());
+        if (m_sfxLengthSpin) m_sfxLengthSpin->setValue(qBound(1, fx.value("length").toInt(16), 256));
+        if (m_sfxStepMsSpin) m_sfxStepMsSpin->setValue(qBound(20, fx.value("stepMs").toInt(70), 500));
+        const QJsonArray rows = normalizeSfxTrackerRows(fx.value("rows").toArray());
+        QSignalBlocker tableBlocker(m_sfxTable);
+        for (int r = 0; r < 256; ++r) {
+            const QJsonArray row = rows.at(r).toArray();
+            for (int c = 0; c < 29; ++c) {
+                if (!m_sfxTable->item(r, c)) {
+                    QTableWidgetItem* item = new QTableWidgetItem();
+                    item->setTextAlignment(Qt::AlignCenter);
+                    m_sfxTable->setItem(r, c, item);
+                }
+                m_sfxTable->item(r, c)->setText(c < row.size() ? row.at(c).toString() : QString());
+            }
+            m_sfxTable->item(r, 0)->setFlags(m_sfxTable->item(r, 0)->flags() & ~Qt::ItemIsEditable);
+            m_sfxTable->setRowHidden(r, r >= (m_sfxLengthSpin ? m_sfxLengthSpin->value() : 16));
+        }
+        m_loadingSfx = false;
+    }
+
+    static int sfxTrackerVolume(const QString& text)
+    {
+        QString t = text.trimmed().toUpper();
+        if (t.isEmpty() || t == "---" || t == "--") return 15;
+        if (t.startsWith('V')) t.remove(0, 1);
+        bool ok = false;
+        int v = t.toInt(&ok, 16);
+        if (!ok) return 15;
+        if (v > 15) v &= 0x0F;
+        return qBound(0, v, 15);
+    }
+
+    bool sfxSgmEnabled() const
+    {
+        return !m_sfxSgmCheck || m_sfxSgmCheck->isChecked();
+    }
+
+    void updateSfxSgmMode(bool enabled)
+    {
+        if (!m_sfxTable) return;
+
+        // Keep the tracker data itself intact so a copied/pasted SGM pattern can
+        // be switched back on later without losing its AY data.  Non-SGM mode
+        // only hides and ignores the AY channels.
+        for (int ch = 4; ch < 7; ++ch) {
+            const int base = 1 + ch * 4;
+            for (int sub = 0; sub < 4; ++sub)
+                m_sfxTable->setColumnHidden(base + sub, !enabled);
+
+            if (m_sfxChannelHeaders[ch])
+                m_sfxChannelHeaders[ch]->setVisible(enabled);
+        }
+
+        if (!enabled) {
+            // Immediately silence any AY preview left over from SGM mode.
+            for (int ch = 4; ch < 7; ++ch)
+                setSoundChannelVuLevel(ch, 0);
+            if (onStopAllPreviewRequested) onStopAllPreviewRequested();
+        }
+    }
+
+    void playSfxStep(int row)
+    {
+        if (!m_sfxTable) return;
+
+        bool anyActive = false;
+        const int sfxChannelCount = sfxSgmEnabled() ? 7 : 4;
+        for (int ch = 0; ch < sfxChannelCount; ++ch) {
+            const int base = 1 + ch * 4;
+            QTableWidgetItem* noteItem = m_sfxTable->item(row, base + 0);
+            QTableWidgetItem* volItem  = m_sfxTable->item(row, base + 2);
+            QTableWidgetItem* fxItem   = m_sfxTable->item(row, base + 3);
+            const QString note = noteItem ? noteItem->text().trimmed().toUpper() : QStringLiteral("---");
+            const QString volText = volItem ? volItem->text().trimmed().toUpper() : QStringLiteral("V0F");
+            const QString fxText = fxItem ? fxItem->text().trimmed().toUpper() : QStringLiteral("---");
+            const int vol = sfxTrackerVolume(volText);
+
+            const bool explicitRelease = (note == "===") || (volText == "V00") || (volText == "00") || (vol <= 0);
+            const bool empty = note.isEmpty() || note == "---";
+
+            if (explicitRelease) {
+                if (ch < 4)
+                    requestPreviewTone(ch, 0, 0);
+                else
+                    setSoundChannelVuLevel(ch, 0);
+                continue;
+            }
+
+            // Tracker-style empty note means no new trigger on this row.  Do not
+            // kill a sustained sound just because the cell is empty.
+            if (empty)
+                continue;
+
+            anyActive = true;
+            if (ch == 3) {
+                const int n = noiseValueFromNoteName(note, fxText);
+                requestPreviewTone(3, qBound(1, n + 1, 7), vol);
+            } else if (ch >= 4) {
+                requestPreviewAyTone(ch, ayPeriodFromNoteName(note), vol);
+            } else {
+                requestPreviewTone(ch, psgPeriodFromNoteName(note), vol);
+            }
+        }
+
+        if (m_sfxTable) m_sfxTable->selectRow(row);
+    }
+
+    void startSfxPlayback()
+    {
+        if (m_currentSfxIndex < 0 || !m_sfxTable) return;
+        storeCurrentSfxFromUi();
+        m_sfxPlayRow = 0;
+        if (!m_sfxTimer) {
+            m_sfxTimer = new QTimer(this);
+            connect(m_sfxTimer, &QTimer::timeout, this, [this]() {
+                const int len = m_sfxLengthSpin ? m_sfxLengthSpin->value() : 16;
+                if (m_sfxPlayRow >= len) {
+                    stopSfxPlayback();
+                    return;
+                }
+                playSfxStep(m_sfxPlayRow++);
+            });
+        }
+        m_sfxTimer->setInterval(m_sfxStepMsSpin ? m_sfxStepMsSpin->value() : 70);
+        playSfxStep(m_sfxPlayRow++);
+        m_sfxTimer->start();
+    }
+
+    void stopSfxPlayback()
+    {
+        if (m_sfxTimer) m_sfxTimer->stop();
+        for (int ch = 0; ch < 7; ++ch) stopPreviewChannel(ch);
+        if (onStopAllPreviewRequested) onStopAllPreviewRequested();
+    }
+
+    QString buildSfxCvBasicExport() const
+    {
+        // V9.25: compact, READ-free CVBasic SFX export.
+        // The generated player intentionally does not use DATA/READ/RESTORE so it
+        // can coexist with the ADAMP music stream, which owns CVBasic's READ pointer.
+        QString out;
+        const bool sgm = sfxSgmEnabled();
+
+        out += "REM ============================================================\n";
+        out += "REM ADAMP COMPACT SFX - generated by Sound Editor\n";
+        out += "REM ============================================================\n";
+        out += "REM USAGE:\n";
+        out += "REM   1) Call GOSUB ADAMP_SFX_TICK once per game frame.\n";
+        out += "REM      If music is also updated each frame, call SFX_TICK after music.\n";
+        out += "REM   2) Start an effect with its GOSUB label, for example:\n";
+        out += "REM        GOSUB SFX_SHOT\n";
+        out += "REM   3) Optional: GOSUB ADAMP_SFX_STOP to stop the active SFX.\n";
+        out += "REM The player is non-blocking and uses no READ/RESTORE.\n";
+        out += "REM ============================================================\n\n";
+        out += QString("CONST SFX_COUNT = %1\n").arg(m_sfxBank.size());
+
+        struct ExportFx {
+            QString symbol;
+            int len = 1;
+            int frames = 1;
+            int usedMask = 0;
+            QVector<QString> rowCode;
+        };
+        QVector<ExportFx> exported;
+        exported.reserve(m_sfxBank.size());
+
+        for (int i = 0; i < m_sfxBank.size(); ++i) {
+            const QJsonObject fx = m_sfxBank.at(i).toObject();
+            ExportFx e;
+            e.symbol = fx.value("name").toString().toUpper();
+            e.symbol.replace(QRegularExpression("[^A-Z0-9]+"), "_");
+            if (e.symbol.isEmpty()) e.symbol = QString("FX_%1").arg(i);
+            e.len = qBound(1, fx.value("length").toInt(16), 256);
+            const int stepMs = qBound(20, fx.value("stepMs").toInt(70), 500);
+            e.frames = qMax(1, (stepMs * 60 + 500) / 1000);
+            e.rowCode.resize(e.len);
+
+            const QJsonArray rows = fx.value("rows").toArray();
+            for (int r = 0; r < e.len && r < rows.size(); ++r) {
+                const QJsonArray row = rows.at(r).toArray();
+                QStringList commands;
+                for (int ch = 0; ch < (sgm ? 7 : 4); ++ch) {
+                    const int base = 1 + ch * 4;
+                    const QString note = base < row.size() ? row.at(base).toString("---").trimmed().toUpper() : QStringLiteral("---");
+                    const QString volText = (base + 2) < row.size() ? row.at(base + 2).toString("V0F").trimmed().toUpper() : QStringLiteral("V0F");
+                    const QString fxText = (base + 3) < row.size() ? row.at(base + 3).toString("---").trimmed().toUpper() : QStringLiteral("---");
+                    const int vol = sfxTrackerVolume(volText);
+                    const bool release = (note == "===") || (volText == "V00") || (volText == "00") || (vol <= 0);
+                    const bool empty = note.isEmpty() || note == "---";
+                    if (empty && !release) continue;
+
+                    const int cvCh = (ch < 4) ? ch : (ch + 1); // AY channels are CVBasic SOUND 5..7.
+                    e.usedMask |= (1 << ch);
+                    if (release) {
+                        commands << QString("SOUND %1,1,0").arg(cvCh);
+                        continue;
+                    }
+
+                    if (ch == 3) {
+                        const int noise = qBound(1, noiseValueFromNoteName(note, fxText) + 1, 7);
+                        commands << QString("SOUND 3,%1,%2").arg(noise).arg(vol);
+                    } else if (ch >= 4) {
+                        commands << QString("SOUND %1,%2,%3").arg(cvCh).arg(ayPeriodFromNoteName(note)).arg(vol);
+                    } else {
+                        commands << QString("SOUND %1,%2,%3").arg(cvCh).arg(psgPeriodFromNoteName(note)).arg(vol);
+                    }
+                }
+                e.rowCode[r] = commands.join(QLatin1Char(':'));
+            }
+            exported.push_back(e);
+        }
+
+        // Tiny public entry points. These are the only labels the game needs to call.
+        for (int i = 0; i < exported.size(); ++i) {
+            const ExportFx &e = exported.at(i);
+            out += QString("CONST SFX_%1 = %2\n").arg(e.symbol).arg(i);
+        }
+        out += "\n";
+        for (int i = 0; i < exported.size(); ++i) {
+            const ExportFx &e = exported.at(i);
+            out += QString("SFX_%1:\n").arg(e.symbol);
+            out += QString("ADAMP_SFX_ID=%1:#ADAMP_SFX_ROW=0:ADAMP_SFX_WAIT=0:ADAMP_SFX_MASK=%2:ADAMP_SFX_ACTIVE=1\nRETURN\n\n")
+                       .arg(i).arg(e.usedMask);
+        }
+
+        // One shared non-blocking player for the whole bank.
+        out += "ADAMP_SFX_TICK:\n";
+        out += "IF ADAMP_SFX_ACTIVE=0 THEN RETURN\n";
+        out += "IF ADAMP_SFX_WAIT>0 THEN ADAMP_SFX_WAIT=ADAMP_SFX_WAIT-1:RETURN\n";
+        for (int i = 0; i < exported.size(); ++i)
+            out += QString("IF ADAMP_SFX_ID=%1 THEN GOSUB ADAMP_SFX_%1_TICK:RETURN\n").arg(i);
+        out += "RETURN\n\n";
+
+        for (int i = 0; i < exported.size(); ++i) {
+            const ExportFx &e = exported.at(i);
+            out += QString("ADAMP_SFX_%1_TICK:\n").arg(i);
+            for (int r = 0; r < e.len; ++r) {
+                if (!e.rowCode.at(r).isEmpty())
+                    out += QString("IF #ADAMP_SFX_ROW=%1 THEN %2\n").arg(r).arg(e.rowCode.at(r));
+            }
+            out += "#ADAMP_SFX_ROW=#ADAMP_SFX_ROW+1\n";
+            out += QString("IF #ADAMP_SFX_ROW>=%1 THEN GOSUB ADAMP_SFX_STOP:RETURN\n").arg(e.len);
+            out += QString("ADAMP_SFX_WAIT=%1\nRETURN\n\n").arg(qMax(0, e.frames - 1));
+        }
+
+        // Shared stop routine. Silence only channels touched by the active effect.
+        out += "ADAMP_SFX_STOP:\n";
+        out += "IF (ADAMP_SFX_MASK AND 1)<>0 THEN SOUND 0,1,0\n";
+        out += "IF (ADAMP_SFX_MASK AND 2)<>0 THEN SOUND 1,1,0\n";
+        out += "IF (ADAMP_SFX_MASK AND 4)<>0 THEN SOUND 2,1,0\n";
+        out += "IF (ADAMP_SFX_MASK AND 8)<>0 THEN SOUND 3,1,0\n";
+        if (sgm) {
+            out += "IF (ADAMP_SFX_MASK AND 16)<>0 THEN SOUND 5,1,0\n";
+            out += "IF (ADAMP_SFX_MASK AND 32)<>0 THEN SOUND 6,1,0\n";
+            out += "IF (ADAMP_SFX_MASK AND 64)<>0 THEN SOUND 7,1,0\n";
+        }
+        out += "ADAMP_SFX_ACTIVE=0:#ADAMP_SFX_ROW=0:ADAMP_SFX_WAIT=0:ADAMP_SFX_MASK=0\n";
+        out += "RETURN\n";
+        return out;
+    }
+
+    void saveSfxBank()
+    {
+        storeCurrentSfxFromUi();
+        const QString path = QFileDialog::getSaveFileName(this, tr("Save SFX Bank"),
+            m_sfxFilePath.isEmpty() ? QStringLiteral("game_sfx.adpsfx") : m_sfxFilePath,
+            tr("ADAMP SFX Bank (*.adpsfx);;JSON (*.json);;All Files (*.*)"));
+        if (path.isEmpty()) return;
+        QJsonObject root;
+        root["format"] = "ADAMP_SFX_BANK";
+        root["version"] = 2;
+        root["sgmSound"] = sfxSgmEnabled();
+        root["effects"] = m_sfxBank;
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            QMessageBox::warning(this, tr("Save SFX Bank"), f.errorString()); return;
+        }
+        f.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        m_sfxFilePath = path;
+    }
+
+    void loadSfxBank()
+    {
+        const QString path = QFileDialog::getOpenFileName(this, tr("Load SFX Bank"), QString(),
+            tr("ADAMP SFX Bank (*.adpsfx *.json);;All Files (*.*)"));
+        if (path.isEmpty()) return;
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly)) { QMessageBox::warning(this, tr("Load SFX Bank"), f.errorString()); return; }
+        QJsonParseError err;
+        const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &err);
+        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+            QMessageBox::warning(this, tr("Load SFX Bank"), tr("Invalid SFX bank file.")); return;
+        }
+        const QJsonObject root = doc.object();
+        const QJsonArray effects = root.value("effects").toArray();
+        if (effects.isEmpty()) { QMessageBox::warning(this, tr("Load SFX Bank"), tr("This SFX bank contains no effects.")); return; }
+        if (m_sfxSgmCheck) {
+            QSignalBlocker blocker(m_sfxSgmCheck);
+            // Old v1 banks had all seven channels available, so default them to SGM ON.
+            m_sfxSgmCheck->setChecked(root.contains("sgmSound") ? root.value("sgmSound").toBool(true) : true);
+        }
+        updateSfxSgmMode(sfxSgmEnabled());
+        m_sfxBank = effects;
+        m_sfxFilePath = path;
+        m_currentSfxIndex = 0;
+        refreshSfxList(0);
+        loadSfxToUi(0);
+    }
+
+    QWidget* createSfxEditorPage(QWidget* parent)
+    {
+        QWidget* page = new QWidget(parent);
+        QVBoxLayout* root = new QVBoxLayout(page);
+        root->setContentsMargins(6, 6, 6, 6);
+        root->setSpacing(6);
+
+        QHBoxLayout* toolbar = new QHBoxLayout();
+        QPushButton* newBtn = new QPushButton(tr("NEW"), page);
+        QPushButton* deleteBtn = new QPushButton(tr("DELETE"), page);
+        QPushButton* saveBtn = new QPushButton(tr("Save Bank"), page);
+        QPushButton* loadBtn = new QPushButton(tr("Load Bank"), page);
+        QPushButton* playBtn = new QPushButton(tr("PLAY"), page);
+        QPushButton* stopBtn = new QPushButton(tr("STOP"), page);
+        QPushButton* copyPatternBtn = new QPushButton(tr("Copy Pattern"), page);
+        QPushButton* pastePatternBtn = new QPushButton(tr("Paste Pattern"), page);
+        QPushButton* exportBtn = new QPushButton(tr("Export to CVBasic Editor"), page);
+        toolbar->addWidget(newBtn); toolbar->addWidget(deleteBtn); toolbar->addSpacing(8);
+        toolbar->addWidget(saveBtn); toolbar->addWidget(loadBtn); toolbar->addSpacing(8);
+        toolbar->addWidget(playBtn); toolbar->addWidget(stopBtn); toolbar->addSpacing(8);
+        toolbar->addWidget(copyPatternBtn); toolbar->addWidget(pastePatternBtn);
+        toolbar->addStretch(1); toolbar->addWidget(exportBtn);
+        root->addLayout(toolbar);
+
+        QSplitter* split = new QSplitter(Qt::Horizontal, page);
+        QWidget* left = new QWidget(split);
+        QVBoxLayout* leftLayout = new QVBoxLayout(left);
+        leftLayout->setContentsMargins(0,0,0,0);
+        leftLayout->addWidget(new QLabel(tr("SFX Bank"), left));
+        m_sfxList = new QListWidget(left);
+        m_sfxList->setMinimumWidth(190);
+        m_sfxList->setMaximumWidth(260);
+        m_sfxList->setAlternatingRowColors(true);
+        // Match the tracker row styling: alternating dark / slightly lighter rows.
+        m_sfxList->setStyleSheet(
+            "QListWidget { background-color:#242424; color:#FFFFFF; border:1px solid #666666; alternate-background-color:#2C2C2C; }"
+            "QListWidget::item { padding:3px 4px; }"
+            "QListWidget::item:selected { background-color:#5864D8; color:#FFFFFF; }"
+        );
+        leftLayout->addWidget(m_sfxList, 1);
+        split->addWidget(left);
+
+        QWidget* editor = new QWidget(split);
+        QVBoxLayout* editorLayout = new QVBoxLayout(editor);
+        editorLayout->setContentsMargins(0,0,0,0);
+        QHBoxLayout* info = new QHBoxLayout();
+        info->addWidget(new QLabel(tr("Name:"), editor));
+        m_sfxNameEdit = new QLineEdit(editor);
+        info->addWidget(m_sfxNameEdit, 1);
+        info->addWidget(new QLabel(tr("Length:"), editor));
+        m_sfxLengthSpin = new QSpinBox(editor); m_sfxLengthSpin->setRange(1,256); m_sfxLengthSpin->setValue(8); info->addWidget(m_sfxLengthSpin);
+        info->addWidget(new QLabel(tr("Step ms:"), editor));
+        m_sfxStepMsSpin = new QSpinBox(editor); m_sfxStepMsSpin->setRange(20,500); m_sfxStepMsSpin->setValue(70); info->addWidget(m_sfxStepMsSpin);
+        info->addSpacing(10);
+        m_sfxSgmCheck = new QCheckBox(tr("SGM Sound (AY-3-8910)"), editor);
+        m_sfxSgmCheck->setChecked(true);
+        m_sfxSgmCheck->setToolTip(tr("OFF = standard ColecoVision SN76489 only. ON = add SGM AY1/AY2/AY3 channels."));
+        info->addWidget(m_sfxSgmCheck);
+        editorLayout->addLayout(info);
+
+        QLabel* help = new QLabel(tr("Same tracker pattern format as SONG EDITOR. Copy/Paste Pattern can be exchanged directly between SONG and SFX."), editor);
+        help->setWordWrap(true);
+        editorLayout->addWidget(help);
+
+        // Grouped channel headers, using exactly the same compact geometry as
+        // the SONG EDITOR in SGM mode.
+        QWidget* sfxChannelHeader = new QWidget(editor);
+        QHBoxLayout* sfxChannelHeaderLayout = new QHBoxLayout(sfxChannelHeader);
+        sfxChannelHeaderLayout->setContentsMargins(0, 0, 0, 0);
+        sfxChannelHeaderLayout->setSpacing(0);
+
+        const int sfxRowWidth  = 28;
+        const int sfxNoteWidth = 36;
+        const int sfxInstWidth = 28;
+        const int sfxVolWidth  = 30;
+        const int sfxFxWidth   = 28;
+        const int sfxChannelWidth = sfxNoteWidth + sfxInstWidth + sfxVolWidth + sfxFxWidth;
+
+        QLabel* sfxRowHeader = new QLabel(QString(), sfxChannelHeader);
+        sfxRowHeader->setAlignment(Qt::AlignCenter);
+        sfxRowHeader->setFixedWidth(sfxRowWidth);
+        sfxRowHeader->setStyleSheet(
+            "QLabel { color:#FFFFFF; font-weight:bold; background:#242424; border:1px solid #555555; border-right:none; padding:4px 2px; }");
+        sfxChannelHeaderLayout->addWidget(sfxRowHeader);
+
+        auto addSfxChannelHeader = [&](int channel, const QString& text, const QString& textColor, const QString& borderColor) {
+            QLabel* label = new QLabel(text, sfxChannelHeader);
+            if (channel >= 0 && channel < 7)
+                m_sfxChannelHeaders[channel] = label;
+            label->setAlignment(Qt::AlignCenter);
+            label->setFixedWidth(sfxChannelWidth);
+            label->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+            label->setStyleSheet(QString(
+                "QLabel { color:%1; font-weight:bold; background:#242424; border:1px solid %2; padding:4px 2px; }")
+                .arg(textColor, borderColor));
+            sfxChannelHeaderLayout->addWidget(label);
+        };
+
+        addSfxChannelHeader(0, tr("CH1 (Tone 1)"), "#FFE340", "#FFE340");
+        addSfxChannelHeader(1, tr("CH2 (Tone 2)"), "#FF4FC8", "#FF4FC8");
+        addSfxChannelHeader(2, tr("CH3 (Tone 3)"), "#68FF87", "#68FF87");
+        addSfxChannelHeader(3, tr("Noise"),        "#FFB24A", "#FFB24A");
+        addSfxChannelHeader(4, tr("AY1"),          "#70D6FF", "#70D6FF");
+        addSfxChannelHeader(5, tr("AY2"),          "#B8F35A", "#B8F35A");
+        addSfxChannelHeader(6, tr("AY3"),          "#FF7A90", "#FF7A90");
+        sfxChannelHeaderLayout->addStretch(1);
+        editorLayout->addWidget(sfxChannelHeader, 0);
+
+        m_sfxTable = new QTableWidget(256, 29, editor);
+        m_sfxTable->setObjectName("sfxPatternTable");
+        m_sfxTable->setItemDelegate(new SoundPatternDelegate(m_sfxTable));
+        m_sfxTable->verticalHeader()->setVisible(false);
+        m_sfxTable->setAlternatingRowColors(true);
+        m_sfxTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+        m_sfxTable->setSelectionMode(QAbstractItemView::SingleSelection);
+        m_sfxTable->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
+        m_sfxTable->setHorizontalHeaderLabels({
+            tr("Row"),
+            tr("Note"), tr("Inst"), tr("Vol"), tr("Fx"),
+            tr("Note"), tr("Inst"), tr("Vol"), tr("Fx"),
+            tr("Note"), tr("Inst"), tr("Vol"), tr("Fx"),
+            tr("Note"), tr("Inst"), tr("Vol"), tr("Fx"),
+            tr("Note"), tr("Inst"), tr("Vol"), tr("Fx"),
+            tr("Note"), tr("Inst"), tr("Vol"), tr("Fx"),
+            tr("Note"), tr("Inst"), tr("Vol"), tr("Fx")
+        });
+        m_sfxTable->horizontalHeader()->setStretchLastSection(false);
+        m_sfxTable->horizontalHeader()->setMinimumSectionSize(24);
+        m_sfxTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+        m_sfxTable->setColumnWidth(0, sfxRowWidth);
+        for (int block = 0; block < 7; ++block) {
+            const int base = 1 + block * 4;
+            for (int sub = 0; sub < 4; ++sub)
+                m_sfxTable->horizontalHeader()->setSectionResizeMode(base + sub, QHeaderView::Interactive);
+            m_sfxTable->setColumnWidth(base + 0, sfxNoteWidth);
+            m_sfxTable->setColumnWidth(base + 1, sfxInstWidth);
+            m_sfxTable->setColumnWidth(base + 2, sfxVolWidth);
+            m_sfxTable->setColumnWidth(base + 3, sfxFxWidth);
+        }
+        editorLayout->addWidget(m_sfxTable, 1);
+        split->addWidget(editor);
+        split->setStretchFactor(0,0); split->setStretchFactor(1,1);
+        root->addWidget(split,1);
+
+        createDefaultSfxBank();
+        refreshSfxList(0);
+        loadSfxToUi(0);
+
+        connect(m_sfxList, &QListWidget::currentRowChanged, this, [this](int row){ if (row >= 0) loadSfxToUi(row); });
+        connect(m_sfxNameEdit, &QLineEdit::textChanged, this, [this](const QString&){ if (!m_loadingSfx) { storeCurrentSfxFromUi(); refreshSfxList(m_currentSfxIndex); } });
+        connect(m_sfxLengthSpin, qOverload<int>(&QSpinBox::valueChanged), this, [this](int len){
+            if (m_sfxTable) for (int r=0;r<m_sfxTable->rowCount();++r) m_sfxTable->setRowHidden(r, r>=len);
+            if (!m_loadingSfx) storeCurrentSfxFromUi();
+        });
+        connect(m_sfxStepMsSpin, qOverload<int>(&QSpinBox::valueChanged), this, [this](int){ if (!m_loadingSfx) storeCurrentSfxFromUi(); });
+        connect(m_sfxSgmCheck, &QCheckBox::toggled, this, [this](bool enabled){
+            stopSfxPlayback();
+            updateSfxSgmMode(enabled);
+        });
+        connect(m_sfxTable, &QTableWidget::itemChanged, this, [this](QTableWidgetItem*){ if (!m_loadingSfx) storeCurrentSfxFromUi(); });
+        updateSfxSgmMode(m_sfxSgmCheck->isChecked());
+        connect(playBtn, &QPushButton::clicked, this, [this](){ startSfxPlayback(); });
+        connect(stopBtn, &QPushButton::clicked, this, [this](){ stopSfxPlayback(); });
+        connect(copyPatternBtn, &QPushButton::clicked, this, [this](){
+            if (!m_sfxTable) return;
+            storeCurrentSfxFromUi();
+            QJsonArray copied;
+            const int len = m_sfxLengthSpin ? m_sfxLengthSpin->value() : 16;
+            for (int r = 0; r < qMin(len, m_sfxTable->rowCount()); ++r) {
+                QJsonArray row;
+                for (int c = 0; c < m_sfxTable->columnCount(); ++c) {
+                    QTableWidgetItem* it = m_sfxTable->item(r, c);
+                    row.append(it ? it->text() : QString());
+                }
+                copied.append(row);
+            }
+            m_patternClipboardJson = copied;
+        });
+        connect(pastePatternBtn, &QPushButton::clicked, this, [this](){
+            if (!m_sfxTable || m_patternClipboardJson.isEmpty()) return;
+            const int pastedLen = qBound(1, qMin(256, m_patternClipboardJson.size()), 256);
+            QJsonArray source = m_patternClipboardJson;
+            QJsonArray normalized = normalizeSfxTrackerRows(source);
+            m_loadingSfx = true;
+            if (m_sfxLengthSpin) m_sfxLengthSpin->setValue(pastedLen);
+            QSignalBlocker blocker(m_sfxTable);
+            for (int r = 0; r < 256; ++r) {
+                const QJsonArray row = normalized.at(r).toArray();
+                for (int c = 0; c < 29; ++c) {
+                    if (!m_sfxTable->item(r, c)) {
+                        QTableWidgetItem* item = new QTableWidgetItem();
+                        item->setTextAlignment(Qt::AlignCenter);
+                        m_sfxTable->setItem(r, c, item);
+                    }
+                    m_sfxTable->item(r, c)->setText(c < row.size() ? row.at(c).toString() : QString());
+                }
+                m_sfxTable->item(r, 0)->setFlags(m_sfxTable->item(r, 0)->flags() & ~Qt::ItemIsEditable);
+                m_sfxTable->setRowHidden(r, r >= pastedLen);
+            }
+            m_loadingSfx = false;
+            storeCurrentSfxFromUi();
+        });
+        connect(saveBtn, &QPushButton::clicked, this, [this](){ saveSfxBank(); });
+        connect(loadBtn, &QPushButton::clicked, this, [this](){ loadSfxBank(); });
+        connect(exportBtn, &QPushButton::clicked, this, [this](){
+            storeCurrentSfxFromUi();
+            if (onInsertRequested) onInsertRequested(buildSfxCvBasicExport());
+        });
+        connect(newBtn, &QPushButton::clicked, this, [this](){
+            storeCurrentSfxFromUi();
+            const QString name = QInputDialog::getText(this, tr("New SFX"), tr("Effect name:"));
+            if (name.trimmed().isEmpty()) return;
+            m_sfxBank.append(makeDefaultSfx(name.trimmed(), 8, {}));
+            refreshSfxList(m_sfxBank.size()-1);
+            loadSfxToUi(m_sfxBank.size()-1);
+        });
+        connect(deleteBtn, &QPushButton::clicked, this, [this](){
+            if (m_sfxBank.size() <= 1 || m_currentSfxIndex < 0) return;
+            m_sfxBank.removeAt(m_currentSfxIndex);
+            m_currentSfxIndex = qBound(0, m_currentSfxIndex, m_sfxBank.size()-1);
+            refreshSfxList(m_currentSfxIndex);
+            loadSfxToUi(m_currentSfxIndex);
+        });
+
+        return page;
+    }
+
+
     void setupUi()
     {
-        QVBoxLayout* root = new QVBoxLayout(this);
+        // V9.24: Sound Editor top-level modes live here (and only here).
+        QVBoxLayout* soundRoot = new QVBoxLayout(this);
+        soundRoot->setContentsMargins(0, 0, 0, 0);
+        soundRoot->setSpacing(0);
+
+        QTabWidget* soundModeTabs = new QTabWidget(this);
+        soundModeTabs->setObjectName(QStringLiteral("soundModeTabs"));
+        soundModeTabs->setDocumentMode(false);
+        soundModeTabs->setMovable(false);
+        soundModeTabs->setUsesScrollButtons(false);
+        soundModeTabs->setStyleSheet(
+            "QTabWidget#soundModeTabs::pane { border:1px solid #555555; background:#303030; top:-1px; }"
+            "QTabWidget#soundModeTabs > QTabBar::tab { font-weight:bold; padding:8px 22px; min-width:130px; }"
+        );
+        soundRoot->addWidget(soundModeTabs, 1);
+
+        QWidget* songEditorPage = new QWidget(soundModeTabs);
+        QVBoxLayout* root = new QVBoxLayout(songEditorPage);
         root->setContentsMargins(8, 8, 8, 8);
         root->setSpacing(6);
+        soundModeTabs->addTab(songEditorPage, tr("SONG EDITOR"));
+
+        QWidget* sfxEditorPage = createSfxEditorPage(soundModeTabs);
+        soundModeTabs->addTab(sfxEditorPage, tr("SFX EDITOR"));
+        soundModeTabs->setCurrentIndex(0);
 
         // Top button row
         QWidget* topButtons = new QWidget(this);
@@ -8348,6 +10667,10 @@ private:
         QPushButton* newSongBtn = makeToolbarButton(tr("New Song"));
         QPushButton* openSongBtn = makeToolbarButton(tr("Open Song"));
         QPushButton* importMidiBtn = makeToolbarButton(tr("Import MIDI"));
+        QPushButton* importModBtn = makeToolbarButton(tr("Open MOD"));
+        QPushButton* playOriginalModBtn = makeToolbarButton(tr("Play Original MOD"));
+        QPushButton* stopOriginalModBtn = makeToolbarButton(tr("Stop MOD"));
+        QPushButton* convertModBtn = makeToolbarButton(tr("Convert to SN+AY"));
         QPushButton* saveSongBtn = makeToolbarButton(tr("Save Song"));
         QPushButton* saveSongAsBtn = makeToolbarButton(tr("Save Song As"));
         QPushButton* insertBtn = makeToolbarButton(tr("Insert Selected in Editor"));
@@ -8355,6 +10678,7 @@ private:
         QPushButton* exportBtn = makeToolbarButton(tr("Export ASM"));
         QPushButton* undoBtn = makeToolbarButton(tr("Undo"));
         QPushButton* redoBtn = makeToolbarButton(tr("Redo"));
+        QPushButton* replaceInstrumentBtn = makeToolbarButton(tr("Replace Instrument"));
 
         topButtonsLayout->addWidget(newSongBtn);
         topButtonsLayout->addWidget(openSongBtn);
@@ -8368,19 +10692,59 @@ private:
         topButtonsLayout->addStretch(1);
         topButtonsLayout->addWidget(undoBtn);
         topButtonsLayout->addWidget(redoBtn);
+        topButtonsLayout->addWidget(replaceInstrumentBtn);
 
         root->addWidget(topButtons);
+
+        // Dedicated MOD reference/conversion row.  Keep this separate from the
+        // main toolbar so these controls remain visible on normal desktop widths.
+        QWidget* modButtons = new QWidget(this);
+        QHBoxLayout* modButtonsLayout = new QHBoxLayout(modButtons);
+        modButtonsLayout->setContentsMargins(0, 0, 0, 0);
+        modButtonsLayout->setSpacing(8);
+
+        QLabel* modLabel = new QLabel(tr("MOD Reference:"), modButtons);
+        QFont modLabelFont = modLabel->font();
+        modLabelFont.setBold(true);
+        modLabel->setFont(modLabelFont);
+
+        modButtonsLayout->addWidget(modLabel);
+        modButtonsLayout->addWidget(importModBtn);
+        modButtonsLayout->addWidget(playOriginalModBtn);
+        modButtonsLayout->addWidget(stopOriginalModBtn);
+        modButtonsLayout->addSpacing(12);
+        modButtonsLayout->addWidget(convertModBtn);
+        modButtonsLayout->addStretch(1);
+
+        root->addWidget(modButtons);
 
         connect(copyBtn, &QPushButton::clicked, this, [this]() {
             QApplication::clipboard()->setText(selectedSoundOutput());
         });
 
+        connect(replaceInstrumentBtn, &QPushButton::clicked, this, [this]() {
+            showReplaceInstrumentDialog();
+        });
+
         connect(insertBtn, &QPushButton::clicked, this, [this]() {
+            // A loaded MOD reference is PCM-only. ROM/CVBasic output must use
+            // the PSG-converted representation. Convert automatically if needed.
+            if (!m_loadedModPath.isEmpty() && !m_loadedModConverted)
+                convertLoadedModFile();
+            if (!m_loadedModPath.isEmpty() && !m_loadedModConverted)
+                return;
             if (onInsertRequested)
                 onInsertRequested(selectedSoundOutput());
         });
 
         connect(exportBtn, &QPushButton::clicked, this, [this]() {
+            // Original MOD playback uses PCM and cannot be embedded in CVBasic.
+            // Export always targets the SN/AY-converted song.
+            if (!m_loadedModPath.isEmpty() && !m_loadedModConverted)
+                convertLoadedModFile();
+            if (!m_loadedModPath.isEmpty() && !m_loadedModConverted)
+                return;
+
             QDir().mkpath(soundBuildDefaultDir());
 
             const QString filePath = QFileDialog::getSaveFileName(
@@ -8411,6 +10775,10 @@ private:
         connect(newSongBtn, &QPushButton::clicked, this, [this]() { newSoundSong(); });
         connect(openSongBtn, &QPushButton::clicked, this, [this]() { openSoundSong(); });
         connect(importMidiBtn, &QPushButton::clicked, this, [this]() { importMidiFile(); });
+        connect(importModBtn, &QPushButton::clicked, this, [this]() { openModReferenceFile(); });
+        connect(playOriginalModBtn, &QPushButton::clicked, this, [this]() { playOriginalMod(); });
+        connect(stopOriginalModBtn, &QPushButton::clicked, this, [this]() { stopOriginalMod(); });
+        connect(convertModBtn, &QPushButton::clicked, this, [this]() { convertLoadedModFile(); });
         connect(saveSongBtn, &QPushButton::clicked, this, [this]() { saveSoundSong(); });
         connect(saveSongAsBtn, &QPushButton::clicked, this, [this]() { saveSoundSongAs(); });
         connect(undoBtn, &QPushButton::clicked, this, [this]() { undoSoundEdit(); });
@@ -8418,18 +10786,22 @@ private:
 
         // Main body
         QWidget* body = new QWidget(this);
-        QVBoxLayout* bodyLayout = new QVBoxLayout(body);
+        QGridLayout* bodyLayout = new QGridLayout(body);
         bodyLayout->setContentsMargins(0, 0, 0, 0);
-        bodyLayout->setSpacing(6);
+        bodyLayout->setHorizontalSpacing(8);
+        bodyLayout->setVerticalSpacing(6);
+        bodyLayout->setColumnStretch(0, 3);
+        bodyLayout->setColumnStretch(1, 5);
+        bodyLayout->setColumnStretch(2, 3);
+        bodyLayout->setRowStretch(0, 0);
+        bodyLayout->setRowStretch(1, 1);
 
-        // Upper row: Song info / Order / Playback
-        QWidget* upperRow = new QWidget(body);
-        QHBoxLayout* upperLayout = new QHBoxLayout(upperRow);
-        upperLayout->setContentsMargins(0, 0, 0, 0);
-        upperLayout->setSpacing(8);
+        // Upper row: Song info / Order / Playback.
+        // Playback is in grid column 2; the complete right panel below uses
+        // that exact same column, so their OUTER widths are identical.
 
         // Song info
-        QGroupBox* songInfoBox = new QGroupBox(tr("Song Info"), upperRow);
+        QGroupBox* songInfoBox = new QGroupBox(tr("Song Info"), body);
         QGridLayout* songLayout = new QGridLayout(songInfoBox);
         songLayout->setContentsMargins(8, 10, 8, 8);
         songLayout->setHorizontalSpacing(8);
@@ -8453,7 +10825,7 @@ private:
         m_rowsSpin->setValue(16);
 
         m_defaultInstrumentSpin = new QSpinBox(songInfoBox);
-        m_defaultInstrumentSpin->setRange(0, 15);
+        m_defaultInstrumentSpin->setRange(0, 31);
         m_defaultInstrumentSpin->setDisplayIntegerBase(16);
         m_defaultInstrumentSpin->setPrefix("0");
         m_defaultInstrumentSpin->setValue(1);
@@ -8471,6 +10843,14 @@ private:
         songLayout->addWidget(m_rowsSpin, 3, 1);
         songLayout->addWidget(new QLabel(tr("Default Instr:"), songInfoBox), 3, 2);
         songLayout->addWidget(m_defaultInstrumentSpin, 3, 3);
+
+        m_sgmSoundCheck = new QCheckBox(tr("SGM Sound (AY-3-8910)"), songInfoBox);
+        m_sgmSoundCheck->setChecked(false);
+        m_sgmSoundCheck->setToolTip(tr("OFF = standard ColecoVision SN76489 (4 channels). ON = add SGM AY-3-8910 channels A/B/C."));
+        songLayout->addWidget(m_sgmSoundCheck, 4, 0, 1, 4);
+        connect(m_sgmSoundCheck, &QCheckBox::toggled, this, [this](bool enabled) {
+            setSgmSoundEnabled(enabled);
+        });
 
         connect(m_rowsSpin, qOverload<int>(&QSpinBox::valueChanged),
                 this, [this](int rows) {
@@ -8497,46 +10877,158 @@ private:
 
 
         // Order box
-        QGroupBox* orderBox = new QGroupBox(tr("Order List (Sequence)"), upperRow);
-        QVBoxLayout* orderLayout = new QVBoxLayout(orderBox);
-        orderLayout->setContentsMargins(8, 10, 8, 8);
-        orderLayout->setSpacing(6);
+        QGroupBox* orderBox = new QGroupBox(tr("Order List (Sequence)"), body);
+        orderBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
+        QHBoxLayout* orderOuter = new QHBoxLayout(orderBox);
+        orderOuter->setContentsMargins(8, 10, 8, 8);
+        orderOuter->setSpacing(8);
+
+        // Keep the historical horizontal table as the internal storage model.
+        // All existing load/save/export/playback code continues to use it.
+        // The user-facing editor below is a vertical sequence list.
         m_orderTable = new QTableWidget(1, 16, orderBox);
-        m_orderTable->setObjectName("soundOrderTable");
-        m_orderTable->verticalHeader()->setVisible(true);
-        m_orderTable->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
-        m_orderTable->verticalHeader()->setDefaultSectionSize(28);
-        m_orderTable->verticalHeader()->setMinimumWidth(26);
-        m_orderTable->setVerticalHeaderLabels({ "Pat" });
-        m_orderTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-        m_orderTable->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        m_orderTable->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        m_orderTable->setFixedHeight(62);
+        m_orderTable->setObjectName("soundOrderTableInternal");
+        m_orderTable->hide();
+
         QStringList orderHeaders;
         for (int i = 0; i < 16; ++i)
             orderHeaders << QString("%1").arg(i, 2, 10, QLatin1Char('0'));
         m_orderTable->setHorizontalHeaderLabels(orderHeaders);
-        orderLayout->addWidget(m_orderTable);
 
+        QWidget* orderListPanel = new QWidget(orderBox);
+        QVBoxLayout* orderListLayout = new QVBoxLayout(orderListPanel);
+        orderListLayout->setContentsMargins(0, 0, 0, 0);
+        orderListLayout->setSpacing(4);
+
+        QHBoxLayout* orderInfoLine = new QHBoxLayout();
+        orderInfoLine->setContentsMargins(0, 0, 0, 0);
+        m_orderSequenceCountLabel = new QLabel(tr("Orders: 0/0"), orderListPanel);
+        m_orderSequenceCountLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        QFont orderCountFont = m_orderSequenceCountLabel->font();
+        orderCountFont.setBold(true);
+        m_orderSequenceCountLabel->setFont(orderCountFont);
+        orderInfoLine->addWidget(m_orderSequenceCountLabel);
+        orderInfoLine->addStretch(1);
+        orderListLayout->addLayout(orderInfoLine);
+
+        m_orderSequenceView = new QTableWidget(16, 2, orderListPanel);
+        m_orderSequenceView->setObjectName("soundOrderSequenceView");
+        m_orderSequenceView->setHorizontalHeaderLabels({ tr("Seq"), tr("Pattern") });
+        m_orderSequenceView->verticalHeader()->setVisible(false);
+
+        // V8.95: both visible columns are fixed to the exact header text width
+        // plus 2 px at the left and 2 px at the right. Do NOT stretch either
+        // section: stretching allowed Qt to hide/squeeze the first column.
+        QHeaderView* orderHeader = m_orderSequenceView->horizontalHeader();
+        orderHeader->setStretchLastSection(false);
+        orderHeader->setSectionResizeMode(0, QHeaderView::Fixed);
+        orderHeader->setSectionResizeMode(1, QHeaderView::Fixed);
+        orderHeader->setStyleSheet("QHeaderView::section { padding-left: 2px; padding-right: 2px; }");
+
+        const QFontMetrics orderHeaderMetrics(orderHeader->font());
+        const int headerSidePadding = 2;
+        // V8.98: widen BOTH visible Order List columns by 10 px.
+        // This makes the complete Order List group 20 px wider in total.
+        const int seqHeaderWidth = orderHeaderMetrics.horizontalAdvance(tr("Seq"))
+                                 + (headerSidePadding * 2) + 10;
+        const int patternHeaderWidth = orderHeaderMetrics.horizontalAdvance(tr("Pattern"))
+                                     + (headerSidePadding * 2) + 20;
+        m_orderSequenceView->setColumnWidth(0, seqHeaderWidth);
+        m_orderSequenceView->setColumnWidth(1, patternHeaderWidth);
+        m_orderSequenceView->setSelectionBehavior(QAbstractItemView::SelectRows);
+        m_orderSequenceView->setSelectionMode(QAbstractItemView::SingleSelection);
+        m_orderSequenceView->setVerticalScrollMode(QAbstractItemView::ScrollPerItem);
+        m_orderSequenceView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        m_orderSequenceView->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        // The table itself is exactly wide enough for BOTH fixed columns plus
+        // frame/scrollbar chrome. This guarantees that Seq and Pattern are both visible.
+        const int orderChromeWidth = (m_orderSequenceView->frameWidth() * 2)
+                                   + m_orderSequenceView->verticalScrollBar()->sizeHint().width();
+        const int orderExactWidth = seqHeaderWidth + patternHeaderWidth + orderChromeWidth;
+        m_orderSequenceView->setFixedWidth(orderExactWidth);
+        m_orderSequenceView->setFixedHeight(150);
+        m_orderSequenceView->setAlternatingRowColors(true);
+        orderListLayout->addWidget(m_orderSequenceView);
+
+        orderOuter->addWidget(orderListPanel, 1);
+
+        QWidget* orderButtonPanel = new QWidget(orderBox);
+        QVBoxLayout* orderButtons = new QVBoxLayout(orderButtonPanel);
+        orderButtons->setContentsMargins(0, 20, 0, 0);
+        orderButtons->setSpacing(5);
+
+        QPushButton* orderInsertBtn = new QPushButton(tr("Insert"), orderButtonPanel);
+        QPushButton* orderDeleteBtn = new QPushButton(tr("Delete"), orderButtonPanel);
+        QPushButton* orderAddBtn = new QPushButton(tr("Add"), orderButtonPanel);
+        QPushButton* orderClearBtn = new QPushButton(tr("Clear"), orderButtonPanel);
+        QPushButton* orderExpandBtn = new QPushButton(tr("Expand"), orderButtonPanel);
+        QPushButton* orderShrinkBtn = new QPushButton(tr("Shrink"), orderButtonPanel);
+
+        for (QPushButton* b : { orderInsertBtn, orderDeleteBtn, orderAddBtn,
+                                orderClearBtn, orderExpandBtn, orderShrinkBtn }) {
+            b->setMinimumWidth(100);
+            b->setFixedHeight(27);
+            orderButtons->addWidget(b);
+        }
+        orderButtons->addStretch(1);
+        orderOuter->addWidget(orderButtonPanel, 0, Qt::AlignTop);
+
+        // Internal model -> visible vertical view.
         connect(m_orderTable, &QTableWidget::itemChanged,
                 this, [this](QTableWidgetItem*) {
+            refreshOrderSequenceView();
+            updateOrderSequenceCount();
             if (!m_restoringSoundUndo)
                 autoRebuildSoundOutput();
         });
 
-        QHBoxLayout* orderButtons = new QHBoxLayout();
-        QPushButton* orderAddBtn = new QPushButton(tr("Add"), orderBox);
-        QPushButton* orderDeleteBtn = new QPushButton(tr("Delete"), orderBox);
-        QPushButton* orderInsertBtn = new QPushButton(tr("Insert"), orderBox);
-        QPushButton* orderClearBtn = new QPushButton(tr("Clear"), orderBox);
-        QPushButton* orderExpandBtn = new QPushButton(tr("Expand"), orderBox);
-        QPushButton* orderShrinkBtn = new QPushButton(tr("Shrink"), orderBox);
+        // Visible vertical view -> internal model.
+        connect(m_orderSequenceView, &QTableWidget::itemChanged,
+                this, [this](QTableWidgetItem* item) {
+            if (!item || item->column() != 1 || !m_orderTable)
+                return;
 
-        for (QPushButton* b : { orderAddBtn, orderDeleteBtn, orderInsertBtn, orderClearBtn, orderExpandBtn, orderShrinkBtn }) {
-            b->setMinimumHeight(28);
-            orderButtons->addWidget(b);
-        }
+            const int seq = item->row();
+            if (seq < 0 || seq >= m_orderTable->columnCount())
+                return;
+
+            QString text = item->text().trimmed().toUpper();
+            bool ok = false;
+            int value = text.toInt(&ok, 16);
+            if (!ok)
+                value = 255;
+            value = qBound(0, value, 255);
+            text = QString("%1").arg(value, 2, 16, QLatin1Char('0')).toUpper();
+
+            {
+                QSignalBlocker viewBlocker(m_orderSequenceView);
+                item->setText(text);
+            }
+
+            QTableWidgetItem* modelItem = m_orderTable->item(0, seq);
+            if (!modelItem) {
+                modelItem = new QTableWidgetItem();
+                m_orderTable->setItem(0, seq, modelItem);
+            }
+
+            {
+                QSignalBlocker modelBlocker(m_orderTable);
+                modelItem->setText(text);
+            }
+
+            m_orderTable->setCurrentCell(0, seq);
+            updateOrderSequenceCount();
+
+            if (!m_restoringSoundUndo)
+                autoRebuildSoundOutput();
+        });
+
+        connect(m_orderSequenceView, &QTableWidget::currentCellChanged,
+                this, [this](int currentRow, int, int, int) {
+            if (m_orderTable && currentRow >= 0 && currentRow < m_orderTable->columnCount())
+                m_orderTable->setCurrentCell(0, currentRow);
+        });
 
         connect(orderAddBtn, &QPushButton::clicked, this, [this]() { addOrderColumn(); });
         connect(orderDeleteBtn, &QPushButton::clicked, this, [this]() { deleteOrderColumn(); });
@@ -8545,10 +11037,11 @@ private:
         connect(orderExpandBtn, &QPushButton::clicked, this, [this]() { expandOrderList(); });
         connect(orderShrinkBtn, &QPushButton::clicked, this, [this]() { shrinkOrderList(); });
 
-        orderLayout->addLayout(orderButtons);
+        refreshOrderSequenceView();
+        updateOrderSequenceCount();
 
         // Playback
-        QGroupBox* playBox = new QGroupBox(tr("Playback Controls"), upperRow);
+        QGroupBox* playBox = new QGroupBox(tr("Playback Controls"), body);
         QGridLayout* playLayout = new QGridLayout(playBox);
         playLayout->setContentsMargins(8, 10, 8, 8);
         playLayout->setHorizontalSpacing(8);
@@ -8666,22 +11159,17 @@ private:
             " }"
         );
 
-        m_vuLedBar = new SoundVuLedBarWidget(playBox);
-        m_vuLedBar->setLevels(0, 0, 0, 0);
-
         playLayout->addWidget(playBtn, 0, 0);
         playLayout->addWidget(stopBtn, 0, 1);
         playLayout->addWidget(rewindBtn, 0, 2);
         playLayout->addWidget(loopBtn, 0, 3);
-        playLayout->addWidget(m_vuLedBar, 0, 4, 4, 1);
         playLayout->addWidget(new QLabel(tr("Play Pattern:"), playBox), 1, 0, 1, 2);
         playLayout->addWidget(m_playPatternSpin, 1, 2, 1, 2);
         playLayout->addWidget(new QLabel(tr("Play From:"), playBox), 2, 0, 1, 2);
         playLayout->addWidget(m_playFromSpin, 2, 2, 1, 2);
         playLayout->addWidget(m_loopSongCheck, 3, 0, 1, 2);
         playLayout->addWidget(m_followPlayCheck, 3, 2, 1, 2);
-        playLayout->addWidget(m_playbackStatusLabel, 4, 0, 1, 5);
-        playLayout->setColumnStretch(4, 0);
+        playLayout->addWidget(m_playbackStatusLabel, 4, 0, 1, 4);
 
         connect(playBtn, &QPushButton::clicked, this, [this]() {
             startPatternPlayback();
@@ -8697,25 +11185,24 @@ private:
                 m_loopSongCheck->setChecked(!m_loopSongCheck->isChecked());
         });
 
-        upperLayout->addWidget(songInfoBox, 3);
-        upperLayout->addWidget(orderBox, 5);
-        upperLayout->addWidget(playBox, 3);
+        // V8.98: both Order List columns are 10 px wider than V8.97.
+        // Because the table grows by 20 px, the Order List group box grows by
+        // the same 20 px automatically. Keep the existing outer 10 px allowance.
+        orderBox->setFixedWidth(orderBox->sizeHint().width() + 10);
 
-        bodyLayout->addWidget(upperRow, 0);
+        bodyLayout->addWidget(songInfoBox, 0, 0);
+        bodyLayout->addWidget(orderBox, 0, 1);
+        // Upper row is completed below as:
+        // Song Info | Order List | Instruments | Playback Controls.
 
-        // Middle row: left editor tabs / right instruments+output
-        // Sound Editor only: no splitter, fixed layout.
-        QWidget* soundMiddleRow = new QWidget(body);
-        QHBoxLayout* soundMiddleLayout = new QHBoxLayout(soundMiddleRow);
-        soundMiddleLayout->setContentsMargins(0, 0, 0, 0);
-        soundMiddleLayout->setSpacing(6);
-
-        QWidget* leftPanel = new QWidget(soundMiddleRow);
+        // Main editor/output row is arranged below the four upper groups.
+        QWidget* leftPanel = new QWidget(body);
         QVBoxLayout* leftPanelLayout = new QVBoxLayout(leftPanel);
         leftPanelLayout->setContentsMargins(0, 0, 0, 0);
         leftPanelLayout->setSpacing(6);
 
-        QWidget* rightPanel = new QWidget(soundMiddleRow);
+        m_soundRightPanel = new QWidget(body);
+        QWidget* rightPanel = m_soundRightPanel;
         QVBoxLayout* rightPanelLayout = new QVBoxLayout(rightPanel);
         rightPanelLayout->setContentsMargins(0, 0, 0, 0);
         rightPanelLayout->setSpacing(6);
@@ -8739,17 +11226,19 @@ private:
         const int rowHeaderWidth = 50;
         const int rowColumnWidth = 50;
 
-        QLabel* rowHeaderLabel = new QLabel(tr("ROW"), channelHeader);
+        m_patternRowHeaderLabel = new QLabel(tr("ROW"), channelHeader);
+        QLabel* rowHeaderLabel = m_patternRowHeaderLabel;
         rowHeaderLabel->setAlignment(Qt::AlignCenter);
         rowHeaderLabel->setFixedWidth(rowHeaderWidth);
         rowHeaderLabel->setStyleSheet("QLabel { color:#FFFFFF; font-weight:bold; background:#242424; border:1px solid #555555; border-right:none; padding:4px 2px; }");
         channelHeaderLayout->addWidget(rowHeaderLabel);
 
-        auto styleChannelHeader = [](QLabel* lbl, const QString& color, int fixedWidth) {
+        auto styleChannelHeader = [](QLabel* lbl, const QString& textColor, const QString& borderColor, int fixedWidth) {
             lbl->setAlignment(Qt::AlignCenter);
             lbl->setFixedWidth(fixedWidth);
             lbl->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
-            lbl->setStyleSheet(QString("QLabel { color:%1; font-weight:bold; background:#242424; border:1px solid #555555; padding:4px 2px; }").arg(color));
+            lbl->setStyleSheet(QString("QLabel { color:%1; font-weight:bold; background:#242424; border:1px solid %2; padding:4px 2px; }")
+                                   .arg(textColor, borderColor));
         };
 
         // Breedteverdeling van één kanaalblok:
@@ -8766,43 +11255,53 @@ private:
         const int ch3HeaderWidth   = noteHeaderWidth + instHeaderWidth + volHeaderWidth + fxHeaderWidth;
         const int noiseHeaderWidth = noteHeaderWidth + instHeaderWidth + volHeaderWidth + fxHeaderWidth;
 
-        auto* ch1Header = new SoundChannelHeaderLabel(tr("CH1 (Tone1)"), channelHeader);
+        auto* ch1Header = new SoundChannelHeaderLabel(tr("CH1 (Tone 1)"), channelHeader);
         auto* ch2Header = new SoundChannelHeaderLabel(tr("CH2 (Tone 2)"), channelHeader);
         auto* ch3Header = new SoundChannelHeaderLabel(tr("CH3 (Tone 3)"), channelHeader);
         auto* noiseHeader = new SoundChannelHeaderLabel(tr("Noise"), channelHeader);
+        auto* ayAHeader = new SoundChannelHeaderLabel(tr("AY1"), channelHeader);
+        auto* ayBHeader = new SoundChannelHeaderLabel(tr("AY2"), channelHeader);
+        auto* ayCHeader = new SoundChannelHeaderLabel(tr("AY3"), channelHeader);
 
         m_channelHeaderLabels[0] = ch1Header;
         m_channelHeaderLabels[1] = ch2Header;
         m_channelHeaderLabels[2] = ch3Header;
         m_channelHeaderLabels[3] = noiseHeader;
+        m_channelHeaderLabels[4] = ayAHeader;
+        m_channelHeaderLabels[5] = ayBHeader;
+        m_channelHeaderLabels[6] = ayCHeader;
 
-        styleChannelHeader(ch1Header, "#FFE340", ch1HeaderWidth);
-        styleChannelHeader(ch2Header, "#FF4FC8", ch2HeaderWidth);
-        styleChannelHeader(ch3Header, "#68FF87", ch3HeaderWidth);
-        styleChannelHeader(noiseHeader, "#FFB24A", noiseHeaderWidth);
+        styleChannelHeader(ch1Header, "#FFE340", "#FFE340", ch1HeaderWidth);
+        styleChannelHeader(ch2Header, "#FF4FC8", "#FF4FC8", ch2HeaderWidth);
+        styleChannelHeader(ch3Header, "#68FF87", "#68FF87", ch3HeaderWidth);
+        styleChannelHeader(noiseHeader, "#FFB24A", "#555555", noiseHeaderWidth);
+        styleChannelHeader(ayAHeader, "#70D6FF", "#555555", ch1HeaderWidth);
+        styleChannelHeader(ayBHeader, "#B8F35A", "#555555", ch1HeaderWidth);
+        styleChannelHeader(ayCHeader, "#FF7A90", "#555555", ch1HeaderWidth);
 
         ch1Header->onClicked = [this]() { toggleChannelAudible(0); };
         ch2Header->onClicked = [this]() { toggleChannelAudible(1); };
         ch3Header->onClicked = [this]() { toggleChannelAudible(2); };
         noiseHeader->onClicked = [this]() { toggleChannelAudible(3); };
+        ayAHeader->onClicked = [this]() { toggleChannelAudible(4); };
+        ayBHeader->onClicked = [this]() { toggleChannelAudible(5); };
+        ayCHeader->onClicked = [this]() { toggleChannelAudible(6); };
 
-        for (int ch = 0; ch < 4; ++ch)
+        for (int ch = 0; ch < 7; ++ch)
             updateSoundVuHeader(ch);
-
-
-        for (int ch = 0; ch < 4; ++ch)
-            updateSoundVuHeader(ch);
-
 
         // Fixed kanaalheader-rij: geen stretch meer.
         channelHeaderLayout->addWidget(ch1Header);
         channelHeaderLayout->addWidget(ch2Header);
         channelHeaderLayout->addWidget(ch3Header);
         channelHeaderLayout->addWidget(noiseHeader);
+        channelHeaderLayout->addWidget(ayAHeader);
+        channelHeaderLayout->addWidget(ayBHeader);
+        channelHeaderLayout->addWidget(ayCHeader);
         channelHeaderLayout->addStretch(1);
         patternPageLayout->addWidget(channelHeader, 0);
 
-        m_patternTable = new QTableWidget(16, 17, patternPage);
+        m_patternTable = new QTableWidget(16, 29, patternPage);
         m_patternTable->setObjectName("soundPatternTable");
         m_patternDelegate = new SoundPatternDelegate(m_patternTable);
         m_patternTable->setItemDelegate(m_patternDelegate);
@@ -8816,6 +11315,9 @@ private:
             tr("Note"), tr("Inst"), tr("Vol"), tr("Fx"),
             tr("Note"), tr("Inst"), tr("Vol"), tr("Fx"),
             tr("Note"), tr("Inst"), tr("Vol"), tr("Fx"),
+            tr("Note"), tr("Inst"), tr("Vol"), tr("Fx"),
+            tr("Note"), tr("Inst"), tr("Vol"), tr("Fx"),
+            tr("Note"), tr("Inst"), tr("Vol"), tr("Fx"),
             tr("Note"), tr("Inst"), tr("Vol"), tr("Fx")
         });
         m_patternTable->horizontalHeader()->setStretchLastSection(false);
@@ -8826,7 +11328,7 @@ private:
         // De 4 subkolommen per kanaal gebruiken dezelfde basisbreedtes
         // als de header-berekening hierboven: Note + Inst + Vol + Fx.
         // Daardoor komt CH1/CH2/CH3/NOISE mooi boven hun eigen 4 kolommen te staan.
-        for (int block = 0; block < 4; ++block) {
+        for (int block = 0; block < 7; ++block) {
             const int base = 1 + block * 4;
             m_patternTable->horizontalHeader()->setSectionResizeMode(base + 0, QHeaderView::Interactive);
             m_patternTable->horizontalHeader()->setSectionResizeMode(base + 1, QHeaderView::Interactive);
@@ -8839,6 +11341,7 @@ private:
             m_patternTable->setColumnWidth(base + 3, fxHeaderWidth);
         }
 
+        setSgmSoundEnabled(false);
         patternPageLayout->addWidget(m_patternTable, 1);
 
         connect(m_patternTable, &QTableWidget::itemChanged,
@@ -8896,6 +11399,9 @@ private:
         m_activeChannelCombo->addItem(tr("CH2"), 1);
         m_activeChannelCombo->addItem(tr("CH3"), 2);
         m_activeChannelCombo->addItem(tr("NOISE"), 3);
+        m_activeChannelCombo->addItem(tr("AY1 (SGM)"), 4);
+        m_activeChannelCombo->addItem(tr("AY2 (SGM)"), 5);
+        m_activeChannelCombo->addItem(tr("AY3 (SGM)"), 6);
         m_activeChannelCombo->setCurrentIndex(0);
 
         m_volumeSpin = new QSpinBox(patternBottom);
@@ -8958,8 +11464,12 @@ private:
         QPushButton* pastePatternBtn = new QPushButton(tr("Paste Pattern"), patternBottom);
         QPushButton* clearPatternBtn = new QPushButton(tr("Clear Pattern"), patternBottom);
         QPushButton* duplicatePatternBtn = new QPushButton(tr("Duplicate → Next"), patternBottom);
+        QPushButton* moveSnToAyBtn = new QPushButton(tr("SN > AY"), patternBottom);
+        QPushButton* moveAyToSnBtn = new QPushButton(tr("SN < AY"), patternBottom);
+        moveSnToAyBtn->setToolTip(tr("Move CH1, CH2 and CH3 to AY A, AY B and AY C for the entire song"));
+        moveAyToSnBtn->setToolTip(tr("Move AY A, AY B and AY C to CH1, CH2 and CH3 for the entire song"));
 
-        for (QPushButton* b : { copyPatternBtn, pastePatternBtn, clearPatternBtn, duplicatePatternBtn })
+        for (QPushButton* b : { copyPatternBtn, pastePatternBtn, clearPatternBtn, duplicatePatternBtn, moveSnToAyBtn, moveAyToSnBtn })
             b->setMinimumHeight(26);
 
         // Lijn 3:
@@ -8969,6 +11479,9 @@ private:
         patternBottomLine3->addWidget(pastePatternBtn);
         patternBottomLine3->addWidget(clearPatternBtn);
         patternBottomLine3->addWidget(duplicatePatternBtn);
+        patternBottomLine3->addSpacing(10);
+        patternBottomLine3->addWidget(moveSnToAyBtn);
+        patternBottomLine3->addWidget(moveAyToSnBtn);
         patternBottomLine3->addStretch(1);
         patternBottomLine3->addWidget(cutRowBtn);
         patternBottomLine3->addWidget(copyRowBtn);
@@ -8986,6 +11499,12 @@ private:
         });
         connect(duplicatePatternBtn, &QPushButton::clicked, this, [this]() {
             duplicateCurrentPatternToNext();
+        });
+        connect(moveSnToAyBtn, &QPushButton::clicked, this, [this]() {
+            moveToneChannelsBetweenSnAndAy(true);
+        });
+        connect(moveAyToSnBtn, &QPushButton::clicked, this, [this]() {
+            moveToneChannelsBetweenSnAndAy(false);
         });
 
         connect(insertRowBtn, &QPushButton::clicked, this, [this]() {
@@ -9015,7 +11534,7 @@ private:
 
         QWidget* keyboardPanel = new QWidget(patternPage);
         keyboardPanel->setObjectName("soundKeyboardPanel");
-        keyboardPanel->setMinimumHeight(140);
+        keyboardPanel->setMinimumHeight(150);
         keyboardPanel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
         QHBoxLayout* keyboardLayout = new QHBoxLayout(keyboardPanel);
@@ -9033,9 +11552,12 @@ private:
         octaveLayout->addStretch(1);
 
         SoundKeyboardOverlayWidget* keysLabel = new SoundKeyboardOverlayWidget(keyboardPanel);
+        m_soundKeyboardWidget = keysLabel;
         keysLabel->setMinimumHeight(120);
+        keysLabel->setMaximumHeight(120);
         keysLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         keysLabel->setObjectName("soundKeyboardImage");
+        keysLabel->setCenterOctave(m_octaveSpin->value());
 
         QWidget* rightKeyboardControls = new QWidget(keyboardPanel);
         QVBoxLayout* rightKeyboardLayout = new QVBoxLayout(rightKeyboardControls);
@@ -9063,6 +11585,10 @@ private:
             stopActivePreviewChannel();
         });
         connect(insertNoteBtn, &QPushButton::clicked, this, [=]() { layoutOnly(tr("Insert")); });
+        connect(m_octaveSpin, qOverload<int>(&QSpinBox::valueChanged),
+                keysLabel, [keysLabel](int value) {
+            keysLabel->setCenterOctave(value);
+        });
 
         keysLabel->onKeyPressed = [this](const QString& keyName) {
             insertKeyboardKeyIntoPattern(keyName);
@@ -9075,138 +11601,217 @@ private:
         instrumentsPageLayout->setContentsMargins(8, 8, 8, 8);
         instrumentsPageLayout->setSpacing(8);
 
-        QGroupBox* visualInstrumentBox = new QGroupBox(tr("Visual Instrument Editor (CVBasic compatible PSG)"), instrumentsPage);
+        // SN76489 instrument storage stays as a 32-slot table internally,
+        // but user interaction is through channel + instrument comboboxes.
+        m_instrumentsTable = new QTableWidget(32, 12, instrumentsPage);
+        m_instrumentsTable->setObjectName("soundInstrumentsTable");
+        m_instrumentsTable->setVisible(false);
+
+        QHBoxLayout* snInstrumentSelectLayout = new QHBoxLayout();
+        QLabel* snEditChannelLabel = new QLabel(tr("Edit channel:"), instrumentsPage);
+        m_snEditChannelCombo = new QComboBox(instrumentsPage);
+        m_snEditChannelCombo->addItem(tr("CH1"), 0);
+        m_snEditChannelCombo->addItem(tr("CH2"), 1);
+        m_snEditChannelCombo->addItem(tr("CH3"), 2);
+        m_snEditChannelCombo->addItem(tr("CH4"), 3);
+        m_snEditChannelCombo->setFixedWidth(m_snEditChannelCombo->sizeHint().width() + 5);
+
+        QLabel* snInstrumentLabel = new QLabel(tr("Instrument:"), instrumentsPage);
+        m_snInstrumentSelectCombo = new QComboBox(instrumentsPage);
+        const int snComboWidth =
+            m_snInstrumentSelectCombo->fontMetrics().horizontalAdvance(QStringLiteral("MMMMMMMMMMMMMMMMMMMM")) + 34;
+        m_snInstrumentSelectCombo->setFixedWidth(snComboWidth);
+
+        QPushButton* snAddInstrumentBtn = new QPushButton(tr("ADD"), instrumentsPage);
+        QPushButton* snDeleteInstrumentBtn = new QPushButton(tr("DELETE"), instrumentsPage);
+
+        snInstrumentSelectLayout->addWidget(snEditChannelLabel);
+        snInstrumentSelectLayout->addWidget(m_snEditChannelCombo);
+        snInstrumentSelectLayout->addSpacing(14);
+        snInstrumentSelectLayout->addWidget(snInstrumentLabel);
+        snInstrumentSelectLayout->addWidget(m_snInstrumentSelectCombo);
+        snInstrumentSelectLayout->addWidget(snAddInstrumentBtn);
+        snInstrumentSelectLayout->addWidget(snDeleteInstrumentBtn);
+
+        // V9.18: edit the selected SN instrument name on the common top row,
+        // directly after DELETE, matching the AY Instruments page.
+        QLabel* snNameLabel = new QLabel(tr("Name:"), instrumentsPage);
+        m_instNameEdit = new QLineEdit(instrumentsPage);
+        m_instNameEdit->setMaxLength(12);
+        const int snNameWidth =
+            m_instNameEdit->fontMetrics().horizontalAdvance(QStringLiteral("MMMMMMMMMMMM")) + 18;
+        m_instNameEdit->setFixedWidth(snNameWidth);
+        snInstrumentSelectLayout->addSpacing(8);
+        snInstrumentSelectLayout->addWidget(snNameLabel);
+        snInstrumentSelectLayout->addWidget(m_instNameEdit);
+        snInstrumentSelectLayout->addStretch(1);
+        instrumentsPageLayout->addLayout(snInstrumentSelectLayout);
+
+        // V8.65: Instruments mirrors AY Instruments with two internal tabs.
+        QTabWidget* snEditorTabs = new QTabWidget(instrumentsPage);
+        QWidget* snInstrumentTab = new QWidget(snEditorTabs);
+        QWidget* snFurnaceTab = new QWidget(snEditorTabs);
+        QVBoxLayout* snInstrumentTabLayout = new QVBoxLayout(snInstrumentTab);
+        QVBoxLayout* snFurnaceTabLayout = new QVBoxLayout(snFurnaceTab);
+        snInstrumentTabLayout->setContentsMargins(6, 6, 6, 6);
+        snFurnaceTabLayout->setContentsMargins(6, 6, 6, 6);
+        snInstrumentTabLayout->setSpacing(6);
+        snFurnaceTabLayout->setSpacing(6);
+        snEditorTabs->addTab(snInstrumentTab, tr("Instrument"));
+        snEditorTabs->addTab(snFurnaceTab, tr("Furnace"));
+        instrumentsPageLayout->addWidget(snEditorTabs, 1);
+
+        QGroupBox* visualInstrumentBox = new QGroupBox(tr("Visual Instrument Editor"), snInstrumentTab);
         QVBoxLayout* visualInstrumentRoot = new QVBoxLayout(visualInstrumentBox);
         visualInstrumentRoot->setContentsMargins(8, 10, 8, 8);
-        visualInstrumentRoot->setSpacing(8);
+        visualInstrumentRoot->setSpacing(7);
 
-        QGridLayout* visualTopGrid = new QGridLayout();
-        visualTopGrid->setHorizontalSpacing(8);
-        visualTopGrid->setVerticalSpacing(6);
+        // Match the AY Instrument design: chip-specific hardware controls first,
+        // followed by Envelope / Modulation underneath.
+        // V9.19: Type moved into SN76489 Hardware and the explanatory text removed.
+        QVBoxLayout* visualInstrumentGroups = new QVBoxLayout();
+        visualInstrumentGroups->setSpacing(6);
 
-        m_instNameEdit = new QLineEdit(visualInstrumentBox);
-        m_instTypeCombo = new QComboBox(visualInstrumentBox);
+        QGroupBox* snHardwareGroup = new QGroupBox(tr("SN76489 Hardware"), visualInstrumentBox);
+        QHBoxLayout* snHardwareLayout = new QHBoxLayout(snHardwareGroup);
+        snHardwareLayout->setContentsMargins(8, 10, 8, 8);
+        snHardwareLayout->setSpacing(10);
+
+        m_instTypeCombo = new QComboBox(snHardwareGroup);
         m_instTypeCombo->addItems({ "Tone", "Noise", "---" });
+        m_instTypeCombo->setFixedWidth(m_instTypeCombo->sizeHint().width() + 10);
+        snHardwareLayout->addWidget(new QLabel(tr("Type:"), snHardwareGroup));
+        snHardwareLayout->addWidget(m_instTypeCombo);
+        snHardwareLayout->addStretch(1);
 
-        m_instVolumeSpin = new QSpinBox(visualInstrumentBox);
-        m_instVolumeSpin->setRange(0, 15);
-        m_instVolumeSpin->setDisplayIntegerBase(16);
-        m_instVolumeSpin->setPrefix("0");
-        m_instVolumeSpin->setFixedWidth(52);
+        QGroupBox* snEnvelopeGroup = new QGroupBox(tr("Envelope / Modulation"), visualInstrumentBox);
+        QGridLayout* snEnvelopeGrid = new QGridLayout(snEnvelopeGroup);
+        snEnvelopeGrid->setHorizontalSpacing(10);
+        snEnvelopeGrid->setVerticalSpacing(5);
+        snEnvelopeGrid->setColumnStretch(1, 1);
+        snEnvelopeGrid->setColumnStretch(4, 1);
 
-        m_instVolumeSlider = new QSlider(Qt::Horizontal, visualInstrumentBox);
-        m_instVolumeSlider->setRange(0, 15);
-        m_instVolumeSlider->setTickPosition(QSlider::TicksBelow);
-        m_instVolumeSlider->setTickInterval(1);
-        m_instVolumeSlider->setFixedWidth(125);
+        // V8.64: compact controls in two columns, leaving substantially more
+        // vertical room for the actual ENV graphical preview.
+        auto makeSnSliderCell = [&](int row, int col, const QString& label,
+                                    QSlider*& slider, QSpinBox*& spin,
+                                    int maximum, int tickInterval, bool hexDisplay) {
+            slider = new QSlider(Qt::Horizontal, snEnvelopeGroup);
+            slider->setRange(0, maximum);
+            slider->setTickPosition(QSlider::TicksBelow);
+            slider->setTickInterval(tickInterval);
+            spin = new QSpinBox(snEnvelopeGroup);
+            spin->setRange(0, maximum);
+            spin->setMaximumWidth(62);
+            if (hexDisplay) {
+                spin->setDisplayIntegerBase(16);
+                spin->setPrefix("0");
+            }
+            snEnvelopeGrid->addWidget(new QLabel(label, snEnvelopeGroup), row, col);
+            snEnvelopeGrid->addWidget(slider, row, col + 1);
+            snEnvelopeGrid->addWidget(spin, row, col + 2);
+        };
+
+        makeSnSliderCell(0, 0, tr("Volume:"),   m_instVolumeSlider,  m_instVolumeSpin,  15, 1,  true);
+        makeSnSliderCell(0, 3, tr("Envelope:"), m_instEnvSlider,     m_instEnvSpin,     15, 1,  true);
+        makeSnSliderCell(1, 0, tr("Fadeout:"),  m_instFadeoutSlider, m_instFadeoutSpin, 15, 1,  true);
+        makeSnSliderCell(1, 3, tr("Wave X:"),   m_instWaveXSlider,   m_instWaveXSpin,  100, 25, false);
+        makeSnSliderCell(2, 0, tr("Wave Y:"),   m_instWaveYSlider,   m_instWaveYSpin,  100, 25, false);
+
+        // V9.12: put Arpeggio directly behind Wave Y in the Instrument tab.
+        // This is a quick editor for the same arpeggio macro used by the Furnace tab.
+        QLineEdit* snArpQuickEdit = new QLineEdit(snEnvelopeGroup);
+        snArpQuickEdit->setPlaceholderText(tr("0,+4,+7"));
+        snEnvelopeGrid->addWidget(new QLabel(tr("Arpeggio:"), snEnvelopeGroup), 2, 3);
+        snEnvelopeGrid->addWidget(snArpQuickEdit, 2, 4, 1, 2);
+
         m_instVolumeSlider->setToolTip(tr("Instrument base volume 0..15"));
-
-        m_instEnvSpin = new QSpinBox(visualInstrumentBox);
-        m_instEnvSpin->setRange(0, 15);
-        m_instEnvSpin->setDisplayIntegerBase(16);
-        m_instEnvSpin->setPrefix("0");
-        m_instEnvSpin->setFixedWidth(52);
-
-        m_instEnvSlider = new QSlider(Qt::Horizontal, visualInstrumentBox);
-        m_instEnvSlider->setRange(0, 15);
-        m_instEnvSlider->setTickPosition(QSlider::TicksBelow);
-        m_instEnvSlider->setTickInterval(1);
-        m_instEnvSlider->setFixedWidth(125);
         m_instEnvSlider->setToolTip(tr("Envelope preset 0..15"));
-
-        m_instFadeoutSpin = new QSpinBox(visualInstrumentBox);
-        m_instFadeoutSpin->setRange(0, 15);
-        m_instFadeoutSpin->setDisplayIntegerBase(16);
-        m_instFadeoutSpin->setPrefix("0");
-        m_instFadeoutSpin->setFixedWidth(52);
-
-        m_instFadeoutSlider = new QSlider(Qt::Horizontal, visualInstrumentBox);
-        m_instFadeoutSlider->setRange(0, 15);
-        m_instFadeoutSlider->setTickPosition(QSlider::TicksBelow);
-        m_instFadeoutSlider->setTickInterval(1);
-        m_instFadeoutSlider->setFixedWidth(125);
         m_instFadeoutSlider->setToolTip(tr("Fadeout 0..15"));
 
-        m_instWaveXSpin = new QSpinBox(visualInstrumentBox);
-        m_instWaveXSpin->setRange(0, 100);
-        m_instWaveXSpin->setFixedWidth(58);
+        m_instEnvPreview = new SoundInstrumentEnvelopePreviewWidget(snEnvelopeGroup);
+        // V9.16: row 3 consumes only the space left inside the group box and
+        // can shrink all the way down when the window is resized smaller.
+        m_instEnvPreview->setMinimumHeight(0);
+        m_instEnvPreview->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        snEnvelopeGrid->addWidget(m_instEnvPreview, 3, 0, 1, 6);
+        snEnvelopeGrid->setRowMinimumHeight(3, 0);
+        snEnvelopeGrid->setRowStretch(0, 0);
+        snEnvelopeGrid->setRowStretch(1, 0);
+        snEnvelopeGrid->setRowStretch(2, 0);
+        snEnvelopeGrid->setRowStretch(3, 1);
+        snEnvelopeGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
-        m_instWaveXSlider = new QSlider(Qt::Horizontal, visualInstrumentBox);
-        m_instWaveXSlider->setRange(0, 100);
-        m_instWaveXSlider->setTickPosition(QSlider::TicksBelow);
-        m_instWaveXSlider->setTickInterval(25);
-        m_instWaveXSlider->setFixedWidth(125);
+        visualInstrumentGroups->addWidget(snHardwareGroup, 0);
+        visualInstrumentGroups->addWidget(snEnvelopeGroup, 1);
+        visualInstrumentRoot->addLayout(visualInstrumentGroups, 1);
+        visualInstrumentRoot->setStretchFactor(visualInstrumentGroups, 1);
 
-        m_instWaveYSpin = new QSpinBox(visualInstrumentBox);
-        m_instWaveYSpin->setRange(0, 100);
-        m_instWaveYSpin->setFixedWidth(58);
+        QGroupBox* snMacroGroup = new QGroupBox(tr("Furnace-style Tracker Macros (60 Hz / CVBasic-safe)"), snFurnaceTab);
+        QGridLayout* snMacroGrid = new QGridLayout(snMacroGroup);
+        snMacroGrid->setHorizontalSpacing(8);
+        snMacroGrid->setVerticalSpacing(5);
 
-        m_instWaveYSlider = new QSlider(Qt::Horizontal, visualInstrumentBox);
-        m_instWaveYSlider->setRange(0, 100);
-        m_instWaveYSlider->setTickPosition(QSlider::TicksBelow);
-        m_instWaveYSlider->setTickInterval(25);
-        m_instWaveYSlider->setFixedWidth(125);
+        auto makeMacroPanel = [&](const QString& title,
+                                  SoundMacroGraphWidget::Mode mode,
+                                  int minValue, int maxValue,
+                                  QLineEdit*& edit,
+                                  SoundMacroGraphWidget*& graph,
+                                  int row, int col) {
+            QGroupBox* box = new QGroupBox(title, snMacroGroup);
+            QVBoxLayout* lay = new QVBoxLayout(box);
+            lay->setContentsMargins(6, 8, 6, 6);
+            lay->setSpacing(4);
 
-        visualTopGrid->addWidget(new QLabel(tr("Name:"), visualInstrumentBox), 0, 0);
-        visualTopGrid->addWidget(m_instNameEdit, 0, 1, 1, 5);
+            graph = new SoundMacroGraphWidget(mode, minValue, maxValue, box);
+            edit = new QLineEdit(box);
+            edit->setMaximumHeight(24);
 
-        QGroupBox* waveGroup = new QGroupBox(tr("Wave"), visualInstrumentBox);
-        QGridLayout* waveGrid = new QGridLayout(waveGroup);
-        waveGrid->setContentsMargins(8, 10, 8, 8);
-        waveGrid->setHorizontalSpacing(6);
-        waveGrid->setVerticalSpacing(6);
-        waveGrid->addWidget(new QLabel(tr("Wave X:"), waveGroup), 0, 0);
-        waveGrid->addWidget(m_instWaveXSlider, 0, 1);
-        waveGrid->addWidget(m_instWaveXSpin, 0, 2);
-        waveGrid->addWidget(new QLabel(tr("Wave Y:"), waveGroup), 1, 0);
-        waveGrid->addWidget(m_instWaveYSlider, 1, 1);
-        waveGrid->addWidget(m_instWaveYSpin, 1, 2);
+            lay->addWidget(graph);
+            lay->addWidget(edit);
+            snMacroGrid->addWidget(box, row, col);
+        };
 
-        QGroupBox* toneGroup = new QGroupBox(tr("Tone / Envelope"), visualInstrumentBox);
-        QGridLayout* toneGrid = new QGridLayout(toneGroup);
-        toneGrid->setContentsMargins(8, 10, 8, 8);
-        toneGrid->setHorizontalSpacing(6);
-        toneGrid->setVerticalSpacing(6);
-        toneGrid->addWidget(new QLabel(tr("Tone:"), toneGroup), 0, 0);
-        toneGrid->addWidget(m_instTypeCombo, 0, 1, 1, 2);
-        toneGrid->addWidget(new QLabel(tr("Volume:"), toneGroup), 1, 0);
-        toneGrid->addWidget(m_instVolumeSlider, 1, 1);
-        toneGrid->addWidget(m_instVolumeSpin, 1, 2);
-        toneGrid->addWidget(new QLabel(tr("Envelope:"), toneGroup), 2, 0);
-        toneGrid->addWidget(m_instEnvSlider, 2, 1);
-        toneGrid->addWidget(m_instEnvSpin, 2, 2);
-        toneGrid->addWidget(new QLabel(tr("Fadeout:"), toneGroup), 3, 0);
-        toneGrid->addWidget(m_instFadeoutSlider, 3, 1);
-        toneGrid->addWidget(m_instFadeoutSpin, 3, 2);
+        makeMacroPanel(tr("Volume"), SoundMacroGraphWidget::Bars,
+                       0, 15, m_instVolumeMacroEdit, m_instVolumeMacroGraph, 0, 0);
+        makeMacroPanel(tr("Pitch"), SoundMacroGraphWidget::Bipolar,
+                       -36, 36, m_instPitchMacroEdit, m_instPitchMacroGraph, 0, 1);
+        makeMacroPanel(tr("Arpeggio"), SoundMacroGraphWidget::Bipolar,
+                       -24, 24, m_instArpMacroEdit, m_instArpMacroGraph, 1, 0);
+        makeMacroPanel(tr("Noise"), SoundMacroGraphWidget::Steps,
+                       0, 7, m_instNoiseMacroEdit, m_instNoiseMacroGraph, 1, 1);
 
-        QHBoxLayout* instrumentGroups = new QHBoxLayout();
-        instrumentGroups->setSpacing(8);
-        instrumentGroups->addWidget(waveGroup, 0);
-        instrumentGroups->addWidget(toneGroup, 0);
-        instrumentGroups->addStretch(1);
+        m_instVolumeMacroEdit->setPlaceholderText(tr("15,14,12,10,8,6"));
+        m_instPitchMacroEdit->setPlaceholderText(tr("+1,0,0,0"));
+        m_instArpMacroEdit->setPlaceholderText(tr("0,+4,+7"));
+        m_instNoiseMacroEdit->setPlaceholderText(tr("3,2,1,0"));
 
-        visualInstrumentRoot->addLayout(visualTopGrid);
-        visualInstrumentRoot->addLayout(instrumentGroups);
+        auto bindMacroGraph = [this](SoundMacroGraphWidget* graph, QLineEdit* edit) {
+            graph->onMacroEdited = [this, edit](const QString& text) {
+                edit->setText(text);
+                applyInstrumentEditorToTable();
+            };
+            connect(edit, &QLineEdit::textChanged, this, [graph](const QString& text) {
+                graph->setMacroText(text);
+            });
+        };
 
-        QHBoxLayout* visualMid = new QHBoxLayout();
-        visualMid->setSpacing(8);
+        bindMacroGraph(m_instVolumeMacroGraph, m_instVolumeMacroEdit);
+        bindMacroGraph(m_instPitchMacroGraph, m_instPitchMacroEdit);
+        bindMacroGraph(m_instArpMacroGraph, m_instArpMacroEdit);
+        bindMacroGraph(m_instNoiseMacroGraph, m_instNoiseMacroEdit);
 
-        m_instWavePreview = new SoundInstrumentWavePreviewWidget(visualInstrumentBox);
+        // Keep the Instrument-tab Arpeggio field and Furnace Arpeggio macro in sync.
+        connect(snArpQuickEdit, &QLineEdit::textChanged, this, [this](const QString& text) {
+            if (m_instArpMacroEdit && m_instArpMacroEdit->text() != text)
+                m_instArpMacroEdit->setText(text);
+        });
+        connect(m_instArpMacroEdit, &QLineEdit::textChanged, snArpQuickEdit, [snArpQuickEdit](const QString& text) {
+            if (snArpQuickEdit->text() != text)
+                snArpQuickEdit->setText(text);
+        });
 
-        visualMid->addWidget(m_instWavePreview, 1);
-
-        visualInstrumentRoot->addLayout(visualMid);
-
-        m_instEnvPreview = new SoundInstrumentEnvelopePreviewWidget(visualInstrumentBox);
-        visualInstrumentRoot->addWidget(m_instEnvPreview);
-
-        QLabel* visualHelp = new QLabel(
-            tr("ENV is the main PSG envelope preset. The Sound Editor targets the standard SN76489/TMS9919 PSG only: tone/noise/volume."),
-            visualInstrumentBox
-        );
-        visualHelp->setWordWrap(true);
-        visualHelp->setStyleSheet("QLabel { color:#B8C6D8; background:transparent; }");
-        visualInstrumentRoot->addWidget(visualHelp);
+        snFurnaceTabLayout->addWidget(snMacroGroup, 1);
 
         QHBoxLayout* visualTestButtons = new QHBoxLayout();
         QPushButton* visualTestKeyBtn = new QPushButton(tr("Test Key C-4"), visualInstrumentBox);
@@ -9216,6 +11821,14 @@ private:
         visualTestButtons->addStretch(1);
         visualInstrumentRoot->addLayout(visualTestButtons);
 
+        auto bindSnMacro = [this](QLineEdit* edit) {
+            connect(edit, &QLineEdit::editingFinished, this, [this]() { applyInstrumentEditorToTable(); });
+        };
+        bindSnMacro(m_instVolumeMacroEdit);
+        bindSnMacro(m_instPitchMacroEdit);
+        bindSnMacro(m_instArpMacroEdit);
+        bindSnMacro(m_instNoiseMacroEdit);
+
         connect(visualTestKeyBtn, &QPushButton::clicked, this, [this]() {
             previewSelectedInstrumentKey();
         });
@@ -9223,13 +11836,17 @@ private:
             stopInstrumentTestKey();
         });
 
+        snInstrumentTabLayout->addWidget(visualInstrumentBox, 1);
+
+        // Keep the existing SN bank actions, but place them like the AY page's
+        // action buttons so both instrument tabs have the same visual rhythm.
         QHBoxLayout* visualBankButtons = new QHBoxLayout();
-        QPushButton* visualSaveBankBtn = new QPushButton(tr("Save Instrument Bank"), visualInstrumentBox);
-        QPushButton* visualLoadBankBtn = new QPushButton(tr("Load Instrument Bank"), visualInstrumentBox);
-        visualBankButtons->addStretch(1);
+        QPushButton* visualSaveBankBtn = new QPushButton(tr("Save Instrument Bank"), instrumentsPage);
+        QPushButton* visualLoadBankBtn = new QPushButton(tr("Load Instrument Bank"), instrumentsPage);
         visualBankButtons->addWidget(visualSaveBankBtn);
         visualBankButtons->addWidget(visualLoadBankBtn);
-        visualInstrumentRoot->addLayout(visualBankButtons);
+        visualBankButtons->addStretch(1);
+        snInstrumentTabLayout->addLayout(visualBankButtons);
 
         connect(visualSaveBankBtn, &QPushButton::clicked, this, [this]() {
             saveInstrumentBank();
@@ -9238,7 +11855,53 @@ private:
             loadInstrumentBank();
         });
 
-        instrumentsPageLayout->addWidget(visualInstrumentBox, 1);
+        connect(m_snEditChannelCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, [this](int) {
+            const int ch = qBound(0, m_snEditChannelCombo->currentData().toInt(), 3);
+            const int row = qBound(0, m_snSelectedInstrument[ch], 31);
+            refreshSnInstrumentSelectionCombo(row);
+            if (m_instrumentsTable)
+                m_instrumentsTable->setCurrentCell(row, 0);
+            loadInstrumentIntoEditor(row);
+            refreshActiveInstrumentSummary();
+        });
+
+        connect(m_snInstrumentSelectCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, [this](int index) {
+            if (index < 0 || !m_instrumentsTable)
+                return;
+            const int ch = m_snEditChannelCombo ? qBound(0, m_snEditChannelCombo->currentData().toInt(), 3) : 0;
+            const int row = qBound(0, m_snInstrumentSelectCombo->itemData(index).toInt(), 31);
+            m_snSelectedInstrument[ch] = row;
+            m_instrumentsTable->setCurrentCell(row, 0);
+            loadInstrumentIntoEditor(row);
+            refreshActiveInstrumentSummary();
+        });
+
+        connect(snAddInstrumentBtn, &QPushButton::clicked, this, [this]() {
+            addInstrumentPreset();
+            const int row = currentInstrumentRow();
+            const int ch = m_snEditChannelCombo ? qBound(0, m_snEditChannelCombo->currentData().toInt(), 3) : 0;
+            m_snSelectedInstrument[ch] = row;
+            refreshSnInstrumentSelectionCombo(row);
+            refreshActiveInstrumentSummary();
+        });
+
+        connect(snDeleteInstrumentBtn, &QPushButton::clicked, this, [this]() {
+            clearSelectedInstrument();
+            const int row = currentInstrumentRow();
+            refreshSnInstrumentSelectionCombo(row);
+            refreshActiveInstrumentSummary();
+        });
+
+        connect(m_instrumentsTable, &QTableWidget::itemChanged,
+                this, [this](QTableWidgetItem* item) {
+            if (item && item->column() == 1)
+                refreshSnInstrumentSelectionCombo(currentInstrumentRow());
+            refreshActiveInstrumentSummary();
+            if (!m_restoringSoundUndo)
+                autoRebuildSoundOutput();
+        });
 
         connect(m_instNameEdit, &QLineEdit::editingFinished, this, [this]() {
             applyInstrumentEditorToTable();
@@ -9298,90 +11961,520 @@ private:
             applyInstrumentEditorToTable();
         });
 
+        // Dedicated SGM AY-3-8910 instrument editor. The page exists all the time
+        // so its state survives toggling, but it is only inserted into the tab bar
+        // while SGM Sound is enabled.
+        m_ayInstrumentsPage = new QWidget(m_editorTabs);
+        QVBoxLayout* ayPageLayout = new QVBoxLayout(m_ayInstrumentsPage);
+        ayPageLayout->setContentsMargins(8, 8, 8, 8);
+        ayPageLayout->setSpacing(8);
+
+        QHBoxLayout* ayChannelLayout = new QHBoxLayout();
+        QLabel* ayChannelLabel = new QLabel(tr("Edit channel:"), m_ayInstrumentsPage);
+        m_ayBankChannelCombo = new QComboBox(m_ayInstrumentsPage);
+        m_ayBankChannelCombo->addItem(tr("AY1"), 0);
+        m_ayBankChannelCombo->addItem(tr("AY2"), 1);
+        m_ayBankChannelCombo->addItem(tr("AY3"), 2);
+        m_ayBankChannelCombo->setFixedWidth(m_ayBankChannelCombo->sizeHint().width() + 5);
+
+        // Internal storage table remains for backward-compatible song/bank data handling,
+        // but the user selects AY instruments through a compact combo box.
+        m_ayInstrumentsTable = new QTableWidget(32, 22, m_ayInstrumentsPage);
+        m_ayInstrumentsTable->setObjectName("soundAyInstrumentsTable");
+        m_ayInstrumentsTable->setVisible(false);
+
+        QLabel* ayInstrumentSelectLabel = new QLabel(tr("Instrument:"), m_ayInstrumentsPage);
+        m_ayInstrumentSelectCombo = new QComboBox(m_ayInstrumentsPage);
+        m_ayInstrumentSelectCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+
+        // About 20 visible characters wide.
+        const int ayInstrumentComboWidth =
+            m_ayInstrumentSelectCombo->fontMetrics().horizontalAdvance(QStringLiteral("MMMMMMMMMMMMMMMMMMMM")) + 34;
+        m_ayInstrumentSelectCombo->setFixedWidth(ayInstrumentComboWidth);
+
+        ayChannelLayout->addWidget(ayChannelLabel);
+        ayChannelLayout->addWidget(m_ayBankChannelCombo);
+        ayChannelLayout->addSpacing(14);
+        QPushButton* ayAddInstrumentBtn = new QPushButton(tr("ADD"), m_ayInstrumentsPage);
+        QPushButton* ayDeleteInstrumentBtn = new QPushButton(tr("DELETE"), m_ayInstrumentsPage);
+
+        ayChannelLayout->addWidget(ayInstrumentSelectLabel);
+        ayChannelLayout->addWidget(m_ayInstrumentSelectCombo);
+        ayChannelLayout->addWidget(ayAddInstrumentBtn);
+        ayChannelLayout->addWidget(ayDeleteInstrumentBtn);
+
+        // V9.13: the selected AY instrument name is edited on the common top row,
+        // directly after DELETE, so it stays visible on both AY sub-tabs.
+        QLabel* ayNameLabel = new QLabel(tr("Name:"), m_ayInstrumentsPage);
+        m_ayNameEdit = new QLineEdit(m_ayInstrumentsPage);
+        m_ayNameEdit->setMaxLength(12);
+        const int ayNameWidth = m_ayNameEdit->fontMetrics().horizontalAdvance(QStringLiteral("MMMMMMMMMMMM")) + 18;
+        m_ayNameEdit->setFixedWidth(ayNameWidth);
+        ayChannelLayout->addSpacing(8);
+        ayChannelLayout->addWidget(ayNameLabel);
+        ayChannelLayout->addWidget(m_ayNameEdit);
+        ayChannelLayout->addStretch(1);
+        ayPageLayout->addLayout(ayChannelLayout);
+
+        // V8.63: split AY Instruments into two clean screens.
+        // The channel/instrument selector remains common above both tabs.
+        QTabWidget* ayEditorTabs = new QTabWidget(m_ayInstrumentsPage);
+        QWidget* ayBasicTab = new QWidget(ayEditorTabs);
+        QWidget* ayFurnaceTab = new QWidget(ayEditorTabs);
+        QVBoxLayout* ayBasicTabLayout = new QVBoxLayout(ayBasicTab);
+        QVBoxLayout* ayFurnaceTabLayout = new QVBoxLayout(ayFurnaceTab);
+        ayBasicTabLayout->setContentsMargins(6, 6, 6, 6);
+        ayFurnaceTabLayout->setContentsMargins(6, 6, 6, 6);
+        ayBasicTabLayout->setSpacing(6);
+        ayFurnaceTabLayout->setSpacing(6);
+
+        ayEditorTabs->addTab(ayBasicTab, tr("AY Instrument"));
+        ayEditorTabs->addTab(ayFurnaceTab, tr("Furnace"));
+        ayPageLayout->addWidget(ayEditorTabs, 1);
+
+        QGroupBox* ayVisualBox = new QGroupBox(tr("Visual AY Instrument Editor"), ayBasicTab);
+        QVBoxLayout* ayVisualRoot = new QVBoxLayout(ayVisualBox);
+        ayVisualRoot->setContentsMargins(8, 10, 8, 8);
+        ayVisualRoot->setSpacing(7);
+
+        QVBoxLayout* ayVisualGroups = new QVBoxLayout();
+        ayVisualGroups->setSpacing(6);
+
+        QGroupBox* ayHardwareGroup = new QGroupBox(tr("AY Hardware"), ayVisualBox);
+        QHBoxLayout* ayHardwareGrid = new QHBoxLayout(ayHardwareGroup);
+        ayHardwareGrid->setContentsMargins(8, 10, 8, 8);
+        ayHardwareGrid->setSpacing(10);
+
+        // V9.13: AY hardware mixer/envelope switches live with the other
+        // chip-specific hardware controls instead of in the visual editor header.
+        m_ayToneCheck = new QCheckBox(tr("Tone"), ayHardwareGroup);
+        m_ayNoiseCheck = new QCheckBox(tr("Noise"), ayHardwareGroup);
+        m_ayEnvCheck = new QCheckBox(tr("HW Envelope"), ayHardwareGroup);
+        ayHardwareGrid->addWidget(m_ayToneCheck);
+        ayHardwareGrid->addWidget(m_ayNoiseCheck);
+        ayHardwareGrid->addWidget(m_ayEnvCheck);
+        ayHardwareGrid->addSpacing(8);
+
+        m_ayShapeSpin = new QSpinBox(ayHardwareGroup);
+        m_ayShapeSpin->setRange(0, 15);
+        m_ayShapeSpin->setDisplayIntegerBase(16);
+        m_ayShapeSpin->setPrefix("0x");
+        m_ayEnvPeriodSpin = new QSpinBox(ayHardwareGroup);
+        m_ayEnvPeriodSpin->setRange(0, 65535);
+        m_ayEnvPeriodSpin->setDisplayIntegerBase(16);
+        m_ayEnvPeriodSpin->setPrefix("0x");
+        m_ayNoisePeriodSpin = new QSpinBox(ayHardwareGroup);
+        m_ayNoisePeriodSpin->setRange(0, 31);
+        m_ayNoisePeriodSpin->setDisplayIntegerBase(16);
+        m_ayNoisePeriodSpin->setPrefix("0x");
+        ayHardwareGrid->addWidget(new QLabel(tr("Shape:"), ayHardwareGroup));
+        ayHardwareGrid->addWidget(m_ayShapeSpin);
+        ayHardwareGrid->addSpacing(6);
+        ayHardwareGrid->addWidget(new QLabel(tr("Envelope period:"), ayHardwareGroup));
+        ayHardwareGrid->addWidget(m_ayEnvPeriodSpin);
+        ayHardwareGrid->addSpacing(6);
+        ayHardwareGrid->addWidget(new QLabel(tr("Noise period:"), ayHardwareGroup));
+        ayHardwareGrid->addWidget(m_ayNoisePeriodSpin);
+        ayHardwareGrid->addStretch(1);
+
+        QGroupBox* ayAdsrGroup = new QGroupBox(tr("Envelope / Modulation"), ayVisualBox);
+        QGridLayout* ayEnvelopeGrid = new QGridLayout(ayAdsrGroup);
+        ayEnvelopeGrid->setHorizontalSpacing(10);
+        ayEnvelopeGrid->setVerticalSpacing(5);
+        ayEnvelopeGrid->setColumnStretch(1, 1);
+        ayEnvelopeGrid->setColumnStretch(4, 1);
+
+        // V9.11: mirror the SN Instruments -> Envelope / Modulation layout.
+        // AY keeps its own ADSR/Vibrato parameters, but uses the same visual
+        // structure: label + horizontal slider + value box, arranged in two columns,
+        // with one large envelope preview underneath.
+        auto makeAySliderCell = [&](int row, int col, const QString& label,
+                                    QSlider*& slider, QSpinBox*& spin) {
+            slider = new QSlider(Qt::Horizontal, ayAdsrGroup);
+            slider->setRange(0, 15);
+            slider->setTickPosition(QSlider::TicksBelow);
+            slider->setTickInterval(1);
+
+            spin = new QSpinBox(ayAdsrGroup);
+            spin->setRange(0, 15);
+            spin->setMaximumWidth(62);
+
+            ayEnvelopeGrid->addWidget(new QLabel(label, ayAdsrGroup), row, col);
+            ayEnvelopeGrid->addWidget(slider, row, col + 1);
+            ayEnvelopeGrid->addWidget(spin, row, col + 2);
+        };
+
+        makeAySliderCell(0, 0, tr("Attack:"),  m_ayAttackSlider,  m_ayAttackSpin);
+        makeAySliderCell(0, 3, tr("Decay:"),   m_ayDecaySlider,   m_ayDecaySpin);
+        makeAySliderCell(1, 0, tr("Sustain:"), m_aySustainSlider, m_aySustainSpin);
+        makeAySliderCell(1, 3, tr("Release:"), m_ayReleaseSlider, m_ayReleaseSpin);
+        makeAySliderCell(2, 0, tr("Vibrato:"), m_ayVibratoSlider, m_ayVibratoSpin);
+
+        // V9.12: Arpeggio sits directly behind Vibrato inside Envelope / Modulation.
+        m_ayArpEdit = new QLineEdit(ayAdsrGroup);
+        m_ayArpEdit->setPlaceholderText(tr("Example: 0,+4,+7,+12"));
+        ayEnvelopeGrid->addWidget(new QLabel(tr("Arpeggio:"), ayAdsrGroup), 2, 3);
+        ayEnvelopeGrid->addWidget(m_ayArpEdit, 2, 4, 1, 2);
+
+        m_ayEnvelopePreview = new AyEnvelopeModulationPreviewWidget(ayAdsrGroup);
+        // V9.16: row 3 consumes only the space left inside the group box and
+        // can shrink all the way down when the window is resized smaller.
+        m_ayEnvelopePreview->setMinimumHeight(0);
+        m_ayEnvelopePreview->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        ayEnvelopeGrid->addWidget(m_ayEnvelopePreview, 3, 0, 1, 6);
+        ayEnvelopeGrid->setRowMinimumHeight(3, 0);
+        ayEnvelopeGrid->setRowStretch(0, 0);
+        ayEnvelopeGrid->setRowStretch(1, 0);
+        ayEnvelopeGrid->setRowStretch(2, 0);
+        ayEnvelopeGrid->setRowStretch(3, 1);
+        ayAdsrGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+        ayVisualGroups->addWidget(ayHardwareGroup, 0);
+        ayVisualGroups->addWidget(ayAdsrGroup, 1);
+        ayVisualRoot->addLayout(ayVisualGroups, 1);
+        ayVisualRoot->setStretchFactor(ayVisualGroups, 1);
+
+        QGroupBox* ayMacroGroup = new QGroupBox(tr("Furnace-style Tracker Macros (60 Hz / CVBasic-safe)"), ayFurnaceTab);
+        QGridLayout* ayMacroGrid = new QGridLayout(ayMacroGroup);
+        ayMacroGrid->setHorizontalSpacing(8);
+        ayMacroGrid->setVerticalSpacing(5);
+
+        auto makeAyMacroPanel = [&](const QString& title,
+                                    SoundMacroGraphWidget::Mode mode,
+                                    int minValue, int maxValue,
+                                    QLineEdit*& edit,
+                                    SoundMacroGraphWidget*& graph,
+                                    int row, int col) {
+            QGroupBox* box = new QGroupBox(title, ayMacroGroup);
+            QVBoxLayout* lay = new QVBoxLayout(box);
+            lay->setContentsMargins(6, 8, 6, 6);
+            lay->setSpacing(4);
+            graph = new SoundMacroGraphWidget(mode, minValue, maxValue, box);
+            edit = new QLineEdit(box);
+            edit->setMaximumHeight(24);
+            lay->addWidget(graph);
+            lay->addWidget(edit);
+            ayMacroGrid->addWidget(box, row, col);
+        };
+
+        makeAyMacroPanel(tr("Volume"), SoundMacroGraphWidget::Bars,
+                         0, 15, m_ayVolumeMacroEdit, m_ayVolumeMacroGraph, 0, 0);
+        makeAyMacroPanel(tr("Pitch"), SoundMacroGraphWidget::Bipolar,
+                         -36, 36, m_ayPitchMacroEdit, m_ayPitchMacroGraph, 0, 1);
+        makeAyMacroPanel(tr("Noise Period"), SoundMacroGraphWidget::Steps,
+                         0, 31, m_ayNoiseMacroEdit, m_ayNoiseMacroGraph, 1, 0);
+        makeAyMacroPanel(tr("Wave / Mixer"), SoundMacroGraphWidget::Steps,
+                         0, 7, m_ayWaveMacroEdit, m_ayWaveMacroGraph, 1, 1);
+        makeAyMacroPanel(tr("Envelope Shape"), SoundMacroGraphWidget::Steps,
+                         0, 15, m_ayEnvShapeMacroEdit, m_ayEnvShapeMacroGraph, 2, 0);
+        makeAyMacroPanel(tr("Envelope Period"), SoundMacroGraphWidget::Bars,
+                         1, 65535, m_ayEnvPeriodMacroEdit, m_ayEnvPeriodMacroGraph, 2, 1);
+        makeAyMacroPanel(tr("Phase Reset"), SoundMacroGraphWidget::Steps,
+                         0, 1, m_ayPhaseResetMacroEdit, m_ayPhaseResetMacroGraph, 3, 0);
+
+        // AutoEnv is a ratio (1/1, 1/2, ...), so keep this one as a compact
+        // text control; it cannot be represented faithfully by an integer graph.
+        QGroupBox* ayAutoEnvBox = new QGroupBox(tr("Auto Envelope Ratio"), ayMacroGroup);
+        QVBoxLayout* ayAutoEnvLayout = new QVBoxLayout(ayAutoEnvBox);
+        ayAutoEnvLayout->setContentsMargins(6, 8, 6, 6);
+        QLabel* ayAutoEnvHelp = new QLabel(tr("Note-linked HW envelope ratio"), ayAutoEnvBox);
+        m_ayAutoEnvEdit = new QLineEdit(ayAutoEnvBox);
+        m_ayAutoEnvEdit->setPlaceholderText(tr("1/1, 1/2, 2/1 or ---"));
+        ayAutoEnvLayout->addWidget(ayAutoEnvHelp);
+        ayAutoEnvLayout->addWidget(m_ayAutoEnvEdit);
+        ayAutoEnvLayout->addStretch(1);
+        ayMacroGrid->addWidget(ayAutoEnvBox, 3, 1);
+
+        m_ayVolumeMacroEdit->setPlaceholderText(tr("15,14,12,10,8,6"));
+        m_ayPitchMacroEdit->setPlaceholderText(tr("+1,0,0,0"));
+        m_ayNoiseMacroEdit->setPlaceholderText(tr("9,10,11,12"));
+        m_ayWaveMacroEdit->setPlaceholderText(tr("0..7: Tone=1, Noise=2, HW Env=4"));
+        m_ayEnvShapeMacroEdit->setPlaceholderText(tr("10,14,..."));
+        m_ayEnvPeriodMacroEdit->setPlaceholderText(tr("384,256,..."));
+        m_ayPhaseResetMacroEdit->setPlaceholderText(tr("1,0,0,..."));
+
+        auto bindAyMacroGraph = [this](SoundMacroGraphWidget* graph, QLineEdit* edit) {
+            graph->onMacroEdited = [this, edit](const QString& text) {
+                edit->setText(text);
+                applyAyVisualEditorToTable();
+            };
+            connect(edit, &QLineEdit::textChanged, this, [graph](const QString& text) {
+                graph->setMacroText(text);
+            });
+        };
+
+        bindAyMacroGraph(m_ayVolumeMacroGraph, m_ayVolumeMacroEdit);
+        bindAyMacroGraph(m_ayPitchMacroGraph, m_ayPitchMacroEdit);
+        bindAyMacroGraph(m_ayNoiseMacroGraph, m_ayNoiseMacroEdit);
+        bindAyMacroGraph(m_ayWaveMacroGraph, m_ayWaveMacroEdit);
+        bindAyMacroGraph(m_ayEnvShapeMacroGraph, m_ayEnvShapeMacroEdit);
+        bindAyMacroGraph(m_ayEnvPeriodMacroGraph, m_ayEnvPeriodMacroEdit);
+        bindAyMacroGraph(m_ayPhaseResetMacroGraph, m_ayPhaseResetMacroEdit);
+
+        ayFurnaceTabLayout->addWidget(ayMacroGroup, 1);
+
+        QHBoxLayout* ayTestLayout = new QHBoxLayout();
+        QPushButton* ayTestBtn = new QPushButton(tr("Test Key C-4"), ayVisualBox);
+        QPushButton* ayStopBtn = new QPushButton(tr("Stop Key"), ayVisualBox);
+        ayTestLayout->addWidget(ayTestBtn);
+        ayTestLayout->addWidget(ayStopBtn);
+        ayTestLayout->addStretch(1);
+        ayVisualRoot->addLayout(ayTestLayout);
+
+        ayBasicTabLayout->addWidget(ayVisualBox, 1);
+
+        QHBoxLayout* ayButtons = new QHBoxLayout();
+        QPushButton* ayDefaultsBtn = new QPushButton(tr("Restore AY Channel Defaults"), m_ayInstrumentsPage);
+        QPushButton* ayCopyBtn = new QPushButton(tr("Copy from previous"), m_ayInstrumentsPage);
+        ayButtons->addWidget(ayDefaultsBtn);
+        ayButtons->addWidget(ayCopyBtn);
+        ayButtons->addStretch(1);
+        ayBasicTabLayout->addLayout(ayButtons);
+
+        connect(ayDefaultsBtn, &QPushButton::clicked, this, [this]() {
+            const QString chName = m_ayBankChannelCombo ? m_ayBankChannelCombo->currentText() : tr("AY");
+            if (QMessageBox::question(this, tr("AY Instruments"),
+                                      tr("Restore %1 instruments to the SGM defaults?").arg(chName)) == QMessageBox::Yes) {
+                resetCurrentAyBankToDefaults();
+                autoRebuildSoundOutput();
+            }
+        });
+        connect(ayCopyBtn, &QPushButton::clicked, this, [this]() {
+            if (!m_ayInstrumentsTable) return;
+            const int row = m_ayInstrumentsTable->currentRow();
+            if (row <= 0) return;
+            for (int c = 1; c < m_ayInstrumentsTable->columnCount(); ++c) {
+                QTableWidgetItem* src = m_ayInstrumentsTable->item(row - 1, c);
+                if (src) m_ayInstrumentsTable->setItem(row, c, new QTableWidgetItem(src->text()));
+            }
+            if (auto* idItem = m_ayInstrumentsTable->item(row, 0))
+                idItem->setText(QString("%1").arg(row, 2, 16, QLatin1Char('0')).toUpper());
+            autoRebuildSoundOutput();
+        });
+        connect(m_ayInstrumentSelectCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, [this](int index) {
+            if (!m_ayInstrumentsTable || index < 0)
+                return;
+            const int row = qBound(0, m_ayInstrumentSelectCombo->itemData(index).toInt(), 31);
+            m_aySelectedInstrument[qBound(0, m_currentAyBank, 2)] = row;
+            {
+                QSignalBlocker blocker(m_ayInstrumentsTable);
+                m_ayInstrumentsTable->setCurrentCell(row, 0);
+            }
+            loadAyInstrumentIntoVisualEditor(row);
+            refreshActiveInstrumentSummary();
+        });
+
+        connect(ayAddInstrumentBtn, &QPushButton::clicked, this, [this]() {
+            if (!m_ayInstrumentsTable)
+                return;
+            pushSoundUndoState();
+
+            int row = 1;
+            for (int r = 1; r < m_ayInstrumentsTable->rowCount(); ++r) {
+                const QString name = m_ayInstrumentsTable->item(r, 1)
+                    ? m_ayInstrumentsTable->item(r, 1)->text().trimmed() : QString();
+                if (name.isEmpty() || name == "---") {
+                    row = r;
+                    break;
+                }
+            }
+
+            const QStringList values = {
+                QString("%1").arg(row, 2, 16, QLatin1Char('0')).toUpper(),
+                tr("New AY Inst"), "ON", "OFF", "OFF", "00", "0100", "00",
+                "00", "00", "0F", "00", "00", "---"
+            };
+            for (int c = 0; c < values.size(); ++c) {
+                QTableWidgetItem* item = m_ayInstrumentsTable->item(row, c);
+                if (!item) {
+                    item = new QTableWidgetItem();
+                    m_ayInstrumentsTable->setItem(row, c, item);
+                }
+                item->setText(values[c]);
+            }
+
+            saveVisibleAyBank();
+            m_aySelectedInstrument[qBound(0, m_currentAyBank, 2)] = row;
+            refreshAyInstrumentSelectionCombo(row);
+            m_ayInstrumentsTable->setCurrentCell(row, 0);
+            loadAyInstrumentIntoVisualEditor(row);
+            refreshActiveInstrumentSummary();
+            autoRebuildSoundOutput();
+        });
+
+        connect(ayDeleteInstrumentBtn, &QPushButton::clicked, this, [this]() {
+            if (!m_ayInstrumentsTable)
+                return;
+            const int row = m_aySelectedInstrument[qBound(0, m_currentAyBank, 2)];
+            if (row <= 0)
+                return;
+
+            pushSoundUndoState();
+            const QStringList values = {
+                QString("%1").arg(row, 2, 16, QLatin1Char('0')).toUpper(),
+                "---", "ON", "OFF", "OFF", "00", "0100", "00",
+                "00", "00", "0F", "00", "00", "---"
+            };
+            for (int c = 0; c < values.size(); ++c) {
+                QTableWidgetItem* item = m_ayInstrumentsTable->item(row, c);
+                if (!item) {
+                    item = new QTableWidgetItem();
+                    m_ayInstrumentsTable->setItem(row, c, item);
+                }
+                item->setText(values[c]);
+            }
+
+            saveVisibleAyBank();
+            refreshAyInstrumentSelectionCombo(row);
+            loadAyInstrumentIntoVisualEditor(row);
+            refreshActiveInstrumentSummary();
+            autoRebuildSoundOutput();
+        });
+
+        connect(m_ayInstrumentsTable, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
+            saveVisibleAyBank();
+            if (item && item->column() == 1)
+                refreshAyInstrumentSelectionCombo(item->row());
+            if (!m_restoringSoundUndo) autoRebuildSoundOutput();
+        });
+        connect(m_ayBankChannelCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
+            const int bank = qBound(0, index, 2);
+            loadVisibleAyBank(bank);
+            const int row = qBound(0, m_aySelectedInstrument[bank], 31);
+            refreshAyInstrumentSelectionCombo(row);
+            if (m_ayInstrumentsTable)
+                m_ayInstrumentsTable->setCurrentCell(row, 0);
+            loadAyInstrumentIntoVisualEditor(row);
+            refreshActiveInstrumentSummary();
+            autoRebuildSoundOutput();
+        });
+
+        connect(m_ayNameEdit, &QLineEdit::editingFinished, this, [this]() { applyAyVisualEditorToTable(); });
+        connect(m_ayToneCheck, &QCheckBox::toggled, this, [this](bool) { applyAyVisualEditorToTable(); });
+        connect(m_ayNoiseCheck, &QCheckBox::toggled, this, [this](bool) { applyAyVisualEditorToTable(); });
+        connect(m_ayEnvCheck, &QCheckBox::toggled, this, [this](bool) { applyAyVisualEditorToTable(); });
+        connect(m_ayShapeSpin, qOverload<int>(&QSpinBox::valueChanged), this, [this](int) { applyAyVisualEditorToTable(); });
+        connect(m_ayEnvPeriodSpin, qOverload<int>(&QSpinBox::valueChanged), this, [this](int) { applyAyVisualEditorToTable(); });
+        connect(m_ayNoisePeriodSpin, qOverload<int>(&QSpinBox::valueChanged), this, [this](int) { applyAyVisualEditorToTable(); });
+
+        auto bindAySlider = [this](QSlider* slider, QSpinBox* spin) {
+            connect(slider, &QSlider::valueChanged, this, [this, spin](int value) {
+                if (spin->value() != value) spin->setValue(value);
+                applyAyVisualEditorToTable();
+            });
+            connect(spin, qOverload<int>(&QSpinBox::valueChanged), this, [this, slider](int value) {
+                if (slider->value() != value) slider->setValue(value);
+                applyAyVisualEditorToTable();
+            });
+        };
+        bindAySlider(m_ayAttackSlider, m_ayAttackSpin);
+        bindAySlider(m_ayDecaySlider, m_ayDecaySpin);
+        bindAySlider(m_aySustainSlider, m_aySustainSpin);
+        bindAySlider(m_ayReleaseSlider, m_ayReleaseSpin);
+        bindAySlider(m_ayVibratoSlider, m_ayVibratoSpin);
+        auto bindAyMacro = [this](QLineEdit* edit) {
+            connect(edit, &QLineEdit::editingFinished, this, [this]() { applyAyVisualEditorToTable(); });
+        };
+        bindAyMacro(m_ayVolumeMacroEdit);
+        bindAyMacro(m_ayPitchMacroEdit);
+        bindAyMacro(m_ayNoiseMacroEdit);
+        bindAyMacro(m_ayAutoEnvEdit);
+        bindAyMacro(m_ayWaveMacroEdit);
+        bindAyMacro(m_ayEnvShapeMacroEdit);
+        bindAyMacro(m_ayEnvPeriodMacroEdit);
+        bindAyMacro(m_ayPhaseResetMacroEdit);
+
+        connect(m_ayArpEdit, &QLineEdit::editingFinished, this, [this]() { applyAyVisualEditorToTable(); });
+
+        connect(ayTestBtn, &QPushButton::clicked, this, [this]() {
+            if (!m_ayInstrumentsTable) return;
+            applyAyVisualEditorToTable();
+            const int bankChannel = 4 + qBound(0, m_currentAyBank, 2);
+            const int row = m_ayInstrumentsTable->currentRow();
+            if (row < 0) return;
+            const int oldDefault = m_defaultInstrumentSpin ? m_defaultInstrumentSpin->value() : 1;
+            if (m_defaultInstrumentSpin) {
+                QSignalBlocker blocker(m_defaultInstrumentSpin);
+                m_defaultInstrumentSpin->setValue(row);
+            }
+            requestPreviewAyTone(bankChannel, ayPeriodFromNoteName(QStringLiteral("C-4")), 15);
+            if (m_defaultInstrumentSpin) {
+                QSignalBlocker blocker(m_defaultInstrumentSpin);
+                m_defaultInstrumentSpin->setValue(oldDefault);
+            }
+        });
+        connect(ayStopBtn, &QPushButton::clicked, this, [this]() {
+            stopPreviewChannel(4 + qBound(0, m_currentAyBank, 2));
+        });
+
+        // Start with the same default bank for A/B/C, then each channel is independent.
+        resetDefaultAyInstrumentsTable();
+        const QJsonArray ayDefaults = tableToJson(m_ayInstrumentsTable);
+        for (int i = 0; i < 3; ++i)
+            m_ayInstrumentBanks[i] = ayDefaults;
+        m_currentAyBank = 0;
+        if (m_ayBankChannelCombo)
+            m_ayBankChannelCombo->setCurrentIndex(0);
+        if (m_ayInstrumentsTable)
+            m_ayInstrumentsTable->setCurrentCell(0, 0);
+        refreshAyInstrumentSelectionCombo(0);
+        loadAyInstrumentIntoVisualEditor(0);
+
         m_editorTabs->addTab(patternPage, tr("Pattern Editor"));
         m_editorTabs->addTab(instrumentsPage, tr("Instruments"));
+        m_editorTabs->addTab(m_ayInstrumentsPage, tr("AY Instruments"));
+
+        // AY page always remains inside the tab widget. With SGM OFF it is
+        // simply disabled instead of being removed from the QTabWidget.
+        updateAyInstrumentsTabVisibility(false);
+
+        // Always start the Sound Editor on the Pattern Editor.
+        // Instrument editors only appear when explicitly selected by the user.
+        m_editorTabs->setCurrentIndex(0);
 
         leftPanelLayout->addWidget(m_editorTabs, 1);
 
-        // Right side
-        QGroupBox* instrumentsBox = new QGroupBox(tr("Instruments"), rightPanel);
-        instrumentsBox->setFixedWidth(425);
-        instrumentsBox->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+        // V8.87: Instruments belongs to the upper body row, directly beside
+        // Order List (Sequence), instead of living above Output on the right.
+        QGroupBox* instrumentsBox = new QGroupBox(tr("Instruments"), body);
+        instrumentsBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
-        QVBoxLayout* instrumentsLayout = new QVBoxLayout(instrumentsBox);
-        instrumentsLayout->setContentsMargins(8, 10, 8, 8);
-        instrumentsLayout->setSpacing(6);
+        QGridLayout* instrumentsLayout = new QGridLayout(instrumentsBox);
+        // V8.67: instrument names get all remaining width; the VU block stays
+        // fixed against the right edge with exactly 5 px breathing room.
+        instrumentsLayout->setContentsMargins(10, 12, 5, 10);
+        instrumentsLayout->setHorizontalSpacing(8);
+        instrumentsLayout->setVerticalSpacing(5);
+        instrumentsLayout->setColumnStretch(0, 1);
+        instrumentsLayout->setColumnStretch(1, 0);
+        instrumentsLayout->setColumnMinimumWidth(1, 180);
+        instrumentsLayout->setAlignment(Qt::AlignTop);
 
-        m_instrumentsTable = new QTableWidget(16, 8, instrumentsBox);
-        m_instrumentsTable->setObjectName("soundInstrumentsTable");
-        m_instrumentsTable->verticalHeader()->hide();
-        m_instrumentsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-        m_instrumentsTable->setSelectionMode(QAbstractItemView::SingleSelection);
-        m_instrumentsTable->setHorizontalHeaderLabels({ tr("#"), tr("Name"), tr("Type"), tr("Vol"), tr("Env"), tr("Fade"), tr("WX"), tr("WY") });
-        m_instrumentsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-        m_instrumentsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-        m_instrumentsTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-        m_instrumentsTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-        m_instrumentsTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
-        m_instrumentsTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
-        m_instrumentsTable->horizontalHeader()->setSectionResizeMode(6, QHeaderView::ResizeToContents);
-        m_instrumentsTable->horizontalHeader()->setSectionResizeMode(7, QHeaderView::ResizeToContents);
-        instrumentsLayout->addWidget(m_instrumentsTable, 1);
+        const QStringList summaryChannels = { "CH1", "CH2", "CH3", "CH4", "AY1", "AY2", "AY3" };
+        for (int ch = 0; ch < 7; ++ch) {
+            m_activeInstrumentLabels[ch] = new QLabel(instrumentsBox);
+            m_activeInstrumentLabels[ch]->setText(QString("%1   01  ---").arg(summaryChannels[ch]));
+            m_activeInstrumentLabels[ch]->setMinimumHeight(20);
+            m_activeInstrumentLabels[ch]->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+            m_activeInstrumentLabels[ch]->setMinimumWidth(0);
+            instrumentsLayout->addWidget(m_activeInstrumentLabels[ch], ch, 0);
+        }
 
-        connect(m_instrumentsTable, &QTableWidget::itemChanged,
-                this, [this](QTableWidgetItem*) {
-            if (!m_restoringSoundUndo)
-                autoRebuildSoundOutput();
-        });
+        m_vuLedBar = new SoundVuLedBarWidget(instrumentsBox);
+        m_vuLedBar->setLevels(0, 0, 0, 0);
+        m_vuLedBar->setFixedWidth(180);
+        m_vuLedBar->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+        instrumentsLayout->addWidget(m_vuLedBar, 0, 1, 7, 1, Qt::AlignRight);
 
-        QHBoxLayout* instBtns = new QHBoxLayout();
-        QPushButton* instAddBtn = new QPushButton(tr("Add"), instrumentsBox);
-        QPushButton* instEditBtn = new QPushButton(tr("Edit"), instrumentsBox);
-        QPushButton* instDeleteBtn = new QPushButton(tr("Delete"), instrumentsBox);
-        QPushButton* instSaveBankBtn = new QPushButton(tr("Save Bank"), instrumentsBox);
-        QPushButton* instLoadBankBtn = new QPushButton(tr("Load Bank"), instrumentsBox);
-        QPushButton* instTestBtn = new QPushButton(tr("Test"), instrumentsBox);
-        instBtns->addWidget(instAddBtn);
-        instBtns->addWidget(instEditBtn);
-        instBtns->addWidget(instDeleteBtn);
-        instBtns->addWidget(instTestBtn);
-        instBtns->addWidget(instSaveBankBtn);
-        instBtns->addWidget(instLoadBankBtn);
-        instrumentsLayout->addLayout(instBtns);
-
-        connect(instAddBtn, &QPushButton::clicked, this, [this]() {
-            addInstrumentPreset();
-        });
-        connect(instEditBtn, &QPushButton::clicked, this, [this]() {
-            editSelectedInstrument();
-        });
-        connect(instDeleteBtn, &QPushButton::clicked, this, [this]() {
-            clearSelectedInstrument();
-        });
-        connect(instSaveBankBtn, &QPushButton::clicked, this, [this]() {
-            saveInstrumentBank();
-        });
-        connect(instLoadBankBtn, &QPushButton::clicked, this, [this]() {
-            loadInstrumentBank();
-        });
-        connect(instTestBtn, &QPushButton::clicked, this, [this]() {
-            previewSelectedInstrumentKey();
-        });
-
-        connect(m_instrumentsTable, &QTableWidget::cellClicked,
-                this, [this](int row, int) {
-            selectInstrumentFromTable(row);
-        });
-
-        connect(m_instrumentsTable, &QTableWidget::cellDoubleClicked,
-                this, [this](int row, int) {
-            selectInstrumentFromTable(row);
-        });
-
-        rightPanelLayout->addWidget(instrumentsBox, 1);
+        // V8.88 upper row:
+        // Song Info | Order List | Instruments | Playback Controls
+        // Playback Controls sits DIRECTLY beside Instruments as requested.
+        bodyLayout->addWidget(instrumentsBox, 0, 2);
+        bodyLayout->addWidget(playBox, 0, 3);
 
         QGroupBox* outputBox = new QGroupBox(tr("Output / CVBasic DATA"), rightPanel);
-        outputBox->setFixedWidth(425);
+        outputBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         QVBoxLayout* outputLayout = new QVBoxLayout(outputBox);
         outputLayout->setContentsMargins(8, 10, 8, 8);
         outputLayout->setSpacing(6);
@@ -9400,18 +12493,35 @@ private:
         outputTop->addWidget(m_addPlayerCheck);
         outputTop->addWidget(refreshBtn);
 
+        m_outputSizeLabel = new QLabel(tr("Song DATA: ---"), outputBox);
+        m_outputSizeLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        m_outputSizeLabel->setStyleSheet(
+            "QLabel { color:#DADADA; background:#242424; border:1px solid #555555; "
+            "padding:4px 6px; border-radius:3px; font-weight:bold; }");
+
         m_outputEdit = new QPlainTextEdit(outputBox);
         m_outputEdit->setReadOnly(true);
 
         outputLayout->addLayout(outputTop);
+        outputLayout->addWidget(m_outputSizeLabel);
         outputLayout->addWidget(m_outputEdit, 1);
 
+        outputBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         rightPanelLayout->addWidget(outputBox, 1);
 
-        soundMiddleLayout->addWidget(leftPanel, 1);
-        soundMiddleLayout->addWidget(rightPanel, 0);
+        // Pattern/Instrument editor gets the width below Song Info + Order +
+        // Instruments. Output remains in the right column below Playback.
+        bodyLayout->addWidget(leftPanel, 1, 0, 1, 3);
+        bodyLayout->addWidget(rightPanel, 1, 3);
 
-        bodyLayout->addWidget(soundMiddleRow, 1);
+        // Four group boxes on one single top row.
+        bodyLayout->setColumnStretch(0, 2); // Song Info
+        bodyLayout->setColumnStretch(1, 1); // Order List - narrow
+        bodyLayout->setColumnStretch(2, 3); // Instruments - wider
+        bodyLayout->setColumnStretch(3, 2); // Playback Controls / Output below
+        bodyLayout->setRowStretch(0, 0);
+        bodyLayout->setRowStretch(1, 1);
+
         root->addWidget(body, 1);
 
         connect(m_songNameEdit, &QLineEdit::textChanged, this, [this]() {
@@ -9442,6 +12552,15 @@ private:
             }
         });
 
+        resetDefaultInstrumentsTable();
+        if (m_instrumentsTable)
+            m_instrumentsTable->setCurrentCell(1, 0);
+        if (m_snEditChannelCombo)
+            m_snEditChannelCombo->setCurrentIndex(0);
+        refreshSnInstrumentSelectionCombo(1);
+        loadInstrumentIntoEditor(1);
+        refreshActiveInstrumentSummary();
+
         setStyleSheet(
             "QWidget#cvBasicSoundPage { background-color:#3A3A3A; color:#FFFFFF; }"
             "QGroupBox { border:1px solid #666666; margin-top:8px; }"
@@ -9469,6 +12588,10 @@ private:
         m_loadingSoundPattern = true;
 
         resetDefaultInstrumentsTable();
+        for (int ch = 0; ch < 4; ++ch)
+            m_snSelectedInstrument[ch] = 1;
+        refreshSnInstrumentSelectionCombo(1);
+        refreshActiveInstrumentSummary();
 
         if (m_songNameEdit)
             m_songNameEdit->setText("Untitled");
@@ -9490,6 +12613,7 @@ private:
         if (m_defaultInstrumentSpin)
             m_defaultInstrumentSpin->setValue(1);
 
+        setSgmSoundEnabled(false);
 
         if (m_octaveSpin)
             m_octaveSpin->setValue(4);
@@ -9528,7 +12652,7 @@ private:
         m_patternTable->setRowCount(rows);
 
         for (int r = 0; r < rows; ++r) {
-            setPatternCell(r, 0, QString("%1").arg(r, 2, 16, QLatin1Char('0')).toUpper());
+            setPatternCell(r, 0, QString("%1").arg(r, 2, 10, QLatin1Char('0')));
 
             for (int col = 1; col < m_patternTable->columnCount(); ++col)
                 setPatternCell(r, col, defaultPatternValueForColumn(col));
@@ -9566,26 +12690,42 @@ private:
 
         const InstrumentRow instruments[] = {
             {"00","---","---","---","---","00","50","50"},
-            {"01","Lead Melody","Tone","0F","06","02","55","72"},
-            {"02","Soft Harmony","Tone","08","05","04","62","40"},
-            {"03","Bass Tone","Tone","0A","03","02","50","28"},
-            {"04","Soft Pad","Tone","0C","05","05","68","30"},
-            {"05","Brass Stab","Tone","0F","04","03","42","76"},
-            {"06","Bell","Tone","0E","08","06","30","84"},
-            {"07","Perc Click","Noise","0F","09","01","35","90"},
-            {"08","Snare Hit","Noise","0F","0A","04","55","76"},
-            {"09","HiHat","Noise","0E","0B","02","75","95"},
-            {"0A","Explosion","Noise","0F","0C","08","70","62"},
-            {"0B","PowerUp","Noise","0F","0D","03","85","82"},
-            {"0C","---","---","---","---","00","50","50"},
-            {"0D","---","---","---","---","00","50","50"},
-            {"0E","---","---","---","---","00","50","50"},
-            {"0F","---","---","---","---","00","50","50"}
+            {"01","Grand Piano","Tone","0F","01","03","32","70"},
+            {"02","Electric Piano","Tone","0E","02","04","44","68"},
+            {"03","Drawbar Organ","Tone","0E","05","07","58","48"},
+            {"04","Picked Guitar","Tone","0F","01","03","26","78"},
+            {"05","Finger Bass","Tone","0F","03","04","34","24"},
+            {"06","String Ensemble","Tone","0D","05","09","66","44"},
+            {"07","Brass Section","Tone","0F","04","04","46","76"},
+            {"08","Clarinet / Reed","Tone","0E","02","05","54","58"},
+            {"09","Flute","Tone","0D","05","06","62","66"},
+            {"0A","Synth Lead","Tone","0F","06","03","72","82"},
+            {"0B","Synth Pad","Tone","0C","05","0A","74","36"},
+            {"0C","Celesta / Bell","Tone","0E","08","07","22","92"},
+            {"0D","Pizzicato Pluck","Tone","0F","07","03","20","80"},
+            {"0E","Harp","Tone","0E","07","04","24","74"},
+            {"0F","Chime","Tone","0E","08","08","18","96"},
+            {"10","Kick Drum","Noise","0F","09","02","08","26"},
+            {"11","Snare Drum","Noise","0F","0A","04","58","78"},
+            {"12","Closed HiHat","Noise","0E","0B","01","94","92"},
+            {"13","Open HiHat","Noise","0E","0C","04","88","84"},
+            {"14","Tom / Perc","Noise","0F","0A","03","36","58"},
+            {"15","Cymbal","Noise","0E","0C","06","96","88"},
+            {"16","Percussion","Noise","0F","09","02","50","72"},
+            {"17","FX Rise","Tone","0F","0D","05","92","82"},
+            {"18","FX Fall","Tone","0F","0E","05","08","82"},
+            {"19","Power Up","Tone","0F","0D","04","88","94"},
+            {"1A","Explosion","Noise","0F","0E","09","72","68"},
+            {"1B","Pulse Bass","Tone","0F","03","03","24","18"},
+            {"1C","Warm Lead","Tone","0E","06","04","64","70"},
+            {"1D","Fantasy Pad","Tone","0D","05","0B","80","42"},
+            {"1E","Crystal","Tone","0E","08","06","16","100"},
+            {"1F","Drone / Atmos","Tone","0C","05","0F","56","16"}
         };
 
-        m_instrumentsTable->setRowCount(16);
+        m_instrumentsTable->setRowCount(32);
 
-        for (int r = 0; r < 16; ++r) {
+        for (int r = 0; r < 32; ++r) {
             const QStringList values = {
                 instruments[r].id,
                 instruments[r].name,
@@ -9611,7 +12751,7 @@ private:
         m_loadingSoundPattern = false;
 
         if (m_noteInfoLabel)
-            m_noteInfoLabel->setText("No song loaded. Use Open Song or Import MIDI.");
+            m_noteInfoLabel->setText("No song loaded. Use Open Song, Import MIDI or Import MOD.");
 
         setPlaybackStatusText("No song");
     }
@@ -9664,7 +12804,7 @@ private:
 
         for (int r = 0; r < demo.size(); ++r) {
             int c = 0;
-            QTableWidgetItem* rowItem = new QTableWidgetItem(QString("%1").arg(r, 2, 16, QLatin1Char('0')).toUpper());
+            QTableWidgetItem* rowItem = new QTableWidgetItem(QString("%1").arg(r, 2, 10, QLatin1Char('0')));
             rowItem->setTextAlignment(Qt::AlignCenter);
             m_patternTable->setItem(r, c++, rowItem);
 
@@ -9697,25 +12837,41 @@ private:
         };
 
         const InstrumentRow instruments[] = {
-            {"00","---","---","---","---"},
-            {"01","Square Bass","Tone","0F","03"},
-            {"02","Lead Synth","Tone","0F","06"},
-            {"03","Arp Pluck","Tone","0E","07"},
-            {"04","Soft Pad","Tone","0C","05"},
-            {"05","Brass Stab","Tone","0F","04"},
-            {"06","Bell","Tone","0E","08"},
-            {"07","Perc Click","Noise","0F","09"},
-            {"08","Snare Hit","Noise","0F","0A"},
-            {"09","HiHat","Noise","0E","0B"},
-            {"0A","Explosion","Noise","0F","0C"},
-            {"0B","PowerUp","Noise","0F","0D"},
-            {"0C","---","---","---","---"},
-            {"0D","---","---","---","---"},
-            {"0E","---","---","---","---"},
-            {"0F","---","---","---","---"}
+            {"00","---","---","---","---","00","50","50"},
+            {"01","Grand Piano","Tone","0F","01","03","32","70"},
+            {"02","Electric Piano","Tone","0E","02","04","44","68"},
+            {"03","Drawbar Organ","Tone","0E","05","07","58","48"},
+            {"04","Picked Guitar","Tone","0F","01","03","26","78"},
+            {"05","Finger Bass","Tone","0F","03","04","34","24"},
+            {"06","String Ensemble","Tone","0D","05","09","66","44"},
+            {"07","Brass Section","Tone","0F","04","04","46","76"},
+            {"08","Clarinet / Reed","Tone","0E","02","05","54","58"},
+            {"09","Flute","Tone","0D","05","06","62","66"},
+            {"0A","Synth Lead","Tone","0F","06","03","72","82"},
+            {"0B","Synth Pad","Tone","0C","05","0A","74","36"},
+            {"0C","Celesta / Bell","Tone","0E","08","07","22","92"},
+            {"0D","Pizzicato Pluck","Tone","0F","07","03","20","80"},
+            {"0E","Harp","Tone","0E","07","04","24","74"},
+            {"0F","Chime","Tone","0E","08","08","18","96"},
+            {"10","Kick Drum","Noise","0F","09","02","08","26"},
+            {"11","Snare Drum","Noise","0F","0A","04","58","78"},
+            {"12","Closed HiHat","Noise","0E","0B","01","94","92"},
+            {"13","Open HiHat","Noise","0E","0C","04","88","84"},
+            {"14","Tom / Perc","Noise","0F","0A","03","36","58"},
+            {"15","Cymbal","Noise","0E","0C","06","96","88"},
+            {"16","Percussion","Noise","0F","09","02","50","72"},
+            {"17","FX Rise","Tone","0F","0D","05","92","82"},
+            {"18","FX Fall","Tone","0F","0E","05","08","82"},
+            {"19","Power Up","Tone","0F","0D","04","88","94"},
+            {"1A","Explosion","Noise","0F","0E","09","72","68"},
+            {"1B","Pulse Bass","Tone","0F","03","03","24","18"},
+            {"1C","Warm Lead","Tone","0E","06","04","64","70"},
+            {"1D","Fantasy Pad","Tone","0D","05","0B","80","42"},
+            {"1E","Crystal","Tone","0E","08","06","16","100"},
+            {"1F","Drone / Atmos","Tone","0C","05","0F","56","16"}
         };
 
-        for (int r = 0; r < 16; ++r) {
+        for (int r = 0; r < 32; ++r) {
             const QStringList values = {
                 instruments[r].id, instruments[r].name, instruments[r].type, instruments[r].vol, instruments[r].env
             };
@@ -9813,11 +12969,13 @@ private:
         if (onStopAllPreviewRequested)
             onStopAllPreviewRequested();
 
-        for (int ch = 0; ch < 4; ++ch) {
+        for (int ch = 0; ch < 7; ++ch) {
             m_playbackHeldActive[ch] = false;
             m_playbackHeldPeriod[ch] = 0;
             m_playbackHeldVolume[ch] = 0;
+            m_playbackActiveInstrument[ch] = -1;
         }
+        refreshActiveInstrumentSummary();
 
         m_soundPatterns.clear();
         m_currentPatternIndex = 0;
@@ -9828,7 +12986,7 @@ private:
         if (m_vuLedBar)
             m_vuLedBar->setLevels(0, 0, 0, 0);
 
-        for (int ch = 0; ch < 4; ++ch) {
+        for (int ch = 0; ch < 7; ++ch) {
             m_channelAudible[ch] = true;
             updateSoundVuHeader(ch);
         }
@@ -9836,6 +12994,7 @@ setPlaybackUiPlaying(false);
         setPlaybackStatusText("Stopped");
 
         resetDefaultInstrumentsTable();
+        resetDefaultAyInstrumentsTable();
 
         qDebug().noquote() << "[ADAMP SOUND] hardResetLoadedSongState END";
     }
@@ -9859,27 +13018,43 @@ setPlaybackUiPlaying(false);
 
         const InstrumentRow instruments[] = {
             {"00","---","---","---","---","00","50","50"},
-            {"01","Lead Melody","Tone","0F","06","02","55","72"},
-            {"02","Soft Harmony","Tone","08","05","04","62","40"},
-            {"03","Bass Tone","Tone","0A","03","02","50","28"},
-            {"04","Soft Pad","Tone","0C","05","05","68","30"},
-            {"05","Brass Stab","Tone","0F","04","03","42","76"},
-            {"06","Bell","Tone","0E","08","06","30","84"},
-            {"07","Perc Click","Noise","0F","09","01","35","90"},
-            {"08","Snare Hit","Noise","0F","0A","04","55","76"},
-            {"09","HiHat","Noise","0E","0B","02","75","95"},
-            {"0A","Explosion","Noise","0F","0C","08","70","62"},
-            {"0B","PowerUp","Noise","0F","0D","03","85","82"},
-            {"0C","---","---","---","---","00","50","50"},
-            {"0D","---","---","---","---","00","50","50"},
-            {"0E","---","---","---","---","00","50","50"},
-            {"0F","---","---","---","---","00","50","50"}
+            {"01","Grand Piano","Tone","0F","01","03","32","70"},
+            {"02","Electric Piano","Tone","0E","02","04","44","68"},
+            {"03","Drawbar Organ","Tone","0E","05","07","58","48"},
+            {"04","Picked Guitar","Tone","0F","01","03","26","78"},
+            {"05","Finger Bass","Tone","0F","03","04","34","24"},
+            {"06","String Ensemble","Tone","0D","05","09","66","44"},
+            {"07","Brass Section","Tone","0F","04","04","46","76"},
+            {"08","Clarinet / Reed","Tone","0E","02","05","54","58"},
+            {"09","Flute","Tone","0D","05","06","62","66"},
+            {"0A","Synth Lead","Tone","0F","06","03","72","82"},
+            {"0B","Synth Pad","Tone","0C","05","0A","74","36"},
+            {"0C","Celesta / Bell","Tone","0E","08","07","22","92"},
+            {"0D","Pizzicato Pluck","Tone","0F","07","03","20","80"},
+            {"0E","Harp","Tone","0E","07","04","24","74"},
+            {"0F","Chime","Tone","0E","08","08","18","96"},
+            {"10","Kick Drum","Noise","0F","09","02","08","26"},
+            {"11","Snare Drum","Noise","0F","0A","04","58","78"},
+            {"12","Closed HiHat","Noise","0E","0B","01","94","92"},
+            {"13","Open HiHat","Noise","0E","0C","04","88","84"},
+            {"14","Tom / Perc","Noise","0F","0A","03","36","58"},
+            {"15","Cymbal","Noise","0E","0C","06","96","88"},
+            {"16","Percussion","Noise","0F","09","02","50","72"},
+            {"17","FX Rise","Tone","0F","0D","05","92","82"},
+            {"18","FX Fall","Tone","0F","0E","05","08","82"},
+            {"19","Power Up","Tone","0F","0D","04","88","94"},
+            {"1A","Explosion","Noise","0F","0E","09","72","68"},
+            {"1B","Pulse Bass","Tone","0F","03","03","24","18"},
+            {"1C","Warm Lead","Tone","0E","06","04","64","70"},
+            {"1D","Fantasy Pad","Tone","0D","05","0B","80","42"},
+            {"1E","Crystal","Tone","0E","08","06","16","100"},
+            {"1F","Drone / Atmos","Tone","0C","05","0F","56","16"}
         };
 
         m_instrumentsTable->clearContents();
-        m_instrumentsTable->setRowCount(16);
+        m_instrumentsTable->setRowCount(32);
 
-        for (int r = 0; r < 16; ++r) {
+        for (int r = 0; r < 32; ++r) {
             const QStringList values = {
                 instruments[r].id,
                 instruments[r].name,
@@ -9974,6 +13149,69 @@ setPlaybackUiPlaying(false);
         return type == "noise" ? 1 : 0;
     }
 
+    QString defaultSnVolumeMacro(int instrumentId) const
+    {
+        static const char* v[32] = {
+            "---","15,14,12,10,8,7,6,5","15,14,13,12,11,10,9","6,9,12,14,14,14","15,13,11,9,7,5,4","15,15,14,13,12,12",
+            "3,5,8,11,13,13,12","15,15,14,13,12,11","8,11,13,13,12,12","4,7,10,12,12,11","15,15,14,14,13,13",
+            "3,5,8,10,11,11,10","15,13,11,9,7,6,5,4","15,12,9,7,5,4","15,13,11,9,8,7","15,13,11,9,7,5,4,3",
+            "15,11,7,3,0","15,12,9,6,3,1,0","15,8,3,0","15,12,9,6,4,2,0","15,13,10,7,4,1,0","15,12,10,8,6,4,2,0","15,10,5,0",
+            "8,10,12,14,15","15,14,13,11,9,7,5","10,12,14,15,15","15,13,10,7,4,2,0","15,15,14,13,12,11","15,15,14,13,12,11",
+            "4,6,8,10,11,11,10","15,14,12,10,8,6,4","10,10,9,9,8,8,7"
+        };
+        return QString::fromLatin1(v[qBound(0, instrumentId, 31)]);
+    }
+
+    QString defaultSnPitchMacro(int instrumentId) const
+    {
+        switch (instrumentId) {
+        case 1: case 4: case 13: case 14: return QStringLiteral("+1,0,0,0");
+        case 5: case 27: return QStringLiteral("-1,0,0,0");
+        case 7: return QStringLiteral("+2,+1,0,0");
+        case 12: case 15: return QStringLiteral("+12,0,0,0");
+        case 23: case 25: return QStringLiteral("0,+1,+2,+3,+4,+5,+6,+7,+8,+9,+10,+12");
+        case 24: return QStringLiteral("0,-1,-2,-3,-4,-5,-6,-7,-8,-9,-10,-12");
+        default: return QStringLiteral("0");
+        }
+    }
+
+    QString defaultSnArpMacro(int instrumentId) const
+    {
+        switch (instrumentId) {
+        case 3: return QStringLiteral("0,+12");
+        case 29: return QStringLiteral("0,+7,+12");
+        case 30: return QStringLiteral("0,+12,+19");
+        default: return QStringLiteral("0");
+        }
+    }
+
+    QString defaultSnNoiseMacro(int instrumentId) const
+    {
+        switch (instrumentId) {
+        case 16: return QStringLiteral("3,2,1,0");
+        case 17: return QStringLiteral("2,3,2,3,1");
+        case 18: return QStringLiteral("0,1,0,1");
+        case 19: return QStringLiteral("1,2,3,3");
+        case 20: return QStringLiteral("3,2,2,1");
+        case 21: return QStringLiteral("0,1,2,3,2,1");
+        case 22: return QStringLiteral("2,3,1,2");
+        case 26: return QStringLiteral("3,3,2,1,0,1,2,3");
+        default: return QStringLiteral("---");
+        }
+    }
+
+    QString snMacroCell(int instrumentId, int col) const
+    {
+        const int row = qBound(0, instrumentId, 31);
+        const QString stored = instrumentCellText(row, col, "---").trimmed();
+        if (!stored.isEmpty() && stored != "---") return stored;
+        if (col == 8) return defaultSnVolumeMacro(row);
+        if (col == 9) return defaultSnPitchMacro(row);
+        if (col == 10) return defaultSnArpMacro(row);
+        if (col == 11) return defaultSnNoiseMacro(row);
+        return QStringLiteral("---");
+    }
+
     void updateInstrumentVisuals()
     {
         const int row = currentInstrumentRow();
@@ -9985,11 +13223,8 @@ setPlaybackUiPlaying(false);
         const int wy = instrumentWaveY(row);
 
 
-        if (m_instWavePreview)
-            m_instWavePreview->setInstrumentParams(type, env, wx, wy, vol);
-
         if (m_instEnvPreview)
-            m_instEnvPreview->setEnvelopeParams(env, vol, fade);
+            m_instEnvPreview->setEnvelopeParams(env, vol, fade, wx, wy);
     }
 
     void loadInstrumentIntoEditor(int row)
@@ -10040,6 +13275,11 @@ setPlaybackUiPlaying(false);
         if (m_instWaveYSlider)
             m_instWaveYSlider->setValue(instrumentWaveY(row));
 
+        if (m_instVolumeMacroEdit) m_instVolumeMacroEdit->setText(snMacroCell(row, 8));
+        if (m_instPitchMacroEdit) m_instPitchMacroEdit->setText(snMacroCell(row, 9));
+        if (m_instArpMacroEdit) m_instArpMacroEdit->setText(snMacroCell(row, 10));
+        if (m_instNoiseMacroEdit) m_instNoiseMacroEdit->setText(snMacroCell(row, 11));
+
         m_updatingInstrumentEditor = false;
         updateInstrumentVisuals();
     }
@@ -10065,8 +13305,11 @@ setPlaybackUiPlaying(false);
                 saveCurrentPatternToMemory();
 
                 if (m_noteInfoLabel)
-                    m_noteInfoLabel->setText("Live instrument update");
+                    m_noteInfoLabel->setText("Live instrument update - playback continues");
 
+                // Rebuild the stream with the edited instrument values.
+                // SoundEditorPlayer V8.74 swaps this stream in-place while
+                // preserving its current row/audio state.
                 restartCurrentStreamPlayback();
             });
         }
@@ -10107,7 +13350,14 @@ setPlaybackUiPlaying(false);
         if (m_instWaveYSpin)
             setInstrumentCell(row, 7, QString::number(m_instWaveYSpin->value()));
 
+        if (m_instVolumeMacroEdit) setInstrumentCell(row, 8, m_instVolumeMacroEdit->text().trimmed().isEmpty() ? "---" : m_instVolumeMacroEdit->text().trimmed());
+        if (m_instPitchMacroEdit) setInstrumentCell(row, 9, m_instPitchMacroEdit->text().trimmed().isEmpty() ? "---" : m_instPitchMacroEdit->text().trimmed());
+        if (m_instArpMacroEdit) setInstrumentCell(row, 10, m_instArpMacroEdit->text().trimmed().isEmpty() ? "---" : m_instArpMacroEdit->text().trimmed());
+        if (m_instNoiseMacroEdit) setInstrumentCell(row, 11, m_instNoiseMacroEdit->text().trimmed().isEmpty() ? "---" : m_instNoiseMacroEdit->text().trimmed());
+
         updateInstrumentVisuals();
+        refreshSnInstrumentSelectionCombo(currentInstrumentRow());
+        refreshActiveInstrumentSummary();
         autoRebuildSoundOutput();
         scheduleLiveInstrumentPlaybackRefresh();
     }
@@ -10254,7 +13504,22 @@ setPlaybackUiPlaying(false);
 
     void editSelectedInstrument()
     {
-        editInstrumentRow(currentInstrumentRow());
+        const int row = currentInstrumentRow();
+        selectInstrumentFromTable(row);
+        loadInstrumentIntoEditor(row);
+
+        // V8.1: instrument editing is embedded in the Sound Editor.
+        // Never open the old modal Edit Instrument dialog automatically.
+        if (m_editorTabs && m_instrumentsTable) {
+            QWidget* page = m_instrumentsTable->parentWidget();
+            while (page && page->parentWidget() != m_editorTabs)
+                page = page->parentWidget();
+            if (page)
+                m_editorTabs->setCurrentWidget(page);
+        }
+
+        if (m_instNameEdit)
+            m_instNameEdit->setFocus();
     }
 
     void addInstrumentPreset()
@@ -10282,9 +13547,24 @@ setPlaybackUiPlaying(false);
         setInstrumentCell(row, 5, "02");
         setInstrumentCell(row, 6, "50");
         setInstrumentCell(row, 7, "50");
+        setInstrumentCell(row, 8, "15,13,11,9,8,7");
+        setInstrumentCell(row, 9, "0");
+        setInstrumentCell(row, 10, "0");
+        setInstrumentCell(row, 11, "---");
 
         selectInstrumentFromTable(row);
-        editInstrumentRow(row);
+        loadInstrumentIntoEditor(row);
+
+        // Use the embedded visual instrument editor; no popup dialog.
+        if (m_editorTabs && m_instrumentsTable) {
+            QWidget* page = m_instrumentsTable->parentWidget();
+            while (page && page->parentWidget() != m_editorTabs)
+                page = page->parentWidget();
+            if (page)
+                m_editorTabs->setCurrentWidget(page);
+        }
+        if (m_instNameEdit)
+            m_instNameEdit->setFocus();
     }
 
     void clearSelectedInstrument()
@@ -10306,6 +13586,7 @@ setPlaybackUiPlaying(false);
         setInstrumentCell(row, 5, "00");
         setInstrumentCell(row, 6, "50");
         setInstrumentCell(row, 7, "50");
+        for (int c = 8; c <= 11; ++c) setInstrumentCell(row, c, "---");
 
         loadInstrumentIntoEditor(row);
 
@@ -10323,8 +13604,47 @@ setPlaybackUiPlaying(false);
         if (!m_instrumentsTable)
             return;
 
-        if (m_instrumentsTable->columnCount() < 8)
-            m_instrumentsTable->setColumnCount(8);
+        if (m_instrumentsTable->columnCount() < 12)
+            m_instrumentsTable->setColumnCount(12);
+
+        // Keep older 16-slot .adpsnd/.adpinst banks compatible while exposing
+        // the expanded 00..1F instrument bank in the current editor.
+        const int previousRows = m_instrumentsTable->rowCount();
+        if (previousRows < 32)
+            m_instrumentsTable->setRowCount(32);
+
+        // When an older 16-slot bank is loaded, populate the newly available
+        // 10..1F slots with the SGM/full-sound presets instead of leaving them empty.
+        struct ExtraPreset { const char* name; const char* type; const char* vol; const char* env; const char* fade; const char* wx; const char* wy; };
+        static const ExtraPreset extra[16] = {
+            {"Deep SGM Bass","Tone","0F","03","03","40","18"},
+            {"Sub Pulse","Tone","0E","03","04","32","14"},
+            {"Fantasy Organ","Tone","0E","05","05","70","42"},
+            {"Choir Pad","Tone","0C","05","07","82","34"},
+            {"String Pad","Tone","0D","05","06","76","46"},
+            {"Hero Lead","Tone","0F","06","03","64","78"},
+            {"Glass Bell","Tone","0E","08","07","26","92"},
+            {"Magic Bell","Tone","0F","08","06","38","88"},
+            {"Harp Pluck","Tone","0E","07","03","28","76"},
+            {"Chime Pluck","Tone","0D","08","04","22","96"},
+            {"Power Brass","Tone","0F","04","03","46","82"},
+            {"Soft Brass","Tone","0D","04","05","54","64"},
+            {"Pulse Lead","Tone","0F","06","02","86","72"},
+            {"Crystal Lead","Tone","0E","08","04","74","94"},
+            {"Dungeon Drone","Tone","0C","05","0A","60","20"},
+            {"Magic Sweep","Tone","0F","0D","08","92","58"}
+        };
+        for (int r = qMax(previousRows, 16); r < 32; ++r) {
+            const ExtraPreset& pr = extra[r - 16];
+            setInstrumentCell(r, 0, QString("%1").arg(r, 2, 16, QLatin1Char('0')).toUpper());
+            setInstrumentCell(r, 1, pr.name);
+            setInstrumentCell(r, 2, pr.type);
+            setInstrumentCell(r, 3, pr.vol);
+            setInstrumentCell(r, 4, pr.env);
+            setInstrumentCell(r, 5, pr.fade);
+            setInstrumentCell(r, 6, pr.wx);
+            setInstrumentCell(r, 7, pr.wy);
+        }
 
         for (int r = 0; r < m_instrumentsTable->rowCount(); ++r) {
             if (!m_instrumentsTable->item(r, 0))
@@ -10338,6 +13658,12 @@ setPlaybackUiPlaying(false);
 
             if (!m_instrumentsTable->item(r, 7) || m_instrumentsTable->item(r, 7)->text().trimmed().isEmpty())
                 setInstrumentCell(r, 7, "50");
+
+            // V8.18 Furnace-informed tracker macro storage. Older banks remain valid.
+            for (int c = 8; c <= 11; ++c) {
+                if (!m_instrumentsTable->item(r, c) || m_instrumentsTable->item(r, c)->text().trimmed().isEmpty())
+                    setInstrumentCell(r, c, "---");
+            }
         }
     }
 
@@ -10366,7 +13692,7 @@ setPlaybackUiPlaying(false);
         if (!ok)
             instrumentId = row;
 
-        instrumentId = qBound(0, instrumentId, 15);
+        instrumentId = qBound(0, instrumentId, 31);
 
         m_defaultInstrumentSpin->setValue(instrumentId);
 
@@ -10389,7 +13715,7 @@ setPlaybackUiPlaying(false);
         if (!m_activeChannelCombo)
             return 0;
 
-        return qBound(0, m_activeChannelCombo->currentData().toInt(), 3);
+        return qBound(0, m_activeChannelCombo->currentData().toInt(), sgmSoundEnabled() ? 6 : 3);
     }
 
     QString activeSoundChannelName() const
@@ -10398,7 +13724,11 @@ setPlaybackUiPlaying(false);
         case 0: return "CH1";
         case 1: return "CH2";
         case 2: return "CH3";
-        default: return "NOISE";
+        case 3: return "NOISE";
+        case 4: return "AY1";
+        case 5: return "AY2";
+        case 6: return "AY3";
+        default: return "CH1";
         }
     }
 
@@ -10434,17 +13764,32 @@ setPlaybackUiPlaying(false);
         QString key = keyName.trimmed().toUpper();
 
         int semitone = -1;
+        int octave = -1;
 
-        // Bottom row sends direct note names: C, C#, D, ...
-        for (int i = 0; i < notes.size(); ++i) {
-            if (key == notes[i]) {
-                semitone = i;
-                break;
+        const QRegularExpression explicitNoteRe(QStringLiteral("^([A-G])(#?)(?:-)?([1-8])$"));
+        const QRegularExpressionMatch explicitMatch = explicitNoteRe.match(key);
+        if (explicitMatch.hasMatch()) {
+            const QString base = explicitMatch.captured(1);
+            const QString sharp = explicitMatch.captured(2);
+            octave = explicitMatch.captured(3).toInt();
+            const QString normalized = base + sharp;
+            for (int i = 0; i < notes.size(); ++i) {
+                if (normalized == notes[i]) {
+                    semitone = i;
+                    break;
+                }
             }
         }
 
-        // Top row still sends "Top 1".."Top 20".
-        // Map these to chromatic notes, continuing into the next octave.
+        if (semitone < 0) {
+            for (int i = 0; i < notes.size(); ++i) {
+                if (key == notes[i]) {
+                    semitone = i;
+                    break;
+                }
+            }
+        }
+
         if (semitone < 0 && key.startsWith("TOP ")) {
             bool ok = false;
             const int topIndex = key.mid(4).toInt(&ok) - 1;
@@ -10461,7 +13806,9 @@ setPlaybackUiPlaying(false);
         if (semitoneOut)
             *semitoneOut = semitone;
 
-        const int octave = m_octaveSpin ? m_octaveSpin->value() : 4;
+        if (octave < 0)
+            octave = m_octaveSpin ? m_octaveSpin->value() : 4;
+
         return QString("%1-%2").arg(notes[semitone].leftJustified(2, '-')).arg(octave);
     }
 
@@ -10548,7 +13895,7 @@ setPlaybackUiPlaying(false);
         pushSoundUndoState();
 
         for (int r = 0; r < m_patternTable->rowCount(); ++r) {
-            setPatternCell(r, 0, QString("%1").arg(r, 2, 16, QLatin1Char('0')).toUpper());
+            setPatternCell(r, 0, QString("%1").arg(r, 2, 10, QLatin1Char('0')));
             clearPatternRow(r);
         }
 
@@ -10615,7 +13962,7 @@ setPlaybackUiPlaying(false);
             return;
 
         for (int r = 0; r < m_patternTable->rowCount(); ++r)
-            setPatternCell(r, 0, QString("%1").arg(r, 2, 16, QLatin1Char('0')).toUpper());
+            setPatternCell(r, 0, QString("%1").arg(r, 2, 10, QLatin1Char('0')));
     }
 
     QStringList emptyPatternRowValues() const
@@ -10834,7 +14181,7 @@ setPlaybackUiPlaying(false);
     int effectivePreviewVolumeForInstrument(int rowVolume, int instrumentId) const
     {
         rowVolume = qBound(0, rowVolume, 15);
-        instrumentId = qBound(0, instrumentId, 15);
+        instrumentId = qBound(0, instrumentId, 31);
 
         const int instVolume = instrumentVolume(instrumentId);
         const double instrFactor = 0.75 + (static_cast<double>(instVolume) / 60.0);
@@ -10850,7 +14197,12 @@ setPlaybackUiPlaying(false);
 
     void requestPreviewTone(int channel, int psgPeriod, int volume)
     {
-        channel = qBound(0, channel, 3);
+        if (channel < 0 || channel > 6)
+            return;
+        // SN one-note bridge handles channels 0..3.
+        // AY1/AY2/AY3 are handled by requestPreviewAyTone() through the 7-channel stream player.
+        if (channel >= 4)
+            return;
         psgPeriod = qBound(0, psgPeriod, 1023);
         volume = qBound(0, volume, 15);
 
@@ -10869,6 +14221,70 @@ setPlaybackUiPlaying(false);
 
         if (onPreviewNoteRequested)
             onPreviewNoteRequested(channel, psgPeriod, effectiveVolume, env, wx, wy);
+    }
+
+
+    void requestPreviewAyTone(int channel, int ayPeriod, int volume)
+    {
+        if (channel < 4 || channel > 6 || !sgmSoundEnabled())
+            return;
+
+        ayPeriod = qBound(0, ayPeriod, 0x0FFF);
+        volume = qBound(0, volume, 15);
+
+        if (!m_channelAudible[channel])
+            volume = 0;
+
+        const int inst = qBound(0, m_defaultInstrumentSpin ? m_defaultInstrumentSpin->value() : 1, 31);
+
+        auto ayText = [this, channel, inst](int col, const QString& fallback) -> QString {
+            return ayBankText(channel, inst, col, fallback);
+        };
+        auto ayHex = [&ayText](int col, int fallback) -> int {
+            bool ok = false;
+            const int v = ayText(col, QString::number(fallback, 16)).toInt(&ok, 16);
+            return ok ? v : fallback;
+        };
+
+        const int toneOn      = ayText(2, "ON") == "ON" ? 1 : 0;
+        const int noiseOn     = ayText(3, "OFF") == "ON" ? 1 : 0;
+        const int hwEnvOn     = ayText(4, "OFF") == "ON" ? 1 : 0;
+        const int shape       = qBound(0, ayHex(5, 0), 15);
+        const int envPeriod   = qBound(1, ayHex(6, 0x100), 0xFFFF);
+        const int noisePeriod = qBound(0, ayHex(7, 0), 31);
+        const int attack      = qBound(0, ayHex(8, 0), 15);
+        const int decay       = qBound(0, ayHex(9, 0), 15);
+        const int sustain     = qBound(0, ayHex(10, 15), 15);
+        const int release     = qBound(0, ayHex(11, 0), 15);
+        const int vibrato     = qBound(0, ayHex(12, 0), 15);
+        const QString arp     = ayText(13, "---");
+
+        QVariantList row;
+
+        // Four SN channels: HOLD.
+        for (int ch = 0; ch < 4; ++ch)
+            row << -1 << -1 << -1 << 0 << 0;
+
+        // Three AY channels: 17 fields each, same format as buildSoundEditorStreamRows().
+        for (int ch = 4; ch < 7; ++ch) {
+            if (ch == channel && ayPeriod > 0 && volume > 0) {
+                row << ayPeriod << volume << 0 << 0 << 0
+                    << toneOn << noiseOn << hwEnvOn << shape << envPeriod << noisePeriod
+                    << attack << decay << sustain << release << vibrato << arp;
+            } else {
+                row << -1 << -1 << 0 << 0 << 0
+                    << 1 << 0 << 0 << 0 << 0x100 << 0
+                    << 0 << 0 << 15 << 0 << 0 << QString("---");
+            }
+        }
+
+        QVariantList rows;
+        rows << QVariant(row);
+
+        setSoundChannelVuLevel(channel, (ayPeriod > 0 && volume > 0) ? volume : 0);
+
+        if (onStreamPlayRequested)
+            onStreamPlayRequested(rows, previewDurationMs(), false);
     }
 
 
@@ -10937,10 +14353,23 @@ setPlaybackUiPlaying(false);
 
     void stopPreviewChannel(int channel)
     {
-        channel = qBound(0, channel, 3);
+        channel = qBound(0, channel, 6);
 
-        // volume 0 = stil vanuit onze editor-logica.
-        // De audio-koppeling kan dit later vertalen naar SN76489 attenuation 15.
+        if (channel >= 4) {
+            // AY preview must be explicitly released; stopping only the stream can
+            // leave a previously latched AY tone audible in the preview backend.
+            setSoundChannelVuLevel(channel, 0);
+
+            if (onStreamStopRequested)
+                onStreamStopRequested();
+
+            if (onStopAllPreviewRequested)
+                onStopAllPreviewRequested();
+
+            return;
+        }
+
+        // volume 0 = silent for SN preview.
         requestPreviewTone(channel, 0, 0);
     }
 
@@ -10992,7 +14421,10 @@ setPlaybackUiPlaying(false);
         const bool testOnly = (m_keyboardTestOnlyCheck && m_keyboardTestOnlyCheck->isChecked());
 
         if (testOnly) {
-            requestPreviewTone(ch, psg, vol);
+            if (ch >= 4)
+                requestPreviewAyTone(ch, ayPeriodFromNoteName(noteName), vol);
+            else
+                requestPreviewTone(ch, psg, vol);
 
             const int previewChannel = ch;
             QTimer::singleShot(previewDurationMs(), this, [this, previewChannel]() {
@@ -11040,7 +14472,9 @@ setPlaybackUiPlaying(false);
                                              .arg(vol, 2, 16, QLatin1Char('0')).toUpper()
                                              .arg(snText));
             } else {
-                const QString snText = sn76489ToneWriteText(ch, psg, vol);
+                const QString snText = (ch >= 4)
+                    ? QString("AY period: %1").arg(qBound(1, psg * 2, 4095))
+                    : sn76489ToneWriteText(ch, psg, vol);
                 m_noteInfoLabel->setText(QString("Active: %1   Note: %2   Inst: %3%4   Env:%5   PSG: %6   Hz: %7   %8")
                                              .arg(activeSoundChannelName())
                                              .arg(noteText)
@@ -11053,7 +14487,10 @@ setPlaybackUiPlaying(false);
             }
         }
 
-        requestPreviewTone(ch, psg, vol);
+        if (ch >= 4)
+            requestPreviewAyTone(ch, ayPeriodFromNoteName(noteName), vol);
+        else
+            requestPreviewTone(ch, psg, vol);
 
         const int previewChannel = ch;
         QTimer::singleShot(previewDurationMs(), this, [this, previewChannel]() {
@@ -11153,6 +14590,14 @@ setPlaybackUiPlaying(false);
         return psgPeriodFromFrequency(noteFrequency(semitone, octave));
     }
 
+    int ayPeriodFromNoteName(const QString& noteText) const
+    {
+        // SGM AY-3-8910 uses the same ~3.579545 MHz clock but /16 tone divider.
+        // Therefore its period is approximately 2x the SN76489 period for the same note.
+        const int sn = psgPeriodFromNoteName(noteText);
+        return qBound(0, sn * 2, 4095);
+    }
+
     int noiseValueFromNoteName(const QString& noteText, const QString& fxText) const
     {
         QString src = fxText.trimmed().toUpper();
@@ -11178,10 +14623,11 @@ setPlaybackUiPlaying(false);
         const int tempo = m_tempoSpin ? m_tempoSpin->value() : 125;
         const int speed = m_speedSpin ? m_speedSpin->value() : 6;
 
-        // Tracker-achtige benadering:
-        // meer speed = langere row, hoger tempo = kortere row.
-        const int ms = qRound((60000.0 / qMax(1, tempo)) * (speed / 4.0));
-        return qBound(60, ms, 900);
+        // ProTracker timing: one tick lasts 2.5 / BPM seconds, and a row
+        // contains `speed` ticks.  Therefore row_ms = 2500 * speed / BPM.
+        // Example: speed 6, BPM 125 => 120 ms per row (not 720 ms).
+        const int ms = qRound((2500.0 * qMax(1, speed)) / qMax(1, tempo));
+        return qBound(10, ms, 2500);
     }
 
     void ensurePlayTimer()
@@ -11284,16 +14730,63 @@ setPlaybackUiPlaying(false);
 
     void resetPlaybackHeldChannels()
     {
-        for (int ch = 0; ch < 4; ++ch) {
+        for (int ch = 0; ch < 7; ++ch) {
             m_playbackHeldActive[ch] = false;
             m_playbackHeldPeriod[ch] = 0;
             m_playbackHeldVolume[ch] = 0;
+            m_playbackActiveNote[ch].clear();
         }
+
+        if (m_soundKeyboardWidget)
+            m_soundKeyboardWidget->clearPlaybackHighlightedNotes();
+    }
+
+    void updateKeyboardPlaybackHighlightFromRow(int row)
+    {
+        if (!m_patternTable || !m_soundKeyboardWidget || row < 0 || row >= m_patternTable->rowCount())
+            return;
+
+        QStringList highlightedNotes;
+        const int channelCount = sgmSoundEnabled() ? 7 : 4;
+
+        for (int ch = 0; ch < channelCount; ++ch) {
+            if (ch == 3)
+                continue;
+
+            const int base = 1 + ch * 4;
+            const QString note = patternText(row, base + 0).trimmed().toUpper();
+            const QString volText = patternText(row, base + 2).trimmed().toUpper();
+            const int volume = volumeFromPatternText(volText);
+
+            if (note == "===" || (volText.startsWith("V") && volume <= 0)) {
+                m_playbackActiveNote[ch].clear();
+                continue;
+            }
+
+            if (note == "---") {
+                if (!m_playbackActiveNote[ch].isEmpty())
+                    highlightedNotes << m_playbackActiveNote[ch];
+                continue;
+            }
+
+            if (note.startsWith("N")) {
+                m_playbackActiveNote[ch].clear();
+                continue;
+            }
+
+            m_playbackActiveNote[ch] = note;
+            highlightedNotes << note;
+        }
+
+        for (int ch = channelCount; ch < 7; ++ch)
+            m_playbackActiveNote[ch].clear();
+
+        m_soundKeyboardWidget->setPlaybackHighlightedNotes(highlightedNotes);
     }
 
     void stopAndClearPreviewChannel(int channel)
     {
-        channel = qBound(0, channel, 3);
+        channel = qBound(0, channel, 6);
         m_playbackHeldActive[channel] = false;
         m_playbackHeldPeriod[channel] = 0;
         m_playbackHeldVolume[channel] = 0;
@@ -11301,7 +14794,7 @@ setPlaybackUiPlaying(false);
     }
 
 
-    QVariantList buildSoundEditorStreamRows() const
+        QVariantList buildLegacySoundEditorStreamRows() const
     {
         QVariantList streamRows;
 
@@ -11335,9 +14828,24 @@ setPlaybackUiPlaying(false);
                 const QJsonArray row = rows.at(r).toArray();
 
                 QVariantList outRow;
-                for (int ch = 0; ch < 4; ++ch) {
+                for (int ch = 0; ch < (sgmSoundEnabled() ? 7 : 4); ++ch) {
                     if (!m_channelAudible[ch]) {
-                        outRow << 0 << 0 << 3 << 50 << 50;
+                        // Runtime mute must preserve the exact stream stride.
+                        // SN channels use 9 fields; AY channels use 25 fields.
+                        // V8.23 emitted only 5 fields for every muted channel,
+                        // shifting all following channel offsets in SoundEditorPlayer.
+                        // Result: muting one channel could corrupt/silence other channels.
+                        if (ch < 4) {
+                            outRow << 0 << 0 << 0 << 50 << 50
+                                   << QString() << QString() << QString() << QString();
+                        } else {
+                            outRow << 0 << 0 << 0 << 50 << 50
+                                   << 1 << 0 << 0 << 0 << 0x0100 << 0
+                                   << 0 << 0 << 15 << 0 << 0 << QStringLiteral("---")
+                                   << QString() << QString() << QString()
+                                   << QStringLiteral("---")
+                                   << QString() << QString() << QString() << QString();
+                        }
                         continue;
                     }
 
@@ -11351,26 +14859,18 @@ setPlaybackUiPlaying(false);
                     int inst = instText.toInt(&instOk, 16);
                     if (!instOk)
                         inst = m_defaultInstrumentSpin ? m_defaultInstrumentSpin->value() : 1;
-                    inst = qBound(0, inst, 15);
+                    inst = qBound(0, inst, 31);
 
                     const int instVolume = instrumentVolume(inst);
 
-                    // Belangrijk: instrument volume mag niet altijd vermenigvuldigd worden
-                    // met row volume, want dan worden bestaande songs veel te stil/anders.
-                    // Als de row expliciet Vxx bevat, respecteren we die.
-                    // Als volume leeg/--- is, gebruiken we het instrument-volume.
+                    // Explicit tracker Vxx is an absolute PSG volume.  This is
+                    // important for MOD import: the source sample default volume
+                    // plus Cxx/Axy effects define the original mix balance and must
+                    // not be re-scaled by our preset's own instrument volume.
+                    // Rows without Vxx keep the normal native-instrument behaviour.
                     int effectiveVolume = 0;
                     if (volText.startsWith("V")) {
-                        const int rowVol = volumeFromPatternText(volText);
-
-                        // V10: instrument volume mag de row niet kapot maken,
-                        // maar mag wel licht meebepalen zodat instrumenten consistenter zijn.
-                        const double instrFactor = 0.75 + (static_cast<double>(instVolume) / 60.0);
-                        effectiveVolume = qRound(rowVol * instrFactor);
-
-                        // Expliciete hoge row-volume nooit onnodig zachter maken.
-                        if (rowVol >= 12)
-                            effectiveVolume = qMax(effectiveVolume, rowVol);
+                        effectiveVolume = volumeFromPatternText(volText);
                     } else if (volText == "---" || volText == "--" || volText.isEmpty()) {
                         effectiveVolume = instVolume;
                     } else {
@@ -11382,14 +14882,87 @@ setPlaybackUiPlaying(false);
                     const int wx = instrumentWaveX(inst);
                     const int wy = instrumentWaveY(inst);
 
-                    if (note == "---") {
-                        outRow << -1 << -1 << -1 << wx << wy; // HOLD
-                    } else if (note == "===" || effectiveVolume <= 0) {
-                        outRow << 0 << 0 << env << wx << wy;   // explicit release
-                    } else if (ch < 3) {
-                        outRow << psgPeriodFromNoteName(note) << effectiveVolume << env << wx << wy;
+                    // V4 SGM: AY1/AY2/AY3 use the dedicated AY Instruments bank.
+                    // Each AY channel carries the normal five preview fields plus
+                    // Tone, Noise, HW Env, Shape, EnvPeriod, NoisePeriod, ADSR, Vibrato and Arp.
+                    auto ayText = [this, ch, inst](int col, const QString& fallback) -> QString {
+                        return ayBankText(ch, inst, col, fallback);
+                    };
+                    auto ayHex = [&ayText](int col, int fallback) -> int {
+                        bool ok = false;
+                        const int v = ayText(col, QString::number(fallback, 16)).toInt(&ok, 16);
+                        return ok ? v : fallback;
+                    };
+
+                    // MOD/ProTracker arpeggio row effect: Axy means base,+x,+y.
+                    // Keep the tracker cell compact while feeding the same macro
+                    // sequencer used by native PSG instruments.
+                    QString rowArpMacro;
+                    if (fx.size() == 3 && fx.at(0) == QLatin1Char('A')) {
+                        bool fxOk = false;
+                        const int packed = fx.mid(1).toInt(&fxOk, 16);
+                        if (fxOk && packed != 0) {
+                            QStringList arpSteps;
+                            const int ax = (packed >> 4) & 0x0F;
+                            const int ay = packed & 0x0F;
+                            for (int ai = 0; ai < 16; ++ai) {
+                                const int phase = ai % 3;
+                                arpSteps << QString::number(phase == 0 ? 0 : (phase == 1 ? ax : ay));
+                            }
+                            rowArpMacro = arpSteps.join(',');
+                        }
+                    }
+
+                    if (ch < 4) {
+                        if (note == "---") {
+                            // HOLD.  A Vxx on a hold row means volume-only update;
+                            // -1 volume means a pure hold with no register change.
+                            const int holdVolume = volText.startsWith("V") ? effectiveVolume : -1;
+                            outRow << -1 << holdVolume << -1 << wx << wy << snMacroCell(inst, 8) << snMacroCell(inst, 9) << (rowArpMacro.isEmpty() ? snMacroCell(inst, 10) : rowArpMacro) << snMacroCell(inst, 11);
+                        } else if (note == "===" || effectiveVolume <= 0) {
+                            outRow << 0 << 0 << env << wx << wy << snMacroCell(inst, 8) << snMacroCell(inst, 9) << (rowArpMacro.isEmpty() ? snMacroCell(inst, 10) : rowArpMacro) << snMacroCell(inst, 11);   // explicit release
+                        } else if (ch < 3) {
+                            outRow << psgPeriodFromNoteName(note) << effectiveVolume << env << wx << wy << snMacroCell(inst, 8) << snMacroCell(inst, 9) << (rowArpMacro.isEmpty() ? snMacroCell(inst, 10) : rowArpMacro) << snMacroCell(inst, 11);
+                        } else {
+                            outRow << noiseValueFromNoteName(note, fx) << effectiveVolume << env << wx << wy << snMacroCell(inst, 8) << snMacroCell(inst, 9) << (rowArpMacro.isEmpty() ? snMacroCell(inst, 10) : rowArpMacro) << snMacroCell(inst, 11);
+                        }
                     } else {
-                        outRow << noiseValueFromNoteName(note, fx) << effectiveVolume << env << wx << wy;
+                        const int toneOn = ayText(2, "ON") == "ON" ? 1 : 0;
+                        const int noiseOn = ayText(3, "OFF") == "ON" ? 1 : 0;
+                        const int requestedHwEnvOn = ayText(4, "OFF") == "ON" ? 1 : 0;
+                        // AY hardware envelope is shared by A/B/C and several old
+                        // melodic presets used very short periods (e.g. shape 09),
+                        // which collapses a sustained MIDI note into a tiny click.
+                        // For normal musical instruments 01..12 the song engine
+                        // therefore uses independent software ADSR (CVBasic can
+                        // reproduce it as per-frame volume writes).  Keep true HW
+                        // envelope available for drones/FX 13..1F.
+                        const int hwEnvOn = (inst >= 0x13) ? requestedHwEnvOn : 0;
+                        const int shape = qBound(0, ayHex(5, 0), 15);
+                        const int envPeriod = qBound(1, ayHex(6, 0x100), 0xFFFF);
+                        const int noisePeriod = qBound(0, ayHex(7, 0), 31);
+                        const int attack = qBound(0, ayHex(8, 0), 15);
+                        const int decay = qBound(0, ayHex(9, 0), 15);
+                        const int sustain = qBound(0, ayHex(10, 15), 15);
+                        const int release = qBound(0, ayHex(11, 0), 15);
+                        const int vibrato = qBound(0, ayHex(12, 0), 15);
+                        const QString arp = rowArpMacro.isEmpty() ? ayText(13, "---") : rowArpMacro;
+
+                        int period = -1;
+                        int volume = -1;
+                        if (note == "===" || (note != "---" && effectiveVolume <= 0)) { period = 0; volume = 0; }
+                        else if (note != "---") { period = ayPeriodFromNoteName(note); volume = effectiveVolume; }
+                        else if (volText.startsWith("V")) { volume = effectiveVolume; } // volume-only HOLD
+
+                        // AY uses its own synthesis parameters; do not leak the SN
+                        // envelope/Wave X/Y fields into the AY voice engine.
+                        outRow << period << volume << 0 << 50 << 50
+                               << toneOn << noiseOn << hwEnvOn << shape << envPeriod << noisePeriod
+                               << attack << decay << sustain << release << vibrato << arp
+                               << ayMacroCell(ch, inst, 14) << ayMacroCell(ch, inst, 15)
+                               << ayMacroCell(ch, inst, 16) << ayMacroCell(ch, inst, 17)
+                               << ayMacroCell(ch, inst, 18) << ayMacroCell(ch, inst, 19)
+                               << ayMacroCell(ch, inst, 20) << ayMacroCell(ch, inst, 21);
                     }
                 }
 
@@ -11407,6 +14980,149 @@ setPlaybackUiPlaying(false);
 
         return streamRows;
     }
+
+    QVariantList buildRomParitySoundEditorStreamRows() const
+    {
+        // V8.40: ROM-parity playback.
+        // Build the Sound Editor song stream from exactly the same 60 Hz
+        // cvBasicRenderedFrameValues() output used by CVBasic export.
+        // This removes the second, independent realtime instrument engine from
+        // SONG playback. Instrument-editor audition remains separate.
+        QVariantList streamRows;
+
+        QMap<int, QJsonArray> patterns = m_soundPatterns;
+        const int visiblePatternIndex = m_patternSpin ? m_patternSpin->value() : m_currentPatternIndex;
+        if (m_patternTable && visiblePatternIndex >= 0)
+            patterns[visiblePatternIndex] = tableToJson(m_patternTable);
+
+        if (!m_orderTable)
+            return streamRows;
+
+        QVector<int> heldBasePeriod(7, 0);
+        QVector<int> heldVolume(7, -1);
+
+        auto appendRendered = [&](const QJsonArray& row, int sf, int frames) {
+            const QStringList vals = cvBasicRenderedFrameValues(
+                row, sf, frames, heldBasePeriod, heldVolume);
+
+            QVariantList outRow;
+            outRow << 841; // V8.45 explicit fixed ROM-parity stream marker
+            int vi = 0;
+            const int channelCount = sgmSoundEnabled() ? 7 : 4;
+
+            // First 2 values/channel are the actual register period+volume that
+            // CVBasic will receive.
+            int regP[7] = {1024,1024,1024,1024,1024,1024,1024};
+            int regV[7] = {255,255,255,255,255,255,255};
+
+            for (int ch = 0; ch < channelCount; ++ch) {
+                if (vi + 1 >= vals.size()) break;
+                regP[ch] = vals.at(vi++).toInt();
+                regV[ch] = vals.at(vi++).toInt();
+            }
+
+            int ayEnv = 0x0100;
+            int ayShape = 0;
+            int ayNoise = 0;
+            int ayMix = 0xBF;
+            int ayReset = 0;
+            if (sgmSoundEnabled() && vi + 4 < vals.size()) {
+                ayEnv = vals.at(vi++).toInt();
+                ayShape = vals.at(vi++).toInt();
+                ayNoise = vals.at(vi++).toInt();
+                ayMix = vals.at(vi++).toInt();
+                ayReset = vals.at(vi++).toInt();
+            }
+
+            for (int ch = 0; ch < channelCount; ++ch) {
+                if (!m_channelAudible[ch]) {
+                    if (ch < 4) {
+                        outRow << 0 << 0 << 0 << 50 << 50
+                               << QString() << QString() << QString() << QString();
+                    } else {
+                        outRow << 0 << 0 << 0 << 50 << 50
+                               << 1 << 0 << 0 << 0 << 0x0100 << 0
+                               << 0 << 0 << 15 << 0 << 0 << QStringLiteral("---")
+                               << QString() << QString() << QString()
+                               << QStringLiteral("---")
+                               << QString() << QString() << QString() << QString();
+                    }
+                    continue;
+                }
+
+                const int p = regP[ch];
+                const int v = regV[ch];
+
+                if (ch < 4) {
+                    // No software macros/envelopes here: CVBasic already rendered them.
+                    const int playerP = (p == 1024) ? -1 : p;
+                    const int playerV = (v == 255) ? -1 : qBound(0, v, 15);
+                    outRow << playerP << playerV << 0 << 50 << 50
+                           << QString() << QString() << QString() << QString();
+                } else {
+                    const int ach = ch - 4;
+                    const bool toneOn = (ayMix & (1 << ach)) == 0;
+                    const bool noiseOn = (ayMix & (1 << (ach + 3))) == 0;
+                    const bool hwEnv = (v == 16);
+                    const int playerP = (p == 1024) ? -1 : p;
+                    // SoundEditorPlayer amplitude is 0..15. Hardware-envelope
+                    // selection (16) is carried separately by hwEnv.
+                    const int playerV = (v == 255) ? -1 : (hwEnv ? 15 : qBound(0, v, 15));
+
+                    outRow << playerP << playerV << 0 << 50 << 50
+                           << (toneOn ? 1 : 0)
+                           << (noiseOn ? 1 : 0)
+                           << (hwEnv ? 1 : 0)
+                           << ayShape << ayEnv << ayNoise
+                           << 0 << 0 << 15 << 0 << 0 << QStringLiteral("---")
+                           << QString() << QString() << QString()
+                           << QStringLiteral("---")
+                           << QString() << QString() << QString()
+                           << (ayReset ? QStringLiteral("1") : QString());
+                }
+            }
+
+            streamRows << QVariant(outRow);
+        };
+
+        for (int orderCol = m_playFromSpin ? m_playFromSpin->value() : 0;
+             orderCol < m_orderTable->columnCount();
+             ++orderCol) {
+            const int patternIndex = orderPatternAtColumn(orderCol);
+            if (patternIndex == 255)
+                break;
+
+            const QJsonArray rows = patterns.value(patternIndex);
+            if (rows.isEmpty())
+                continue;
+
+            for (int r = 0; r < rows.size(); ++r) {
+                const QJsonArray row = rows.at(r).toArray();
+                const int frames = cvBasicWaitFramesForOneRow();
+                for (int sf = 0; sf < frames; ++sf)
+                    appendRendered(row, sf, frames);
+            }
+        }
+
+        qDebug().noquote() << "[ADAMP SOUND V8.40] ROM-parity frame stream rows="
+                           << streamRows.size();
+
+        return streamRows;
+    }
+
+
+    QVariantList buildSoundEditorStreamRows() const
+    {
+        // V8.66 compatibility routing:
+        // Existing/native .adpsnd and MIDI songs keep the proven legacy
+        // tracker-row playback path. Only a MOD converted in the current
+        // session uses the CVBasic/ROM-parity 60 Hz PSG frame stream.
+        if (m_loadedModConverted)
+            return buildRomParitySoundEditorStreamRows();
+
+        return buildLegacySoundEditorStreamRows();
+    }
+
 
 
 
@@ -11432,7 +15148,9 @@ setPlaybackUiPlaying(false);
                            << "speed=" << (m_speedSpin ? m_speedSpin->value() : -1);
 
         if (onStreamPlayRequested)
-            onStreamPlayRequested(rows, playbackRowDurationMs(), loopEnabled);
+            onStreamPlayRequested(rows,
+                                  m_loadedModConverted ? 17 : playbackRowDurationMs(),
+                                  loopEnabled);
 
         if (m_playTimer) {
             m_playTimer->stop();
@@ -11449,6 +15167,7 @@ setPlaybackUiPlaying(false);
 
     void startPatternPlayback()
     {
+        m_lastFollowPlayRow = -1;
         if (!m_patternTable)
             return;
 
@@ -11488,7 +15207,9 @@ setPlaybackUiPlaying(false);
         const bool loopEnabled = (m_loopSongCheck && m_loopSongCheck->isChecked());
 
         if (onStreamPlayRequested)
-            onStreamPlayRequested(rows, playbackRowDurationMs(), loopEnabled);
+            onStreamPlayRequested(rows,
+                                  m_loadedModConverted ? 17 : playbackRowDurationMs(),
+                                  loopEnabled);
 
         // Audio loopt nu in SoundManager via de stream-player.
         // Deze timer dient alleen nog voor UI-follow: Order List + Pattern row.
@@ -11497,12 +15218,17 @@ setPlaybackUiPlaying(false);
         if (m_playTimer)
             m_playTimer->start(playbackRowDurationMs());
 
-        if (m_noteInfoLabel)
-            m_noteInfoLabel->setText(QString("Streaming %1 tracker row(s) to real PSG audio engine").arg(rows.size()));
+        if (m_noteInfoLabel) {
+            if (m_loadedModConverted)
+                m_noteInfoLabel->setText(QString("Streaming %1 CVBasic PSG frame(s) to audio engine").arg(rows.size()));
+            else
+                m_noteInfoLabel->setText(QString("Streaming %1 legacy tracker row(s) to audio engine").arg(rows.size()));
+        }
     }
 
     void stopPatternPlayback()
     {
+        m_lastFollowPlayRow = -1;
         qDebug().noquote() << "[ADAMP SOUND] stopPatternPlayback";
 
         if (m_liveInstrumentRestartTimer)
@@ -11514,8 +15240,13 @@ setPlaybackUiPlaying(false);
         if (m_playTimer)
             m_playTimer->stop();
 
-        for (int ch = 0; ch < 4; ++ch)
+        // V8.56: hard-stop every possible sound channel.
+        // Even a non-SGM song can inherit stale AY preview state from an earlier
+        // SGM song/instrument test, so Stop must clear AY1/AY2/AY3 as well.
+        for (int ch = 0; ch < 7; ++ch)
             stopAndClearPreviewChannel(ch);
+
+        resetPlaybackHeldChannels();
 
         if (onStreamStopRequested)
             onStreamStopRequested();
@@ -11534,6 +15265,7 @@ setPlaybackUiPlaying(false);
 
     void rewindPatternPlayback()
     {
+        m_lastFollowPlayRow = -1;
         const int requestedOrder = m_playFromSpin ? m_playFromSpin->value() : 0;
         m_playingOrderColumn = firstPlayableOrderColumnFrom(requestedOrder);
 
@@ -11583,6 +15315,7 @@ setPlaybackUiPlaying(false);
         m_playingOrderColumn = nextOrder;
         m_playingPatternIndex = orderPatternAtColumn(m_playingOrderColumn);
         setCurrentPatternWithoutUndo(m_playingPatternIndex);
+        followOrderSequenceRow(m_playingOrderColumn);
         m_playingRow = 0;
         return true;
     }
@@ -11625,6 +15358,11 @@ setPlaybackUiPlaying(false);
             }
         }
 
+        // Keep the Active Instruments panel tied to the actual tracker row,
+        // not to the instrument currently selected in the editors.
+        updatePlaybackActiveInstrumentsFromRow(m_playingRow);
+        updateKeyboardPlaybackHighlightFromRow(m_playingRow);
+
         if (!m_streamPlayerUiFollow) {
             // Oude fallback-preview playback.
             playTrackerRow(m_playingRow);
@@ -11651,6 +15389,10 @@ setPlaybackUiPlaying(false);
             if (m_orderTable && m_playingOrderColumn >= 0)
                 m_orderTable->setCurrentCell(0, m_playingOrderColumn);
 
+            // V8.86: visible vertical Sequence list follows playback and
+            // automatically scrolls the active sequence into view.
+            followOrderSequenceRow(m_playingOrderColumn);
+
             m_patternTable->selectRow(m_playingRow);
 
             if (m_rowSpin)
@@ -11670,7 +15412,7 @@ setPlaybackUiPlaying(false);
 
         QStringList played;
 
-        for (int ch = 0; ch < 4; ++ch) {
+        for (int ch = 0; ch < (sgmSoundEnabled() ? 7 : 4); ++ch) {
             const int base = 1 + ch * 4;
             const QString note = patternText(row, base + 0).trimmed().toUpper();
             const QString volText = patternText(row, base + 2).trimmed().toUpper();
@@ -11685,8 +15427,10 @@ setPlaybackUiPlaying(false);
                 if (m_playbackHeldActive[ch]) {
                     if (ch < 3)
                         played << QString("CH%1 hold").arg(ch + 1);
-                    else
+                    else if (ch == 3)
                         played << QString("NOISE hold");
+                    else
+                        played << QString("AY %1 hold").arg(QChar('A' + (ch - 4)));
                 }
                 continue;
             }
@@ -11716,7 +15460,7 @@ setPlaybackUiPlaying(false);
 
                     played << QString("CH%1 %2").arg(ch + 1).arg(note);
                 }
-            } else {
+            } else if (ch == 3) {
                 const int noise = noiseValueFromNoteName(note, fx);
 
                 const bool changed =
@@ -11732,6 +15476,13 @@ setPlaybackUiPlaying(false);
                     requestPreviewTone(3, noise, volume);
 
                 played << QString("NOISE N%1").arg(noise, 2, 16, QLatin1Char('0')).toUpper();
+            } else {
+                const int period = ayPeriodFromNoteName(note);
+                m_playbackHeldActive[ch] = true;
+                m_playbackHeldPeriod[ch] = period;
+                m_playbackHeldVolume[ch] = volume;
+                // AY is rendered by the 7-channel song stream; avoid sending it through the SN-only one-note bridge.
+                played << QString("AY %1 %2").arg(QChar('A' + (ch - 4))).arg(note);
             }
         }
 
@@ -11760,9 +15511,9 @@ setPlaybackUiPlaying(false);
 
         for (int r = 0; r < rows; ++r) {
             QJsonArray row;
-            row.append(QString("%1").arg(r, 2, 16, QLatin1Char('0')).toUpper());
+            row.append(QString("%1").arg(r, 2, 10, QLatin1Char('0')));
 
-            for (int col = 1; col < 17; ++col)
+            for (int col = 1; col < 29; ++col)
                 row.append(defaultPatternValueForColumn(col));
 
             arr.append(row);
@@ -11850,6 +15601,89 @@ setPlaybackUiPlaying(false);
             if (ok)
                 m_soundPatterns[qBound(0, index, 255)] = it.value().toArray();
         }
+    }
+
+    void refreshOrderSequenceView()
+    {
+        if (!m_orderSequenceView || !m_orderTable)
+            return;
+
+        const int count = m_orderTable->columnCount();
+        const int oldCurrent = m_orderSequenceView->currentRow();
+
+        QSignalBlocker blocker(m_orderSequenceView);
+        m_orderSequenceView->setRowCount(count);
+
+        for (int seq = 0; seq < count; ++seq) {
+            QTableWidgetItem* seqItem = m_orderSequenceView->item(seq, 0);
+            if (!seqItem) {
+                seqItem = new QTableWidgetItem();
+                seqItem->setFlags(seqItem->flags() & ~Qt::ItemIsEditable);
+                seqItem->setTextAlignment(Qt::AlignCenter);
+                m_orderSequenceView->setItem(seq, 0, seqItem);
+            }
+            seqItem->setText(QString("%1").arg(seq, 3, 10, QLatin1Char('0')));
+
+            QString pat = QStringLiteral("FF");
+            if (QTableWidgetItem* src = m_orderTable->item(0, seq)) {
+                const QString t = src->text().trimmed().toUpper();
+                if (!t.isEmpty())
+                    pat = t;
+            }
+
+            QTableWidgetItem* patItem = m_orderSequenceView->item(seq, 1);
+            if (!patItem) {
+                patItem = new QTableWidgetItem();
+                patItem->setTextAlignment(Qt::AlignCenter);
+                m_orderSequenceView->setItem(seq, 1, patItem);
+            }
+            patItem->setText(pat);
+        }
+
+        if (count > 0) {
+            const int row = qBound(0, oldCurrent >= 0 ? oldCurrent : 0, count - 1);
+            m_orderSequenceView->setCurrentCell(row, 1);
+        }
+    }
+
+    void followOrderSequenceRow(int sequence)
+    {
+        if (!m_orderSequenceView)
+            return;
+        if (sequence < 0 || sequence >= m_orderSequenceView->rowCount())
+            return;
+
+        m_orderSequenceView->setCurrentCell(sequence, 1, QItemSelectionModel::ClearAndSelect);
+        if (QTableWidgetItem* item = m_orderSequenceView->item(sequence, 1))
+            m_orderSequenceView->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+    }
+
+    int usedOrderSequenceCount() const
+    {
+        if (!m_orderTable)
+            return 0;
+
+        int used = 0;
+        for (int c = 0; c < m_orderTable->columnCount(); ++c) {
+            const int pattern = orderPatternAtColumn(c);
+            if (pattern == 255)
+                break;
+            ++used;
+        }
+        return used;
+    }
+
+    void updateOrderSequenceCount()
+    {
+        if (!m_orderSequenceCountLabel || !m_orderTable)
+            return;
+
+        const int used = usedOrderSequenceCount();
+        const int slotCount = m_orderTable->columnCount();
+        m_orderSequenceCountLabel->setText(
+            tr("Orders: %1/%2").arg(used).arg(slotCount));
+        m_orderSequenceCountLabel->setToolTip(
+            tr("%1 used sequence entries, %2 available slots").arg(used).arg(slotCount));
     }
 
     int currentOrderColumn() const
@@ -11949,6 +15783,8 @@ setPlaybackUiPlaying(false);
         renumberOrderColumns();
         setOrderPatternValue(col, "FF");
         m_orderTable->setCurrentCell(0, col);
+        refreshOrderSequenceView();
+        updateOrderSequenceCount();
         autoRebuildSoundOutput();
 
         if (m_noteInfoLabel)
@@ -11967,6 +15803,8 @@ setPlaybackUiPlaying(false);
         renumberOrderColumns();
         setOrderPatternValue(col, "FF");
         m_orderTable->setCurrentCell(0, col);
+        refreshOrderSequenceView();
+        updateOrderSequenceCount();
         autoRebuildSoundOutput();
 
         if (m_noteInfoLabel)
@@ -11989,6 +15827,8 @@ setPlaybackUiPlaying(false);
         m_orderTable->removeColumn(col);
         renumberOrderColumns();
         m_orderTable->setCurrentCell(0, qBound(0, col, m_orderTable->columnCount() - 1));
+        refreshOrderSequenceView();
+        updateOrderSequenceCount();
         autoRebuildSoundOutput();
 
         if (m_noteInfoLabel)
@@ -12004,6 +15844,8 @@ setPlaybackUiPlaying(false);
 
         const int col = currentOrderColumn();
         setOrderPatternValue(col, "FF");
+        refreshOrderSequenceView();
+        updateOrderSequenceCount();
         autoRebuildSoundOutput();
 
         if (m_noteInfoLabel)
@@ -12028,6 +15870,8 @@ setPlaybackUiPlaying(false);
         for (int c = oldCount; c < m_orderTable->columnCount(); ++c)
             setOrderPatternValue(c, "FF");
 
+        refreshOrderSequenceView();
+        updateOrderSequenceCount();
         autoRebuildSoundOutput();
 
         if (m_noteInfoLabel)
@@ -12050,6 +15894,8 @@ setPlaybackUiPlaying(false);
             m_orderTable->removeColumn(m_orderTable->columnCount() - 1);
 
         renumberOrderColumns();
+        refreshOrderSequenceView();
+        updateOrderSequenceCount();
         autoRebuildSoundOutput();
 
         if (m_noteInfoLabel)
@@ -12098,7 +15944,7 @@ setPlaybackUiPlaying(false);
         for (int r = 0; r < rows.size(); ++r) {
             const QJsonArray row = rows.at(r).toArray();
 
-            for (int ch = 0; ch < 4; ++ch) {
+            for (int ch = 0; ch < (sgmSoundEnabled() ? 7 : 4); ++ch) {
                 const int base = 1 + ch * 4;
                 const QString note = row.at(base + 0).toString("---").trimmed().toUpper();
                 const QString volText = row.at(base + 2).toString("---").trimmed().toUpper();
@@ -12168,22 +16014,29 @@ setPlaybackUiPlaying(false);
 
     QStringList compactPatternRowValues(const QJsonArray& row) const
     {
+        // Compact/non-rendered export intentionally has no per-frame tracker
+        // macro state.  Keep HOLD rows as HOLD here.  Arpeggio/pitch macro
+        // rendering belongs in cvBasicRenderedFrameValues(), which owns the
+        // heldBasePeriod/heldVolume state and subFrame timing.
         QStringList values;
-        values.reserve(8);
+        const int channelCount = sgmSoundEnabled() ? 7 : 4;
+        values.reserve(channelCount * 2);
 
-        for (int ch = 0; ch < 4; ++ch) {
+        for (int ch = 0; ch < channelCount; ++ch) {
             const int base = 1 + ch * 4;
             const QString note = row.at(base + 0).toString("---").trimmed().toUpper();
             const QString volText = row.at(base + 2).toString("---").trimmed().toUpper();
             const QString fx = row.at(base + 3).toString("---").trimmed().toUpper();
             const int volume = volumeFromPatternText(volText);
 
-            // 1024,1024 = HOLD: niets opnieuw triggeren, alleen wachten.
-            //    0,   0 = RELEASE/STOP voor dit kanaal.
-            // 1025     = END marker voor pattern einde.
-            // We vermijden -1 omdat CVBasic standaard unsigned werkt.
+            // 1024,255 = HOLD: nothing retriggered.
+            // 1024,V   = HOLD with volume-only update.
+            //    0,0   = RELEASE/STOP.
             if (note == "---") {
-                values << "1024" << "1024";
+                values << "1024"
+                       << (volText.startsWith("V")
+                               ? QString::number(volumeFromPatternText(volText))
+                               : QString("255"));
                 continue;
             }
 
@@ -12195,8 +16048,11 @@ setPlaybackUiPlaying(false);
             if (ch < 3) {
                 values << QString::number(psgPeriodFromNoteName(note));
                 values << QString::number(volume);
-            } else {
+            } else if (ch == 3) {
                 values << QString::number(noiseValueFromNoteName(note, fx));
+                values << QString::number(volume);
+            } else {
+                values << QString::number(ayPeriodFromNoteName(note));
                 values << QString::number(volume);
             }
         }
@@ -12245,30 +16101,417 @@ setPlaybackUiPlaying(false);
         return out;
     }
 
+    QStringList cvBasicRenderedFrameValues(const QJsonArray& row, int subFrame, int framesPerRow,
+                                                QVector<int>& heldBasePeriod,
+                                                QVector<int>& heldVolume) const
+    {
+        QStringList values;
+        const int channelCount = sgmSoundEnabled() ? 7 : 4;
+        values.reserve(channelCount * 2);
+        framesPerRow = qMax(1, framesPerRow);
+        subFrame = qBound(0, subFrame, framesPerRow - 1);
+        const double x = (framesPerRow <= 1) ? 0.0 : static_cast<double>(subFrame) / static_cast<double>(framesPerRow - 1);
+        const double t = subFrame / 60.0;
+
+        auto snEnvLevel = [](int env, double xx) -> double {
+            switch (env & 0x0F) {
+            case 0x01: return qMax(0.28, 1.0 - xx * 0.82);              // piano/guitar pluck
+            case 0x02: return qMax(0.55, 1.0 - xx * 0.38);              // electric piano/reed
+            case 0x03: return qMax(0.62, 1.0 - xx * 0.28);              // bass
+            case 0x04: return qMax(0.48, 1.0 - xx * 0.52);              // brass
+            case 0x05: return qBound(0.0, xx * 5.0, 1.0);               // pad/string attack
+            case 0x06: return qBound(0.76, 0.90 + 0.08 * std::sin(xx * 6.28318530718), 1.0); // lead
+            case 0x07: return qMax(0.20, 1.0 - xx * 0.92);              // pizz/harp
+            case 0x08: return qMax(0.16, std::exp(-2.15 * xx));          // bell/chime
+            case 0x09: return qMax(0.0, 1.0 - xx * 1.55);               // kick/short perc
+            case 0x0A: return qMax(0.0, 1.0 - xx * 1.15);               // snare/tom
+            case 0x0B: return qMax(0.0, 1.0 - xx * 2.45);               // closed hat
+            case 0x0C: return qMax(0.0, 1.0 - xx * 0.72);               // open hat/cymbal
+            case 0x0D: return qBound(0.42, 0.42 + xx * 0.72, 1.0);       // rise
+            case 0x0E: return qMax(0.20, 1.0 - xx * 0.78);              // fall / explosion
+            case 0x0F: return 0.78;                                      // drone
+            default:   return 1.0;
+            }
+        };
+
+        auto periodWithSemitones = [](int basePeriod, double semitones, int maxPeriod) -> int {
+            if (basePeriod <= 0)
+                return basePeriod;
+            const double mul = std::pow(2.0, -semitones / 12.0); // higher pitch = smaller PSG period
+            return qBound(1, qRound(basePeriod * mul), maxPeriod);
+        };
+
+        auto macroAt = [subFrame](const QString& text, int fallback, int minValue, int maxValue, int base = 10) -> int {
+            const QString t = text.trimmed();
+            if (t.isEmpty() || t == "---") return fallback;
+            const QStringList parts = t.split(',', Qt::SkipEmptyParts);
+            if (parts.isEmpty()) return fallback;
+            const QString token = parts.at(qMin(subFrame, parts.size() - 1)).trimmed();
+            bool ok = false;
+            int value = token.toInt(&ok, base);
+            if (!ok && base == 0) value = token.toInt(&ok, 16);
+            return ok ? qBound(minValue, value, maxValue) : fallback;
+        };
+
+        for (int ch = 0; ch < channelCount; ++ch) {
+            const int base = 1 + ch * 4;
+            const QString note = row.at(base + 0).toString("---").trimmed().toUpper();
+            const QString instText = row.at(base + 1).toString("--").trimmed().toUpper();
+            const QString volText = row.at(base + 2).toString("---").trimmed().toUpper();
+            const QString fx = row.at(base + 3).toString("---").trimmed().toUpper();
+
+            QString rowArpMacro;
+            if (fx.size() == 3 && fx.at(0) == QLatin1Char('A')) {
+                bool fxOk = false;
+                const int packed = fx.mid(1).toInt(&fxOk, 16);
+                if (fxOk && packed != 0) {
+                    QStringList arpSteps;
+                    const int ax = (packed >> 4) & 0x0F;
+                    const int ay = packed & 0x0F;
+                    for (int ai = 0; ai < 16; ++ai) {
+                        const int phase = ai % 3;
+                        arpSteps << QString::number(phase == 0 ? 0 : (phase == 1 ? ax : ay));
+                    }
+                    rowArpMacro = arpSteps.join(',');
+                }
+            }
+
+            if (note == "---") {
+                // 1024,255 = pure HOLD.  1024,V = keep previous period and
+                // update only volume; the generated CVBasic player remembers
+                // the last period for exactly this purpose.
+                values << "1024" << (volText.startsWith("V") ? QString::number(volumeFromPatternText(volText)) : QString("255"));
+                continue;
+            }
+            if (note == "===" || volumeFromPatternText(volText) <= 0) {
+                values << (subFrame == 0 ? "0" : "1024") << (subFrame == 0 ? "0" : "255");
+                continue;
+            }
+
+            bool instOk = false;
+            int inst = instText.toInt(&instOk, 16);
+            if (!instOk)
+                inst = m_defaultInstrumentSpin ? m_defaultInstrumentSpin->value() : 1;
+            inst = qBound(0, inst, 31);
+
+            int volume = qBound(0, volumeFromPatternText(volText), 15);
+            if (ch < heldVolume.size()) heldVolume[ch] = volume;
+            if (ch < heldBasePeriod.size()) {
+                if (ch < 3) heldBasePeriod[ch] = psgPeriodFromNoteName(note);
+                else if (ch >= 4) heldBasePeriod[ch] = ayPeriodFromNoteName(note);
+            }
+            if (ch < 4) {
+                // SN76489 effects are pre-rendered into ordinary SOUND period/volume writes.
+                // This keeps the generated result 100% CVBasic-compatible: no custom PSG API.
+                const int env = instrumentEnvelope(inst);
+                const int fade = instrumentFadeout(inst);
+                const int wx = instrumentWaveX(inst);
+                const int wy = instrumentWaveY(inst);
+                double level = snEnvLevel(env, x);
+                level *= qBound(0.35, 1.0 - x * (fade / 22.0), 1.0);
+                // Preserve the tracker's absolute row volume.  Instrument
+                // character comes from envelope/macro shape, not an extra gain
+                // multiplier that would destroy MOD channel balance.
+                const int macroVol = macroAt(snMacroCell(inst, 8), 15, 0, 15);
+                volume = qBound(0, qRound(volume * level * (macroVol / 15.0)), 15);
+
+                if (ch < 3) {
+                    int period = psgPeriodFromNoteName(note);
+                    double semitones = 0.0;
+                    semitones += macroAt(snMacroCell(inst, 9), 0, -36, 36);
+                    semitones += macroAt(rowArpMacro.isEmpty() ? snMacroCell(inst, 10) : rowArpMacro, 0, -36, 36);
+                    const double vibRate = 3.2 + wx * 0.055;
+                    const double vibDepth = (wy / 100.0) * 0.28;
+                    if (env == 0x06 || env == 0x05 || env == 0x0F)
+                        semitones += vibDepth * std::sin(2.0 * 3.14159265358979323846 * vibRate * t);
+                    if (env == 0x04 && x < 0.28)
+                        semitones += (0.32 * (wy / 100.0)) * (1.0 - x / 0.28); // brass attack
+                    if (env == 0x08 && x < 0.24 && wy > 72)
+                        semitones += (subFrame & 1) ? 12.0 : 0.0;               // bell overtone flicker
+                    if (env == 0x0D)
+                        semitones += x * (2.0 + 8.0 * wx / 100.0);             // rise FX
+                    if (env == 0x0E && inst >= 0x17)
+                        semitones -= x * (2.0 + 8.0 * wx / 100.0);             // fall FX
+                    period = periodWithSemitones(period, semitones, 1023);
+                    values << QString::number(period) << QString::number(volume);
+                } else {
+                    int noiseCode = noiseValueFromNoteName(note, fx);
+                    const int noiseMode = macroAt(snMacroCell(inst, 11), -1, 0, 3);
+                    if (noiseMode >= 0) noiseCode = (noiseCode & 0x04) | noiseMode;
+                    values << QString::number(noiseCode) << QString::number(volume);
+                }
+            } else {
+                // AY software ADSR/vibrato/arpeggio is also collapsed to standard CVBasic
+                // SOUND writes. Hardware envelope/noise remain an editor/SGM capability,
+                // but the musical articulation survives on the exported CVBasic stream.
+                auto ayText = [this, ch, inst](int col, const QString& fallback) -> QString {
+                    return ayBankText(ch, inst, col, fallback);
+                };
+                auto ayHex = [&ayText](int col, int fallback) -> int {
+                    bool ok = false;
+                    const int v = ayText(col, QString::number(fallback, 16)).toInt(&ok, 16);
+                    return ok ? v : fallback;
+                };
+                const int attack = qBound(0, ayHex(8, 0), 15);
+                const int decay = qBound(0, ayHex(9, 0), 15);
+                const int sustain = qBound(0, ayHex(10, 15), 15);
+                const int vibrato = qBound(0, ayHex(12, 0), 15);
+                const QString arpText = rowArpMacro.isEmpty() ? ayText(13, "---") : rowArpMacro;
+                // Furnace AY wave macro semantics used by the CVBasic-safe subset:
+                // bit0=tone, bit1=noise, bit2=hardware envelope. When no wave macro
+                // is supplied, fall back to the three explicit AY switches.
+                int ayMode = 0;
+                if (ayText(2, "ON").compare("ON", Qt::CaseInsensitive) == 0) ayMode |= 1;
+                if (ayText(3, "OFF").compare("ON", Qt::CaseInsensitive) == 0) ayMode |= 2;
+                if (ayText(4, "OFF").compare("ON", Qt::CaseInsensitive) == 0) ayMode |= 4;
+                const QString waveMacroText = ayMacroCell(ch, inst, 18).trimmed();
+                if (!waveMacroText.isEmpty() && waveMacroText != "---")
+                    ayMode = macroAt(waveMacroText, ayMode, 0, 7, 10);
+
+                double level = 1.0;
+                const double a = attack <= 0 ? 0.0 : qMin(0.55, 0.025 + attack * 0.028);
+                const double d = decay <= 0 ? 0.0 : qMin(0.70, 0.035 + decay * 0.032);
+                const double sustainLevel = sustain / 15.0;
+                if (a > 0.0 && x < a)
+                    level = x / a;
+                else if (d > 0.0 && x < a + d)
+                    level = 1.0 + (sustainLevel - 1.0) * ((x - a) / d);
+                else
+                    level = sustainLevel;
+                const int ayMacroVol = macroAt(ayMacroCell(ch, inst, 14), 15, 0, 15);
+
+                // Preserve the song/MOD volume as the authoritative channel balance.
+                // V8.24 multiplied AY volume by BOTH software ADSR and the volume macro.
+                // For e.g. sustain=8 and macro=12, V15 became about V06 even though
+                // the imported MOD requested full volume. This made AY1 far too quiet.
+                //
+                // The tracker volume macro remains an articulation ceiling: it may
+                // deliberately reduce a transient/decay, but a static ADSR sustain
+                // no longer attenuates an imported row a second time.
+                const double macroFactor = ayMacroVol / 15.0;
+                volume = qBound(0, qRound(volume * macroFactor), 15);
+                // CVBasic explicitly accepts volume 16 on AY channels to select
+                // the shared hardware envelope (SOUND 8).
+                if ((ayMode & 4) && volume > 0) volume = 16;
+
+                int period = ayPeriodFromNoteName(note);
+                double semitones = 0.0;
+                semitones += macroAt(ayMacroCell(ch, inst, 15), 0, -36, 36);
+                if (vibrato > 0)
+                    semitones += (vibrato * 0.018) * std::sin(2.0 * 3.14159265358979323846 * 5.5 * t);
+                const QStringList arp = arpText.split(',', Qt::SkipEmptyParts);
+                if (!arp.isEmpty()) {
+                    bool ok = false;
+                    const int av = arp.at(subFrame % arp.size()).trimmed().toInt(&ok);
+                    if (ok) semitones += qBound(-24, av, 24);
+                }
+                period = periodWithSemitones(period, semitones, 0x0FFF);
+                values << QString::number(period) << QString::number(volume);
+            }
+        }
+
+        if (sgmSoundEnabled()) {
+            // Shared AY registers. Furnace models these globally as well: one noise
+            // generator and one envelope generator are shared by channels A/B/C.
+            int mix = 0xBF; // safe CVBasic AY mixer value: all tone/noise disabled, I/O protected
+            int sharedNoise = 0;
+            int sharedEnvPeriod = 0x0100;
+            int sharedEnvShape = 0;
+            int resetMask = 0;
+            bool noiseChosen = false;
+            bool envChosen = false;
+
+            for (int ach = 0; ach < 3; ++ach) {
+                const int ch = 4 + ach;
+                const int base = 1 + ch * 4;
+                const QString note = row.at(base + 0).toString("---").trimmed().toUpper();
+                const QString instText = row.at(base + 1).toString("--").trimmed().toUpper();
+                const QString volText = row.at(base + 2).toString("---").trimmed().toUpper();
+                const bool active = note != "---" && note != "===" && volumeFromPatternText(volText) > 0;
+                if (!active) continue;
+
+                bool instOk = false;
+                int inst = instText.toInt(&instOk, 16);
+                if (!instOk) inst = m_defaultInstrumentSpin ? m_defaultInstrumentSpin->value() : 1;
+                inst = qBound(0, inst, 31);
+
+                auto txt = [this, ch, inst](int col, const QString& fallback) { return ayBankText(ch, inst, col, fallback); };
+                auto hex = [&txt](int col, int fallback) { bool ok=false; int v=txt(col, QString::number(fallback,16)).toInt(&ok,16); return ok?v:fallback; };
+
+                int mode = 0;
+                if (txt(2,"ON").compare("ON",Qt::CaseInsensitive)==0) mode |= 1;
+                if (txt(3,"OFF").compare("ON",Qt::CaseInsensitive)==0) mode |= 2;
+                if (txt(4,"OFF").compare("ON",Qt::CaseInsensitive)==0) mode |= 4;
+                const QString wave = ayMacroCell(ch, inst, 18).trimmed();
+                if (!wave.isEmpty() && wave != "---") mode = macroAt(wave, mode, 0, 7, 10);
+
+                if (mode & 1) mix &= ~(1 << ach);
+                if (mode & 2) {
+                    mix &= ~(1 << (ach + 3));
+                    if (!noiseChosen) {
+                        sharedNoise = macroAt(ayMacroCell(ch, inst, 16), hex(7,0), 0, 31, 16);
+                        noiseChosen = true;
+                    }
+                }
+
+                if ((mode & 4) && !envChosen) {
+                    sharedEnvShape = macroAt(ayMacroCell(ch, inst, 19), hex(5,0), 0, 15, 16);
+                    const QString envMacro = ayMacroCell(ch, inst, 20).trimmed();
+                    if (!envMacro.isEmpty() && envMacro != "---") {
+                        sharedEnvPeriod = macroAt(envMacro, hex(6,0x100), 1, 65535, 16);
+                    } else {
+                        sharedEnvPeriod = qBound(1, hex(6,0x100), 65535);
+                        const QString ratio = ayMacroCell(ch, inst, 17).trimmed();
+                        const QStringList rd = ratio.split('/');
+                        if (rd.size()==2) {
+                            bool okN=false, okD=false;
+                            const int num=rd.at(0).trimmed().toInt(&okN);
+                            const int den=rd.at(1).trimmed().toInt(&okD);
+                            if (okN && okD && num>0 && den>0) {
+                                const int tonePeriod = ayPeriodFromNoteName(note);
+                                // Same relationship used by Furnace for AY AutoEnvelope.
+                                sharedEnvPeriod = qBound(1, (tonePeriod * den / num) >> 4, 65535);
+                            }
+                        }
+                    }
+                    envChosen = true;
+                }
+
+                if (macroAt(ayMacroCell(ch, inst, 21), 0, 0, 1, 10) != 0)
+                    resetMask |= (1 << ach);
+            }
+
+            values << QString::number(sharedEnvPeriod)
+                   << QString::number(sharedEnvShape)
+                   << QString::number(sharedNoise)
+                   << QString::number(mix)
+                   << QString::number(resetMask);
+        }
+        return values;
+    }
+
     QString buildCvBasicLinearStreamData() const
     {
+        // V8.32: delta/RLE stream.
+        // Old format wrote the complete 8/19-value PSG state for every video frame,
+        // which could overflow the target ROM on long MOD conversions.  The new
+        // format stores only channels/register bundles that actually change.
+        // Record: duration(1..255), changeMask, payload...
+        // mask bits 0..6 = CH1,CH2,CH3,NOISE,AYA,AYB,AYC
+        // mask bit 7     = shared AY envelope/noise/mixer bundle
+        // Stream end: DATA 0
         QString out;
         out += "SOUND_STREAM:\n";
 
         const QMap<int, QJsonArray> patterns = soundPatternsForExport();
         const QSet<int> patternsToExport = nonEmptyUsedPatternsForExport(patterns);
+        const int channelCount = sgmSoundEnabled() ? 7 : 4;
+
+        QVector<int> lastP(7, -9999);
+        QVector<int> lastV(7, -9999);
+        int lastAyEnv = -1;
+        int lastAyShape = -1;
+        int lastAyNoise = -1;
+        int lastAyMix = -1;
+
+        QVector<int> eventFrame;
+        QVector<int> eventMask;
+        QVector<QStringList> eventPayload;
+        int globalFrame = 0;
+
+        QVector<int> heldBasePeriod(7, 0);
+        QVector<int> heldVolume(7, -1);
+
+        auto appendRenderedFrame = [&](const QJsonArray& row, int subFrame, int frames) {
+            const QStringList vals = cvBasicRenderedFrameValues(
+                row, subFrame, frames, heldBasePeriod, heldVolume);
+
+            int mask = 0;
+            QStringList payload;
+            int vi = 0;
+
+            for (int ch = 0; ch < channelCount; ++ch) {
+                if (vi + 1 >= vals.size()) break;
+                bool okP = false, okV = false;
+                const int p = vals.at(vi++).toInt(&okP);
+                const int v = vals.at(vi++).toInt(&okV);
+                if (!okP || !okV) continue;
+
+                bool changed = false;
+                if (p == 1024) {
+                    // HOLD.  V=255 is a pure no-op; another V is volume-only.
+                    if (v != 255 && v != lastV[ch]) {
+                        changed = true;
+                        lastV[ch] = v;
+                    }
+                } else {
+                    changed = (p != lastP[ch] || v != lastV[ch]);
+
+                    // Re-writing the SN noise control register restarts its LFSR.
+                    // Preserve a new percussion trigger even when code/volume match.
+                    if (ch == 3 && subFrame == 0) {
+                        const int base = 1 + ch * 4;
+                        const QString note = row.at(base).toString("---").trimmed().toUpper();
+                        if (note != "---" && note != "===") changed = true;
+                    }
+
+                    lastP[ch] = p;
+                    lastV[ch] = v;
+                }
+
+                if (changed) {
+                    mask |= (1 << ch);
+                    payload << QString::number(p) << QString::number(v);
+                }
+            }
+
+            if (sgmSoundEnabled() && vi + 4 < vals.size()) {
+                bool ok0=false, ok1=false, ok2=false, ok3=false, ok4=false;
+                const int ayEnv   = vals.at(vi++).toInt(&ok0);
+                const int ayShape = vals.at(vi++).toInt(&ok1);
+                const int ayNoise = vals.at(vi++).toInt(&ok2);
+                const int ayMix   = vals.at(vi++).toInt(&ok3);
+                const int ayReset = vals.at(vi++).toInt(&ok4);
+                if (ok0 && ok1 && ok2 && ok3 && ok4) {
+                    const bool sharedChanged =
+                        ayEnv != lastAyEnv || ayShape != lastAyShape ||
+                        ayNoise != lastAyNoise || ayMix != lastAyMix || ayReset != 0;
+                    if (sharedChanged) {
+                        mask |= 0x80;
+                        payload << QString::number(ayEnv)
+                                << QString::number(ayShape)
+                                << QString::number(ayNoise)
+                                << QString::number(ayMix)
+                                << QString::number(ayReset);
+                        lastAyEnv = ayEnv;
+                        lastAyShape = ayShape;
+                        lastAyNoise = ayNoise;
+                        lastAyMix = ayMix;
+                    }
+                }
+            }
+
+            if (mask != 0 || eventFrame.isEmpty()) {
+                eventFrame.append(globalFrame);
+                eventMask.append(mask);
+                eventPayload.append(payload);
+            }
+            ++globalFrame;
+        };
 
         bool wroteAnyRow = false;
-
         if (m_orderTable) {
             for (int c = 0; c < m_orderTable->columnCount(); ++c) {
                 const int patternIndex = orderPatternAtColumn(c);
-
-                if (patternIndex == 255)
-                    break;
-
-                if (!patternsToExport.contains(patternIndex))
-                    continue;
+                if (patternIndex == 255) break;
+                if (!patternsToExport.contains(patternIndex)) continue;
 
                 const QJsonArray rows = patterns.value(patternIndex);
                 for (int r = 0; r < rows.size(); ++r) {
                     const QJsonArray row = rows.at(r).toArray();
-                    out += "DATA " + compactPatternRowValues(row).join(",") + "\n";
+                    const int frames = cvBasicWaitFramesForOneRow();
+                    for (int sf = 0; sf < frames; ++sf)
+                        appendRenderedFrame(row, sf, frames);
                     wroteAnyRow = true;
                 }
             }
@@ -12278,63 +16521,146 @@ setPlaybackUiPlaying(false);
             const QJsonArray rows = patterns.value(m_currentPatternIndex);
             for (int r = 0; r < rows.size(); ++r) {
                 const QJsonArray row = rows.at(r).toArray();
-                out += "DATA " + compactPatternRowValues(row).join(",") + "\n";
+                const int frames = cvBasicWaitFramesForOneRow();
+                for (int sf = 0; sf < frames; ++sf)
+                    appendRenderedFrame(row, sf, frames);
                 wroteAnyRow = true;
             }
         }
 
-        // 1025 = einde van de volledige stream.
-        out += "DATA 1025\n\n";
+        if (eventFrame.isEmpty()) {
+            out += "DATA BYTE 0\n\n";
+            return out;
+        }
+
+        for (int i = 0; i < eventFrame.size(); ++i) {
+            const int nextFrame = (i + 1 < eventFrame.size()) ? eventFrame.at(i + 1) : globalFrame;
+            int duration = qMax(1, nextFrame - eventFrame.at(i));
+            bool firstChunk = true;
+
+            while (duration > 0) {
+                const int chunk = qMin(duration, 255);
+                if (firstChunk) {
+                    // V8.37 packed byte stream.  Every record is DATA BYTE.
+                    // 16-bit tone/envelope periods are stored little-endian.
+                    QStringList bytes;
+                    const int mask = eventMask.at(i);
+                    bytes << QString::number(chunk) << QString::number(mask);
+
+                    const QStringList payload = eventPayload.at(i);
+                    int pi = 0;
+                    for (int ch = 0; ch < channelCount; ++ch) {
+                        if ((mask & (1 << ch)) == 0) continue;
+                        if (pi + 1 >= payload.size()) break;
+                        const int p = payload.at(pi++).toInt();
+                        const int v = payload.at(pi++).toInt();
+                        bytes << QString::number(p & 255)
+                              << QString::number((p >> 8) & 255)
+                              << QString::number(v & 255);
+                    }
+
+                    if ((mask & 0x80) != 0 && pi + 4 < payload.size()) {
+                        const int env = payload.at(pi++).toInt();
+                        const int shape = payload.at(pi++).toInt();
+                        const int noise = payload.at(pi++).toInt();
+                        const int mix = payload.at(pi++).toInt();
+                        const int reset = payload.at(pi++).toInt();
+                        bytes << QString::number(env & 255)
+                              << QString::number((env >> 8) & 255)
+                              << QString::number(shape & 255)
+                              << QString::number(noise & 255)
+                              << QString::number(mix & 255)
+                              << QString::number(reset & 255);
+                    }
+
+                    out += "DATA BYTE " + bytes.join(',') + "\n";
+                    firstChunk = false;
+                } else {
+                    out += QString("DATA BYTE %1,0\n").arg(chunk);
+                }
+                duration -= chunk;
+            }
+        }
+
+        out += "DATA BYTE 0\n\n";
         return out;
     }
 
     QString buildCvBasicTickPlayer() const
     {
-        const int frames = cvBasicWaitFramesForOneRow();
         QString out;
 
         out += "REM -------------------------------------\n";
-        out += "REM ADAMP non-blocking tick music player\n";
-        out += "REM Usage:\n";
-        out += "REM   GOSUB ADAMP_MUSIC_INIT\n";
-        out += "REM   MAIN_LOOP:\n";
-        out += "REM   GOSUB ADAMP_MUSIC_TICK\n";
-        out += "REM   REM your game code here\n";
-        out += "REM   WAIT\n";
-        out += "REM   GOTO MAIN_LOOP\n";
-        out += "REM ADAMP_MPLAY = 1 while playing. Stream loops automatically.\n";
-        out += "REM Do not use READ/RESTORE elsewhere while this player runs,\n";
-        out += "REM because CVBasic has one global DATA pointer.\n";
+        out += "REM ADAMP V8.37 PACKED BYTE tick music player\n";
+        out += "REM Packed DATA BYTE delta stream, 16-bit periods reconstructed from lo/hi bytes.\n";
+        out += "REM One call per video frame.\n";
         out += "REM -------------------------------------\n\n";
 
         out += "ADAMP_MUSIC_INIT:\n";
         out += "PLAY OFF\n";
-        out += QString("ADAMP_WC=%1\n").arg(frames);
-        out += "ADAMP_MWAIT=0\n";
+        out += "ADAMP_MRUN=0\n";
         out += "ADAMP_MPLAY=1\n";
+        out += "#ADAMP_LAST_P0=0:#ADAMP_LAST_P1=0:#ADAMP_LAST_P2=0:#ADAMP_LAST_P3=0\n";
+        if (sgmSoundEnabled())
+            out += "#ADAMP_LAST_P4=0:#ADAMP_LAST_P5=0:#ADAMP_LAST_P6=0\n";
+        if (sgmSoundEnabled()) {
+            out += "#ADAMP_LAST_AYENV=65535:ADAMP_LAST_AYSHAPE=255\n";
+            out += "ADAMP_LAST_AYNOISE=255:ADAMP_LAST_AYMIX=255\n";
+        }
         out += "RESTORE SOUND_STREAM\n";
         out += "RETURN\n\n";
 
         out += "ADAMP_MUSIC_TICK:\n";
         out += "IF ADAMP_MPLAY=0 THEN RETURN\n";
-        out += "IF ADAMP_MWAIT>0 THEN GOTO ADAMP_MUSIC_WAITING\n";
-        out += "READ #ADAMP_P0\n";
-        out += "IF #ADAMP_P0=1025 THEN GOTO ADAMP_MUSIC_FINISHED\n";
-        out += "READ ADAMP_V0,#ADAMP_P1,ADAMP_V1,#ADAMP_P2,ADAMP_V2,#ADAMP_P3,ADAMP_V3\n";
-        out += "IF #ADAMP_P0<>1024 THEN SOUND 0,#ADAMP_P0,ADAMP_V0\n";
-        out += "IF #ADAMP_P1<>1024 THEN SOUND 1,#ADAMP_P1,ADAMP_V1\n";
-        out += "IF #ADAMP_P2<>1024 THEN SOUND 2,#ADAMP_P2,ADAMP_V2\n";
-        out += "IF #ADAMP_P3<>1024 THEN SOUND 3,#ADAMP_P3,ADAMP_V3\n";
-        out += "ADAMP_MWAIT=ADAMP_WC-1\n";
-        out += "RETURN\n\n";
-
-        out += "ADAMP_MUSIC_WAITING:\n";
-        out += "ADAMP_MWAIT=ADAMP_MWAIT-1\n";
-        out += "RETURN\n\n";
-
-        out += "ADAMP_MUSIC_FINISHED:\n";
+        out += "IF ADAMP_MRUN>0 THEN\n";
+        out += "ADAMP_MRUN=ADAMP_MRUN-1\n";
+        out += "RETURN\n";
+        out += "END IF\n";
+        out += "READ BYTE ADAMP_MDUR\n";
+        out += "IF ADAMP_MDUR=0 THEN\n";
         out += "RESTORE SOUND_STREAM\n";
-        out += "ADAMP_MWAIT=0\n";
+        out += "ADAMP_MRUN=0\n";
+        out += "RETURN\n";
+        out += "END IF\n";
+        out += "READ BYTE ADAMP_MMASK\n";
+
+        auto addInlineChannel = [&out](int bit, int idx, int soundChannel) {
+            out += QString("IF (ADAMP_MMASK AND %1)<>0 THEN\n").arg(bit);
+            out += QString("READ BYTE ADAMP_P%1L,ADAMP_P%1H,ADAMP_V%1\n").arg(idx);
+            out += QString("#ADAMP_P%1=ADAMP_P%1L+256*ADAMP_P%1H\n").arg(idx);
+            out += QString("IF #ADAMP_P%1<>1024 THEN\n").arg(idx);
+            out += QString("SOUND %1,#ADAMP_P%2,ADAMP_V%2\n").arg(soundChannel).arg(idx);
+            out += QString("#ADAMP_LAST_P%1=#ADAMP_P%1\n").arg(idx);
+            out += "ELSE\n";
+            out += QString("IF ADAMP_V%1<>255 AND #ADAMP_LAST_P%1>0 THEN SOUND %2,#ADAMP_LAST_P%1,ADAMP_V%1\n")
+                       .arg(idx).arg(soundChannel);
+            out += "END IF\n";
+            out += "END IF\n";
+        };
+
+        addInlineChannel(1, 0, 0);
+        addInlineChannel(2, 1, 1);
+        addInlineChannel(4, 2, 2);
+        addInlineChannel(8, 3, 3);
+
+        if (sgmSoundEnabled()) {
+            addInlineChannel(16, 4, 5);
+            addInlineChannel(32, 5, 6);
+            addInlineChannel(64, 6, 7);
+
+            out += "IF (ADAMP_MMASK AND 128)<>0 THEN\n";
+            out += "READ BYTE ADAMP_AYENVL,ADAMP_AYENVH,ADAMP_AYSHAPE,ADAMP_AYNOISE,ADAMP_AYMIX,ADAMP_AYRESET\n";
+            out += "#ADAMP_AYENV=ADAMP_AYENVL+256*ADAMP_AYENVH\n";
+            out += "IF #ADAMP_AYENV<>#ADAMP_LAST_AYENV OR ADAMP_AYSHAPE<>ADAMP_LAST_AYSHAPE OR ADAMP_AYRESET<>0 THEN SOUND 8,#ADAMP_AYENV,ADAMP_AYSHAPE\n";
+            out += "IF ADAMP_AYNOISE<>ADAMP_LAST_AYNOISE OR ADAMP_AYMIX<>ADAMP_LAST_AYMIX THEN SOUND 9,ADAMP_AYNOISE,ADAMP_AYMIX\n";
+            out += "#ADAMP_LAST_AYENV=#ADAMP_AYENV\n";
+            out += "ADAMP_LAST_AYSHAPE=ADAMP_AYSHAPE\n";
+            out += "ADAMP_LAST_AYNOISE=ADAMP_AYNOISE\n";
+            out += "ADAMP_LAST_AYMIX=ADAMP_AYMIX\n";
+            out += "END IF\n";
+        }
+
+        out += "ADAMP_MRUN=ADAMP_MDUR-1\n";
         out += "RETURN\n\n";
 
         return out;
@@ -12424,6 +16750,13 @@ setPlaybackUiPlaying(false);
         // bij de orderlijst. We genereren de order daarom als directe GOSUB-lijst.
         out += "ADAMP_CVPLAYER_PLAY:\n";
         out += "PLAY OFF\n";
+        out += "#ADAMP_LAST_P0=0:#ADAMP_LAST_P1=0:#ADAMP_LAST_P2=0:#ADAMP_LAST_P3=0\n";
+        if (sgmSoundEnabled())
+            out += "#ADAMP_LAST_P4=0:#ADAMP_LAST_P5=0:#ADAMP_LAST_P6=0\n";
+        if (sgmSoundEnabled()) {
+            out += "#ADAMP_LAST_AYENV=65535:ADAMP_LAST_AYSHAPE=255\n";
+            out += "ADAMP_LAST_AYNOISE=255:ADAMP_LAST_AYMIX=255\n";
+        }
         out += QString("ADAMP_WC=%1\n").arg(frames);
 
         for (const QString& call : std::as_const(sequenceCalls))
@@ -12434,6 +16767,12 @@ setPlaybackUiPlaying(false);
         out += "SOUND 1,0,0\n";
         out += "SOUND 2,0,0\n";
         out += "SOUND 3,0,0\n";
+        if (sgmSoundEnabled()) {
+            out += "SOUND 5,0,0\n";
+            out += "SOUND 6,0,0\n";
+            out += "SOUND 7,0,0\n";
+            out += "SOUND 9,0,$BF\n";
+        }
         out += "RETURN\n\n";
 
         for (int patternIndex : patternList) {
@@ -12449,11 +16788,30 @@ setPlaybackUiPlaying(false);
         out += "ADAMP_PAT_LOOP:\n";
         out += "READ #ADAMP_P0\n";
         out += "IF #ADAMP_P0=1025 THEN RETURN\n";
-        out += "READ ADAMP_V0,#ADAMP_P1,ADAMP_V1,#ADAMP_P2,ADAMP_V2,#ADAMP_P3,ADAMP_V3\n";
-        out += "IF #ADAMP_P0<>1024 THEN SOUND 0,#ADAMP_P0,ADAMP_V0\n";
-        out += "IF #ADAMP_P1<>1024 THEN SOUND 1,#ADAMP_P1,ADAMP_V1\n";
-        out += "IF #ADAMP_P2<>1024 THEN SOUND 2,#ADAMP_P2,ADAMP_V2\n";
-        out += "IF #ADAMP_P3<>1024 THEN SOUND 3,#ADAMP_P3,ADAMP_V3\n";
+        if (sgmSoundEnabled())
+            out += "READ ADAMP_V0,#ADAMP_P1,ADAMP_V1,#ADAMP_P2,ADAMP_V2,#ADAMP_P3,ADAMP_V3,#ADAMP_P4,ADAMP_V4,#ADAMP_P5,ADAMP_V5,#ADAMP_P6,ADAMP_V6,#ADAMP_AYENV,ADAMP_AYSHAPE,ADAMP_AYNOISE,ADAMP_AYMIX,ADAMP_AYRESET\n";
+        else
+            out += "READ ADAMP_V0,#ADAMP_P1,ADAMP_V1,#ADAMP_P2,ADAMP_V2,#ADAMP_P3,ADAMP_V3\n";
+        out += "IF #ADAMP_P0<>1024 THEN SOUND 0,#ADAMP_P0,ADAMP_V0:#ADAMP_LAST_P0=#ADAMP_P0\n";
+        out += "IF #ADAMP_P0=1024 AND ADAMP_V0<>255 AND #ADAMP_LAST_P0>0 THEN SOUND 0,#ADAMP_LAST_P0,ADAMP_V0\n";
+        out += "IF #ADAMP_P1<>1024 THEN SOUND 1,#ADAMP_P1,ADAMP_V1:#ADAMP_LAST_P1=#ADAMP_P1\n";
+        out += "IF #ADAMP_P1=1024 AND ADAMP_V1<>255 AND #ADAMP_LAST_P1>0 THEN SOUND 1,#ADAMP_LAST_P1,ADAMP_V1\n";
+        out += "IF #ADAMP_P2<>1024 THEN SOUND 2,#ADAMP_P2,ADAMP_V2:#ADAMP_LAST_P2=#ADAMP_P2\n";
+        out += "IF #ADAMP_P2=1024 AND ADAMP_V2<>255 AND #ADAMP_LAST_P2>0 THEN SOUND 2,#ADAMP_LAST_P2,ADAMP_V2\n";
+        out += "IF #ADAMP_P3<>1024 THEN SOUND 3,#ADAMP_P3,ADAMP_V3:#ADAMP_LAST_P3=#ADAMP_P3\n";
+        out += "IF #ADAMP_P3=1024 AND ADAMP_V3<>255 AND #ADAMP_LAST_P3>0 THEN SOUND 3,#ADAMP_LAST_P3,ADAMP_V3\n";
+        if (sgmSoundEnabled()) {
+            out += "IF #ADAMP_P4<>1024 THEN SOUND 5,#ADAMP_P4,ADAMP_V4:#ADAMP_LAST_P4=#ADAMP_P4\n";
+            out += "IF #ADAMP_P4=1024 AND ADAMP_V4<>255 AND #ADAMP_LAST_P4>0 THEN SOUND 5,#ADAMP_LAST_P4,ADAMP_V4\n";
+            out += "IF #ADAMP_P5<>1024 THEN SOUND 6,#ADAMP_P5,ADAMP_V5:#ADAMP_LAST_P5=#ADAMP_P5\n";
+            out += "IF #ADAMP_P5=1024 AND ADAMP_V5<>255 AND #ADAMP_LAST_P5>0 THEN SOUND 6,#ADAMP_LAST_P5,ADAMP_V5\n";
+            out += "IF #ADAMP_P6<>1024 THEN SOUND 7,#ADAMP_P6,ADAMP_V6:#ADAMP_LAST_P6=#ADAMP_P6\n";
+            out += "IF #ADAMP_P6=1024 AND ADAMP_V6<>255 AND #ADAMP_LAST_P6>0 THEN SOUND 7,#ADAMP_LAST_P6,ADAMP_V6\n";
+            out += "IF #ADAMP_AYENV<>#ADAMP_LAST_AYENV OR ADAMP_AYSHAPE<>ADAMP_LAST_AYSHAPE OR ADAMP_AYRESET<>0 THEN SOUND 8,#ADAMP_AYENV,ADAMP_AYSHAPE\n";
+            out += "IF ADAMP_AYNOISE<>ADAMP_LAST_AYNOISE OR ADAMP_AYMIX<>ADAMP_LAST_AYMIX THEN SOUND 9,ADAMP_AYNOISE,ADAMP_AYMIX\n";
+            out += "#ADAMP_LAST_AYENV=#ADAMP_AYENV:ADAMP_LAST_AYSHAPE=ADAMP_AYSHAPE\n";
+            out += "ADAMP_LAST_AYNOISE=ADAMP_AYNOISE:ADAMP_LAST_AYMIX=ADAMP_AYMIX\n";
+        }
         out += "GOSUB ADAMP_WAIT_ROW\n";
         out += "GOTO ADAMP_PAT_LOOP\n\n";
 
@@ -12468,7 +16826,76 @@ setPlaybackUiPlaying(false);
 
     QString soundChipDisplayName() const
     {
-        return QStringLiteral("SN76489 / TMS9919 PSG");
+        return sgmSoundEnabled() ? QStringLiteral("SN76489 + SGM AY-3-8910") : QStringLiteral("SN76489 / TMS9919 PSG");
+    }
+
+    struct CvBasicSongSizeInfo
+    {
+        qint64 dataBytes = 0;
+        int banks16k = 0;
+        qint64 freeInLastBank = 0;
+    };
+
+    CvBasicSongSizeInfo calculateCvBasicSongDataSize(const QString& source) const
+    {
+        CvBasicSongSizeInfo info;
+        const QStringList lines = source.split('\n');
+
+        for (QString line : lines) {
+            line = line.trimmed();
+            if (line.isEmpty())
+                continue;
+
+            // Strip inline comments if ever added to generated DATA lines.
+            const int apostrophe = line.indexOf('\'');
+            if (apostrophe >= 0)
+                line = line.left(apostrophe).trimmed();
+
+            int bytesPerValue = 0;
+            QString payload;
+
+            if (line.startsWith(QStringLiteral("DATA BYTE "), Qt::CaseInsensitive)) {
+                bytesPerValue = 1;
+                payload = line.mid(10).trimmed();
+            } else if (line.startsWith(QStringLiteral("DATA "), Qt::CaseInsensitive)) {
+                // CVBasic DATA stores 16-bit values.
+                bytesPerValue = 2;
+                payload = line.mid(5).trimmed();
+            } else {
+                continue;
+            }
+
+            if (payload.isEmpty())
+                continue;
+
+            // Generated sound DATA is numeric/comma separated. Count each item.
+            const QStringList values = payload.split(',', Qt::SkipEmptyParts);
+            info.dataBytes += qint64(values.size()) * bytesPerValue;
+        }
+
+        static constexpr qint64 kBankSize = 16 * 1024;
+        if (info.dataBytes > 0) {
+            info.banks16k = int((info.dataBytes + kBankSize - 1) / kBankSize);
+            info.freeInLastBank = qint64(info.banks16k) * kBankSize - info.dataBytes;
+        }
+
+        return info;
+    }
+
+    QString cvBasicSongSizeText(const QString& source) const
+    {
+        const CvBasicSongSizeInfo info = calculateCvBasicSongDataSize(source);
+        const double kib = double(info.dataBytes) / 1024.0;
+
+        if (info.dataBytes <= 0)
+            return tr("Song DATA: 0 bytes | 0 banks");
+
+        return tr("Song DATA: %1 bytes (%2 KB)  |  %3 x 16 KB bank%4  |  %5 bytes free in last bank")
+            .arg(info.dataBytes)
+            .arg(QString::number(kib, 'f', 2))
+            .arg(info.banks16k)
+            .arg(info.banks16k == 1 ? QString() : QStringLiteral("s"))
+            .arg(info.freeInLastBank);
     }
 
     QString buildCompactCvBasicSongBlock(bool includePlayer) const
@@ -12486,9 +16913,11 @@ setPlaybackUiPlaying(false);
         out += QString("REM SPEED  : %1\n").arg(speed);
         out += QString("REM CHIP   : %1\n").arg(soundChipDisplayName());
         out += QString("REM ROWWAIT: %1 FRAME(S)\n").arg(cvBasicWaitFramesForOneRow());
-        out += includePlayer ? "REM FORMAT : ADAMP TICK PLAYER STREAM DATA\n" : "REM FORMAT : COMPACT ADAMP SOUND DATA\n";
-        out += "REM ROW    : CH1 P,V, CH2 P,V, CH3 P,V, NOISE C,V\n";
-        out += "REM HOLD   : 1024,1024    RELEASE: 0,0    END: 1025    ORDER END: 255\n";
+        out += includePlayer ? "REM FORMAT : ADAMP TICK PLAYER / FRAME-RENDERED PSG STREAM\n" : "REM FORMAT : COMPACT ADAMP SOUND DATA\n";
+        out += sgmSoundEnabled()
+            ? "REM ROW    : CH1 P,V, CH2 P,V, CH3 P,V, NOISE C,V, AY-A P,V, AY-B P,V, AY-C P,V, AYENV,SHAPE,AYNOISE,MIX,RESET\n"
+            : "REM ROW    : CH1 P,V, CH2 P,V, CH3 P,V, NOISE C,V\n";
+        out += "REM HOLD   : 1024,255     RELEASE: 0,0    END: 1025    ORDER END: 255\n";
         out += "REM =====================================\n\n";
 
         if (includePlayer) {
@@ -12706,8 +17135,14 @@ setPlaybackUiPlaying(false);
 
     void autoRebuildSoundOutput()
     {
+        // Rebuilding CVBasic output can touch JSON/tables and is not time-critical.
+        // Never do this while the preview player is running.
+        if (m_isPatternPlaying)
+            return;
+
         if (m_autoUpdateCheck && m_autoUpdateCheck->isChecked())
             rebuildOutput();
+    
     }
 
     void resizePatternRows(int rows)
@@ -12729,7 +17164,7 @@ setPlaybackUiPlaying(false);
         m_patternTable->setRowCount(rows);
 
         for (int r = oldRows; r < rows; ++r) {
-            setPatternCell(r, 0, QString("%1").arg(r, 2, 16, QLatin1Char('0')).toUpper());
+            setPatternCell(r, 0, QString("%1").arg(r, 2, 10, QLatin1Char('0')));
             clearPatternRow(r);
         }
 
@@ -12818,6 +17253,7 @@ setPlaybackUiPlaying(false);
         int channel = 0;
         int note = 60;
         int velocity = 0;
+        int program = 0;        // General MIDI program active at NOTE ON
         int startTick = 0;
         int endTick = 0;
     };
@@ -12935,8 +17371,10 @@ setPlaybackUiPlaying(false);
             {
                 int startTick = 0;
                 int velocity = 0;
+                int program = 0;
             };
 
+            int currentProgram[16] = {0};
             QMap<int, QVector<ActiveNote>> activeNotes;
 
             while (pos < trackEnd) {
@@ -13004,7 +17442,7 @@ setPlaybackUiPlaying(false);
                     const int key = channel * 128 + note;
 
                     if (command == 0x90 && velocity > 0) {
-                        activeNotes[key].append({ tick, velocity });
+                        activeNotes[key].append({ tick, velocity, currentProgram[channel] });
                     } else {
                         QVector<ActiveNote>& stack = activeNotes[key];
 
@@ -13016,6 +17454,7 @@ setPlaybackUiPlaying(false);
                                 ev.channel = channel;
                                 ev.note = note;
                                 ev.velocity = active.velocity;
+                                ev.program = active.program;
                                 ev.startTick = active.startTick;
                                 ev.endTick = tick;
                                 notes.append(ev);
@@ -13025,7 +17464,9 @@ setPlaybackUiPlaying(false);
                 } else if (command == 0xA0 || command == 0xB0 || command == 0xE0) {
                     needByte();
                     needByte();
-                } else if (command == 0xC0 || command == 0xD0) {
+                } else if (command == 0xC0) {
+                    currentProgram[channel] = qBound(0, needByte(), 127);
+                } else if (command == 0xD0) {
                     needByte();
                 } else {
                     // Unknown system/common event. Stop safely for this track.
@@ -13048,6 +17489,821 @@ setPlaybackUiPlaying(false);
         });
 
         return true;
+    }
+
+    int snInstrumentForMidiProgram(int program) const
+    {
+        program = qBound(0, program, 127);
+        if (program <= 7)   return 0x01; // Piano
+        if (program <= 15)  return 0x02; // Chromatic / electric piano
+        if (program <= 23)  return 0x03; // Organ
+        if (program <= 31)  return 0x04; // Guitar
+        if (program <= 39)  return 0x05; // Bass
+        if (program <= 47)  return 0x0D; // Plucked strings / harp-ish
+        if (program <= 55)  return 0x06; // Strings / ensemble
+        if (program <= 63)  return 0x07; // Brass
+        if (program <= 71)  return 0x08; // Reed
+        if (program <= 79)  return 0x09; // Pipe / flute
+        if (program <= 87)  return 0x0A; // Synth lead
+        if (program <= 95)  return 0x0B; // Synth pad
+        if (program <= 103) return 0x1E; // Ethnic / crystal colors
+        if (program <= 111) return 0x0C; // Percussive / bell
+        if (program <= 119) return 0x1D; // Sound effects / pad
+        return 0x1F;                     // Effects / drone
+    }
+
+    int ayInstrumentForMidiProgram(int program) const
+    {
+        program = qBound(0, program, 127);
+        if (program <= 7)   return 0x0E; // Piano -> piano pluck
+        if (program <= 15)  return 0x10; // Chromatic / electric piano
+        if (program <= 23)  return 0x05; // Organ
+        if (program <= 31)  return 0x0F; // Guitar -> harp/pluck
+        if (program <= 39)  return 0x02; // Bass
+        if (program <= 47)  return 0x0F; // Harp / plucked strings
+        if (program <= 55)  return 0x08; // Strings
+        if (program <= 63)  return 0x07; // Brass
+        if (program <= 71)  return 0x0B; // Reed
+        if (program <= 79)  return 0x0B; // Pipe / flute
+        if (program <= 87)  return 0x0A; // Synth lead
+        if (program <= 95)  return 0x09; // Synth pad / choir
+        if (program <= 103) return 0x0C; // Ethnic / crystal
+        if (program <= 111) return 0x12; // Percussive / bell
+        if (program <= 119) return 0x15; // Sweep / sound effects
+        return 0x13;                     // Drone / atmosphere
+    }
+
+    int snDrumInstrumentForMidiNote(int note) const
+    {
+        if (note == 35 || note == 36) return 0x10;       // Kick
+        if (note == 38 || note == 40) return 0x11;       // Snare
+        if (note == 42 || note == 44) return 0x12;       // Closed hat
+        if (note == 46)               return 0x13;       // Open hat
+        if (note >= 41 && note <= 50) return 0x14;       // Toms
+        if (note >= 49 && note <= 57) return 0x15;       // Cymbals
+        return 0x16;                                      // Other percussion
+    }
+
+    int snNoiseCodeForMidiNote(int note) const
+    {
+        if (note == 35 || note == 36) return 3;           // low periodic-ish kick body
+        if (note == 38 || note == 40) return 6;           // broad snare noise
+        if (note == 42 || note == 44) return 7;           // bright closed hat
+        if (note == 46)               return 6;           // open hat
+        if (note >= 41 && note <= 50) return 4;           // tom/percussion
+        if (note >= 49 && note <= 57) return 7;           // cymbal
+        return 5;
+    }
+
+
+    struct ModSampleInfo
+    {
+        QString name;
+        int length = 0;
+        int finetune = 0;
+        int volume = 64;
+        int repeatOffset = 0;
+        int repeatLength = 0;
+        QByteArray pcm;
+    };
+
+    struct ModCell
+    {
+        int sample = 0;
+        int period = 0;
+        int effect = 0;
+        int param = 0;
+    };
+
+    struct ModModule
+    {
+        QString title;
+        QVector<ModSampleInfo> samples;
+        QVector<QVector<ModCell>> patterns; // pattern -> 64 rows * 4 channels
+        QVector<int> order;
+        int songLength = 0;
+        int restart = 0;
+    };
+
+    static QString modAscii(const QByteArray& data)
+    {
+        QByteArray clean = data;
+        const int zero = clean.indexOf('\0');
+        if (zero >= 0)
+            clean.truncate(zero);
+        return QString::fromLatin1(clean).trimmed();
+    }
+
+    static bool modSignatureIs4Channel(const QByteArray& sig)
+    {
+        return sig == "M.K." || sig == "M!K!" || sig == "FLT4" ||
+               sig == "4CHN" || sig == "TDZ4";
+    }
+
+    bool parseModFile(const QByteArray& data, ModModule& mod, QString& errorText) const
+    {
+        mod = ModModule();
+
+        if (data.size() < 1084) {
+            errorText = tr("File is too small to be a 31-instrument ProTracker MOD.");
+            return false;
+        }
+
+        const QByteArray sig = data.mid(1080, 4);
+        if (!modSignatureIs4Channel(sig)) {
+            errorText = tr("Only classic 4-channel ProTracker MOD files are supported in this first importer (M.K., M!K!, FLT4, 4CHN, TDZ4).");
+            return false;
+        }
+
+        mod.title = modAscii(data.mid(0, 20));
+        mod.samples.resize(31);
+
+        int sampleDataBytes = 0;
+        for (int i = 0; i < 31; ++i) {
+            const int off = 20 + i * 30;
+            ModSampleInfo smp;
+            smp.name = modAscii(data.mid(off, 22));
+            smp.length = int(midiReadU16(data, off + 22)) * 2;
+            int ft = static_cast<unsigned char>(data.at(off + 24)) & 0x0F;
+            if (ft >= 8)
+                ft -= 16;
+            smp.finetune = ft;
+            smp.volume = qBound(0, int(static_cast<unsigned char>(data.at(off + 25))), 64);
+            smp.repeatOffset = int(midiReadU16(data, off + 26)) * 2;
+            smp.repeatLength = int(midiReadU16(data, off + 28)) * 2;
+            mod.samples[i] = smp;
+            sampleDataBytes += smp.length;
+        }
+
+        mod.songLength = qBound(1, int(static_cast<unsigned char>(data.at(950))), 128);
+        mod.restart = int(static_cast<unsigned char>(data.at(951)));
+
+        int maxPattern = 0;
+        for (int i = 0; i < mod.songLength; ++i) {
+            const int pat = int(static_cast<unsigned char>(data.at(952 + i)));
+            mod.order.append(pat);
+            maxPattern = qMax(maxPattern, pat);
+        }
+
+        const int patternCount = maxPattern + 1;
+        const int patternBytes = patternCount * 64 * 4 * 4;
+        const int patternStart = 1084;
+        const int sampleStart = patternStart + patternBytes;
+
+        if (sampleStart > data.size()) {
+            errorText = tr("MOD pattern data is truncated.");
+            return false;
+        }
+
+        mod.patterns.resize(patternCount);
+        int pos = patternStart;
+        for (int ptn = 0; ptn < patternCount; ++ptn) {
+            QVector<ModCell> cells;
+            cells.resize(64 * 4);
+            for (int row = 0; row < 64; ++row) {
+                for (int ch = 0; ch < 4; ++ch) {
+                    if (pos + 3 >= data.size()) {
+                        errorText = tr("MOD pattern data ended unexpectedly.");
+                        return false;
+                    }
+                    const int b0 = static_cast<unsigned char>(data.at(pos + 0));
+                    const int b1 = static_cast<unsigned char>(data.at(pos + 1));
+                    const int b2 = static_cast<unsigned char>(data.at(pos + 2));
+                    const int b3 = static_cast<unsigned char>(data.at(pos + 3));
+                    pos += 4;
+
+                    ModCell c;
+                    c.sample = (b0 & 0xF0) | ((b2 >> 4) & 0x0F);
+                    c.period = ((b0 & 0x0F) << 8) | b1;
+                    c.effect = b2 & 0x0F;
+                    c.param = b3;
+                    cells[row * 4 + ch] = c;
+                }
+            }
+            mod.patterns[ptn] = cells;
+        }
+
+        pos = sampleStart;
+        for (int i = 0; i < mod.samples.size(); ++i) {
+            const int len = qMin(mod.samples[i].length, qMax(0, data.size() - pos));
+            if (len > 0)
+                mod.samples[i].pcm = data.mid(pos, len);
+            pos += mod.samples[i].length;
+            if (pos > data.size())
+                pos = data.size();
+        }
+
+        return true;
+    }
+
+    int modPeriodToMidi(int period, int finetune = 0) const
+    {
+        if (period <= 0)
+            return -1;
+
+        // ProTracker's conventional period 428 is displayed as C-3.
+        // ADAMP uses scientific MIDI octave names, so map it to C-4 (MIDI 60).
+        const double semis = 12.0 * std::log2(428.0 / double(period));
+        const double fineSemis = double(finetune) / 8.0;
+        return qBound(12, qRound(60.0 + semis + fineSemis), 108);
+    }
+
+    QString modSampleClass(const ModSampleInfo& smp) const
+    {
+        const QString n = smp.name.toLower();
+
+        auto hasAny = [&n](std::initializer_list<const char*> words) {
+            for (const char* w : words) {
+                if (n.contains(QLatin1String(w)))
+                    return true;
+            }
+            return false;
+        };
+
+        if (hasAny({"kick","bassdr","bd","bass drum"})) return "kick";
+        if (hasAny({"snare","sd","snr"})) return "snare";
+        if (hasAny({"hihat","hi-hat","hat","hh","cym","ride","crash"})) return "hat";
+        if (hasAny({"tom","perc","drum","conga","bongo"})) return "perc";
+        if (hasAny({"bass","sub"})) return "bass";
+        if (hasAny({"piano","epiano","keys"})) return "piano";
+        if (hasAny({"guitar","gtr","pluck"})) return "guitar";
+        if (hasAny({"string","str","choir","pad"})) return "strings";
+        if (hasAny({"brass","horn","trump","sax"})) return "brass";
+        if (hasAny({"flute","pipe","reed","clar"})) return "flute";
+        if (hasAny({"bell","chime","celesta"})) return "bell";
+        if (hasAny({"lead","synth","saw","square"})) return "lead";
+
+        if (smp.pcm.isEmpty())
+            return "lead";
+
+        double sumSq = 0.0;
+        double diffSq = 0.0;
+        int crossings = 0;
+        int prev = 0;
+        bool havePrev = false;
+
+        for (char raw : smp.pcm) {
+            const int v = static_cast<signed char>(raw);
+            sumSq += double(v * v);
+            if (havePrev) {
+                const int d = v - prev;
+                diffSq += double(d * d);
+                if ((v >= 0) != (prev >= 0))
+                    ++crossings;
+            }
+            prev = v;
+            havePrev = true;
+        }
+
+        const double count = qMax(1, smp.pcm.size());
+        const double rms = std::sqrt(sumSq / count);
+        const double roughness = std::sqrt(diffSq / qMax(1.0, count - 1.0)) / qMax(1.0, rms);
+
+        // Do NOT infer percussion merely because a sample is short/noisy.
+        // Many classic MOD bass/pluck/lead samples are short one-shots too;
+        // classifying those as drums collapses several MOD voices onto the
+        // single SN76489 noise channel.  Percussion is therefore detected
+        // only from explicit sample names above.  PCM analysis is used only
+        // to choose a *tonal* PSG patch when the name is ambiguous.
+        if (smp.repeatLength > 8 && roughness < 0.45)
+            return "strings";
+        if (roughness < 0.30)
+            return "flute";
+        if (roughness > 0.85)
+            return "lead";
+        if (smp.repeatLength > 8 && smp.length < 9000)
+            return "bass";
+        return "guitar";
+    }
+
+    int modSnInstrument(const QString& cls) const
+    {
+        if (cls == "piano") return 0x01;
+        if (cls == "guitar") return 0x04;
+        if (cls == "bass") return 0x05;
+        if (cls == "strings") return 0x06;
+        if (cls == "brass") return 0x07;
+        if (cls == "flute") return 0x09;
+        if (cls == "bell") return 0x0C;
+        if (cls == "lead") return 0x0A;   // Synth Lead: explicit MOD lead/arp mapping
+        if (cls == "kick") return 0x10;
+        if (cls == "snare") return 0x11;
+        if (cls == "hat") return 0x12;
+        if (cls == "perc") return 0x14;
+        return 0x0A;
+    }
+
+    int modAyInstrument(const QString& cls) const
+    {
+        if (cls == "piano") return 0x0E;
+        if (cls == "guitar") return 0x0F;
+        if (cls == "bass") return 0x02;
+        if (cls == "strings") return 0x08;
+        if (cls == "brass") return 0x07;
+        if (cls == "flute") return 0x0B;
+        if (cls == "bell") return 0x12;
+        return 0x0A;
+    }
+
+    int modNoiseCode(const QString& cls) const
+    {
+        if (cls == "kick") return 3;
+        if (cls == "snare") return 6;
+        if (cls == "hat") return 7;
+        return 5;
+    }
+
+    QString modArpeggioFx(int param) const
+    {
+        if (param == 0)
+            return "---";
+        return QString("A%1").arg(param, 2, 16, QLatin1Char('0')).toUpper();
+    }
+
+    void openModReferenceFile()
+    {
+        const QString filePath = QFileDialog::getOpenFileName(
+            this,
+            tr("Open ProTracker MOD"),
+            soundSongDefaultDir(),
+            tr("ProTracker MOD Files (*.mod);;All Files (*.*)")
+        );
+        if (filePath.isEmpty()) return;
+
+        QFile f(filePath);
+        if (!f.open(QIODevice::ReadOnly)) {
+            QMessageBox::warning(this, tr("Open MOD"), f.errorString());
+            return;
+        }
+        const QByteArray data = f.readAll();
+        f.close();
+
+        if (!m_modReferencePlayer)
+            m_modReferencePlayer = new ModReferencePlayer(this);
+        QString error;
+        if (!m_modReferencePlayer->load(data, &error)) {
+            QMessageBox::warning(this, tr("Open MOD"), error);
+            return;
+        }
+
+        m_loadedModPath = filePath;
+        m_loadedModData = data;
+        m_loadedModConverted = false;
+        if (m_noteInfoLabel)
+            m_noteInfoLabel->setText(QString("Original MOD loaded: %1 — use Play Original MOD or Convert to SN+AY")
+                                         .arg(QFileInfo(filePath).fileName()));
+    }
+
+    void playOriginalMod()
+    {
+        if (!m_modReferencePlayer || !m_modReferencePlayer->isLoaded()) {
+            QMessageBox::information(this, tr("Original MOD"), tr("Open a MOD first."));
+            return;
+        }
+        // Never mix the reference PCM player with the PSG preview.
+        if (onStreamStopRequested) onStreamStopRequested();
+        stopPatternPlayback();
+        m_modReferencePlayer->play(true);
+        if (m_noteInfoLabel)
+            m_noteInfoLabel->setText(QString("Playing ORIGINAL MOD: %1 (PCM reference, no SN/AY conversion)")
+                                         .arg(m_modReferencePlayer->title()));
+    }
+
+    void stopOriginalMod()
+    {
+        if (m_modReferencePlayer) m_modReferencePlayer->stop();
+        if (m_noteInfoLabel && !m_loadedModPath.isEmpty())
+            m_noteInfoLabel->setText(QString("Original MOD stopped: %1").arg(QFileInfo(m_loadedModPath).fileName()));
+    }
+
+    void convertLoadedModFile()
+    {
+        if (m_loadedModPath.isEmpty()) {
+            QMessageBox::information(this, tr("Convert MOD"), tr("Open a MOD first."));
+            return;
+        }
+        stopOriginalMod();
+        convertModFilePath(m_loadedModPath);
+    }
+
+    void convertModFilePath(const QString& filePath)
+    {
+        if (filePath.isEmpty())
+            return;
+
+        // V8.72: show an unmistakable busy cursor while the MOD -> SN+AY
+        // conversion is running. The local guard guarantees restoration on
+        // every exit path, including parse/read errors.
+        struct BusyCursorGuard {
+            BusyCursorGuard()
+            {
+                QApplication::setOverrideCursor(Qt::WaitCursor);
+                QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+            }
+            ~BusyCursorGuard()
+            {
+                QApplication::restoreOverrideCursor();
+            }
+        } busyCursorGuard;
+
+        QFile f(filePath);
+        if (!f.open(QIODevice::ReadOnly)) {
+            QMessageBox::warning(this, tr("Import MOD"), f.errorString());
+            return;
+        }
+        const QByteArray data = f.readAll();
+        f.close();
+
+        ModModule mod;
+        QString errorText;
+        if (!parseModFile(data, mod, errorText)) {
+            QMessageBox::warning(this, tr("Import MOD"), errorText);
+            return;
+        }
+
+        pushSoundUndoState();
+        hardResetLoadedSongState();
+
+        // A classic MOD has four simultaneous sample channels.  For a useful
+        // conversion we enable the SGM path automatically so the fourth tonal
+        // voice and the extra AY reinforcement channels are available.
+        setSgmSoundEnabled(true);
+
+        // MOD effects are stateful across pattern boundaries.  Build one ADAMP
+        // pattern per ORDER entry so volume/pitch/sample carry remains exact.
+        const int rowsPerPattern = 64;
+        const int patternCount = qMin(256, mod.order.size());
+        m_soundPatterns.clear();
+
+        struct ChannelState {
+            int sample = 0;
+            int volume = 64;
+            int period = 0;
+            int outputVoice = -1;
+        };
+        ChannelState state[4];
+
+        int detectedSpeed = 6;
+        int detectedTempo = 125;
+        bool tempoLocked = false;
+        int importedNotes = 0;
+        int percussionHits = 0;
+
+        auto emptyRow = [this](int row) {
+            QStringList v = midiEmptyPatternRow(row);
+            while (v.size() < 29)
+                v << "---" << "--" << "---" << "---";
+            return v;
+        };
+
+        // Analyse the four MOD channels before routing.  In many chip-MODs the
+        // musical lead is NOT channel 1: it is often a held note that is animated
+        // for many rows with ProTracker 0xy arpeggio commands.  Route that voice
+        // to SN CH1 so it remains prominent, then place the remaining three
+        // source channels on SN CH2, SN CH3 and AY A.
+        int channelNoteRows[4] = {0, 0, 0, 0};
+        int channelArpRows[4] = {0, 0, 0, 0};
+        int channelMinMidi[4] = {999, 999, 999, 999};
+        int channelMaxMidi[4] = {-1, -1, -1, -1};
+        QSet<int> channelUniqueNotes[4];
+
+        for (int orderPos = 0; orderPos < patternCount; ++orderPos) {
+            const int srcPattern = mod.order.value(orderPos, 0);
+            if (srcPattern < 0 || srcPattern >= mod.patterns.size())
+                continue;
+            const QVector<ModCell>& scanCells = mod.patterns[srcPattern];
+            for (int row = 0; row < 64; ++row) {
+                for (int mch = 0; mch < 4; ++mch) {
+                    const ModCell c = scanCells.value(row * 4 + mch);
+                    if (c.period > 0) {
+                        ++channelNoteRows[mch];
+                        const int midi = modPeriodToMidi(c.period);
+                        if (midi >= 0) {
+                            channelUniqueNotes[mch].insert(midi);
+                            channelMinMidi[mch] = qMin(channelMinMidi[mch], midi);
+                            channelMaxMidi[mch] = qMax(channelMaxMidi[mch], midi);
+                        }
+                    }
+                    if (c.effect == 0x00 && c.param != 0)
+                        ++channelArpRows[mch];
+                }
+            }
+        }
+
+        // Lead detection based on melodic information, not raw arpeggio count.
+        // A channel with hundreds of 0xy rows but only a few base pitches is
+        // normally an arpeggiated backing/chord voice (as in skogen11 MOD CH4).
+        int leadChannel = 0;
+        int bestLeadScore = -1000000;
+        for (int mch = 0; mch < 4; ++mch) {
+            const int uniqueCount = channelUniqueNotes[mch].size();
+            const int range = (channelMaxMidi[mch] >= channelMinMidi[mch])
+                ? (channelMaxMidi[mch] - channelMinMidi[mch]) : 0;
+            const double arpRatio = channelNoteRows[mch] > 0
+                ? double(channelArpRows[mch]) / double(channelNoteRows[mch]) : double(channelArpRows[mch]);
+
+            int score = uniqueCount * 24 + range * 5;
+
+            // Extremely dense note streams tend to be rhythmic/pulse backing.
+            if (channelNoteRows[mch] > patternCount * 48)
+                score -= 80;
+
+            // Arpeggio-only chord voices are backing, not melody.
+            if (uniqueCount <= 4 && channelArpRows[mch] > channelNoteRows[mch] * 2)
+                score -= 500;
+            else
+                score -= qRound(qMin(8.0, arpRatio) * 10.0);
+
+            if (score > bestLeadScore) {
+                bestLeadScore = score;
+                leadChannel = mch;
+            }
+        }
+
+        int tonalRouteSgm[4] = {-1, -1, -1, -1};
+        tonalRouteSgm[leadChannel] = 0;
+        const int remainingRoutes[3] = {1, 2, 4};
+        int rr = 0;
+        for (int mch = 0; mch < 4; ++mch) {
+            if (mch == leadChannel) continue;
+            tonalRouteSgm[mch] = remainingRoutes[rr++];
+        }
+        const int tonalRouteCv[4] = {0, 1, 2, 2};
+
+        for (int orderPos = 0; orderPos < patternCount; ++orderPos) {
+            const int srcPattern = mod.order.value(orderPos, 0);
+            if (srcPattern < 0 || srcPattern >= mod.patterns.size())
+                continue;
+
+            const QVector<ModCell>& cells = mod.patterns[srcPattern];
+            QJsonArray patternRows;
+
+            for (int row = 0; row < 64; ++row) {
+                QStringList values = emptyRow(row);
+
+                // Track the loudest percussion hit because the SN has one noise channel.
+                int bestDrumVol = -1;
+                QString bestDrumClass;
+                int bestDrumInst = 0x11;
+
+                for (int mch = 0; mch < 4; ++mch) {
+                    const ModCell c = cells.value(row * 4 + mch);
+                    ChannelState& st = state[mch];
+
+                    if (c.sample > 0 && c.sample <= mod.samples.size()) {
+                        st.sample = c.sample;
+                        st.volume = mod.samples[c.sample - 1].volume;
+                    }
+
+                    // Set-volume effect.
+                    if (c.effect == 0x0C)
+                        st.volume = qBound(0, c.param, 64);
+
+                    // Coarse row-wise volume slide. ProTracker applies this each tick;
+                    // multiplying by speed gives a much closer 60 Hz row result.
+                    if (c.effect == 0x0A) {
+                        const int up = (c.param >> 4) & 0x0F;
+                        const int down = c.param & 0x0F;
+                        st.volume = qBound(0, st.volume + (up - down) * qMax(1, detectedSpeed), 64);
+                    }
+
+                    // Speed / tempo.  ADAMP currently stores one global speed/BPM pair.
+                    // Capture the first meaningful MOD timing values; the playback formula
+                    // itself follows exact ProTracker tick timing.
+                    if (c.effect == 0x0F && c.param > 0) {
+                        if (c.param <= 0x1F) {
+                            if (!tempoLocked) {
+                                detectedSpeed = qBound(1, c.param, 31);
+                                tempoLocked = true;
+                            }
+                        } else if (!tempoLocked) {
+                            detectedTempo = qBound(32, c.param, 255);
+                            tempoLocked = true;
+                        }
+                    }
+
+                    if (c.period > 0)
+                        st.period = c.period;
+
+                    // Coarse pitch-slide accumulation between explicit notes.
+                    if (c.period == 0 && st.period > 0) {
+                        if (c.effect == 0x01)
+                            st.period = qMax(57, st.period - c.param * qMax(1, detectedSpeed));
+                        else if (c.effect == 0x02)
+                            st.period = qMin(1712, st.period + c.param * qMax(1, detectedSpeed));
+                    }
+
+                    if (st.sample <= 0 || st.sample > mod.samples.size())
+                        continue;
+
+                    const ModSampleInfo& smp = mod.samples[st.sample - 1];
+                    QString cls = modSampleClass(smp);
+                    const bool namedDrum = (cls == "kick" || cls == "snare" || cls == "hat" || cls == "perc");
+                    // A channel dominated by 0xy arpeggio rows is a musical
+                    // lead/arp voice even when its tiny looping waveform looks
+                    // statistically like a bass sample.  This is exactly the
+                    // case in skogen11.mod (source CH4, sample 5).
+                    if (mch == leadChannel && !namedDrum)
+                        cls = "lead";
+                    const bool isDrum = (cls == "kick" || cls == "snare" || cls == "hat" || cls == "perc");
+
+                    if (isDrum && (c.period > 0 || c.sample > 0)) {
+                        if (st.volume > bestDrumVol) {
+                            bestDrumVol = st.volume;
+                            bestDrumClass = cls;
+                            bestDrumInst = modSnInstrument(cls);
+                        }
+                        ++percussionHits;
+                        continue;
+                    }
+
+                    // MOD volume is stateful.  Cxx and Axy can change the level
+                    // without retriggering a note, so write a Vxx-only tracker
+                    // cell on that output channel.  Playback/export interpret this
+                    // as HOLD-period + volume update.
+                    const bool volumeOnlyChange = (c.period == 0) && (c.effect == 0x0C || c.effect == 0x0A);
+                    if (volumeOnlyChange) {
+                        const int outVoice = sgmSoundEnabled() ? tonalRouteSgm[mch] : tonalRouteCv[mch];
+                        st.outputVoice = outVoice;
+                        const int base = 1 + outVoice * 4;
+                        if (base + 3 < values.size()) {
+                            const int vol15 = qBound(0, qRound(st.volume * 15.0 / 64.0), 15);
+                            values[base + 2] = QString("V%1").arg(vol15, 2, 16, QLatin1Char('0')).toUpper();
+                        }
+                    }
+
+                    // ProTracker 0xy modifies the currently held note.
+                    // Do not retrigger the note/envelope on every row.
+                    const bool arpHoldUpdate =
+                        (c.period == 0 && st.period > 0 && c.effect == 0x00 && c.param != 0);
+
+                    if (arpHoldUpdate) {
+                        const int outVoice = sgmSoundEnabled() ? tonalRouteSgm[mch] : tonalRouteCv[mch];
+                        st.outputVoice = outVoice;
+                        const int base = 1 + outVoice * 4;
+                        if (base + 3 < values.size()) {
+                            const bool ay = outVoice >= 4;
+                            const int inst = ay ? modAyInstrument(cls) : modSnInstrument(cls);
+                            values[base + 0] = "---";
+                            values[base + 1] = QString("%1").arg(inst, 2, 16, QLatin1Char('0')).toUpper();
+                            values[base + 2] = "---";
+                            values[base + 3] = modArpeggioFx(c.param);
+                        }
+                        continue;
+                    }
+
+                    bool emitNote = c.period > 0;
+                    if (!emitNote && st.period > 0 && (c.effect == 0x01 || c.effect == 0x02))
+                        emitNote = true;
+
+                    if (!emitNote)
+                        continue;
+
+                    const int midi = modPeriodToMidi(st.period, smp.finetune);
+                    if (midi < 0)
+                        continue;
+
+                    int outVoice = sgmSoundEnabled() ? tonalRouteSgm[mch] : tonalRouteCv[mch];
+                    st.outputVoice = outVoice;
+                    const int base = 1 + outVoice * 4;
+                    if (base + 3 >= values.size())
+                        continue;
+
+                    values[base + 0] = midiNoteName(midi);
+                    const bool ay = outVoice >= 4;
+                    const int inst = ay ? modAyInstrument(cls) : modSnInstrument(cls);
+                    values[base + 1] = QString("%1").arg(inst, 2, 16, QLatin1Char('0')).toUpper();
+                    const int vol15 = qBound(0, qRound(st.volume * 15.0 / 64.0), 15);
+                    values[base + 2] = QString("V%1").arg(vol15, 2, 16, QLatin1Char('0')).toUpper();
+
+                    if (c.effect == 0x00 && c.param != 0)
+                        values[base + 3] = modArpeggioFx(c.param);
+                    else
+                        values[base + 3] = "---";
+
+                    ++importedNotes;
+
+                    // SGM enhancement: reinforce bass with AY B and sustained
+                    // strings/pads with AY C, but only on explicit note triggers.
+                    // V8.22: keep the original four-channel MOD balance intact.
+                    // Do not synthesize extra AY B/C backing voices automatically;
+                    // they made accompaniment louder than the source lead.
+                    if (false && sgmSoundEnabled() && c.period > 0) {
+                        if (cls == "bass") {
+                            const int lb = 1 + 5 * 4;
+                            values[lb + 0] = midiNoteName(qMax(12, midi - 12));
+                            values[lb + 1] = QString("%1").arg(modAyInstrument("bass"), 2, 16, QLatin1Char('0')).toUpper();
+                            values[lb + 2] = QString("V%1").arg(qBound(2, vol15 - 4, 11), 2, 16, QLatin1Char('0')).toUpper();
+                            values[lb + 3] = "---";
+                        } else if (cls == "strings") {
+                            const int lb = 1 + 6 * 4;
+                            values[lb + 0] = midiNoteName(midi);
+                            values[lb + 1] = QString("%1").arg(modAyInstrument("strings"), 2, 16, QLatin1Char('0')).toUpper();
+                            values[lb + 2] = QString("V%1").arg(qBound(2, vol15 - 5, 10), 2, 16, QLatin1Char('0')).toUpper();
+                            values[lb + 3] = "---";
+                        }
+                    }
+                }
+
+                if (bestDrumVol >= 0) {
+                    const int base = 1 + 3 * 4;
+                    const int noiseCode = modNoiseCode(bestDrumClass);
+                    values[base + 0] = QString("N%1").arg(noiseCode, 2, 16, QLatin1Char('0')).toUpper();
+                    values[base + 1] = QString("%1").arg(bestDrumInst, 2, 16, QLatin1Char('0')).toUpper();
+                    values[base + 2] = QString("V%1").arg(qBound(0, qRound(bestDrumVol * 15.0 / 64.0), 15), 2, 16, QLatin1Char('0')).toUpper();
+                    values[base + 3] = QString("S%1").arg(noiseCode, 2, 16, QLatin1Char('0')).toUpper();
+                }
+
+                QJsonArray jsonRow;
+                for (const QString& value : std::as_const(values))
+                    jsonRow.append(value);
+                patternRows.append(jsonRow);
+            }
+
+            m_soundPatterns[orderPos] = patternRows;
+        }
+
+        m_currentPatternIndex = 0;
+
+        if (m_patternSpin) {
+            QSignalBlocker blocker(m_patternSpin);
+            m_patternSpin->setValue(0);
+        }
+        if (m_rowsSpin) {
+            QSignalBlocker blocker(m_rowsSpin);
+            m_rowsSpin->setValue(rowsPerPattern);
+        }
+        if (m_rowSpin) {
+            m_rowSpin->setRange(0, rowsPerPattern - 1);
+            m_rowSpin->setValue(0);
+        }
+
+        jsonToTable(m_patternTable, m_soundPatterns.value(0));
+        renumberPatternRows();
+
+        if (m_orderTable) {
+            const int columns = qMax(16, patternCount + 1);
+            m_orderTable->setColumnCount(columns);
+            QStringList headers;
+            for (int c = 0; c < columns; ++c)
+                headers << QString("%1").arg(c, 2, 10, QLatin1Char('0'));
+            m_orderTable->setHorizontalHeaderLabels(headers);
+            m_orderTable->setRowCount(1);
+            m_orderTable->setVerticalHeaderLabels({ "Pat" });
+            for (int c = 0; c < columns; ++c) {
+                const QString pat = (c < patternCount)
+                    ? QString("%1").arg(c, 2, 16, QLatin1Char('0')).toUpper()
+                    : QStringLiteral("FF");
+                QTableWidgetItem* item = new QTableWidgetItem(pat);
+                item->setTextAlignment(Qt::AlignCenter);
+                m_orderTable->setItem(0, c, item);
+            }
+        }
+
+        if (m_songNameEdit)
+            m_songNameEdit->setText(mod.title.isEmpty() ? QFileInfo(filePath).completeBaseName() : mod.title);
+        if (m_authorEdit)
+            m_authorEdit->setText("ProTracker MOD Import");
+        if (m_speedSpin)
+            m_speedSpin->setValue(qBound(m_speedSpin->minimum(), detectedSpeed, m_speedSpin->maximum()));
+        if (m_tempoSpin)
+            m_tempoSpin->setValue(qBound(m_tempoSpin->minimum(), detectedTempo, m_tempoSpin->maximum()));
+        if (m_defaultInstrumentSpin)
+            m_defaultInstrumentSpin->setValue(1);
+        if (m_patternTable)
+            m_patternTable->selectRow(0);
+
+        m_loadedModConverted = true;
+        autoRebuildSoundOutput();
+        rebuildOutput();
+
+        if (m_noteInfoLabel) {
+            m_noteInfoLabel->setText(QString("Imported MOD: %1  (%2 note events, %3 percussion hits, %4 order patterns)")
+                                         .arg(QFileInfo(filePath).fileName())
+                                         .arg(importedNotes)
+                                         .arg(percussionHits)
+                                         .arg(patternCount));
+        }
+
+        QMessageBox::information(
+            this,
+            tr("Import MOD"),
+            tr("Imported ProTracker MOD into %1 ADAMP pattern(s).\n\n"
+               "The importer converts sample-based music to SN76489 + AY-3-8910 synthesis; it does not play Amiga samples.\n"
+               "Sample names and waveform characteristics are analysed to choose tonal PSG patches. Percussion is routed to SN noise only when the MOD sample name clearly identifies a drum/perc sound.\n"
+               "Supported conversion effects include arpeggio, coarse pitch slides, stateful volume slide, set volume and initial speed/tempo. Original MOD sample volumes (0..64) are preserved as the channel mix basis.\n"
+               "With SGM enabled, the most melodically varied MOD channel is routed to SN CH1; arpeggio-only chord/backing channels are not mistaken for the lead. The other tonal voices use SN CH2, SN CH3 and AY A.\n\n"
+               "The result remains compatible with the ADAMP CVBasic player.")
+                .arg(patternCount)
+        );
+
+        qDebug().noquote() << "[ADAMP MOD] detected melodic lead source channel=" << (leadChannel + 1)
+                           << "uniqueNotes=" << channelUniqueNotes[leadChannel].size()
+                           << "range=" << ((channelMaxMidi[leadChannel] >= channelMinMidi[leadChannel])
+                                              ? channelMaxMidi[leadChannel] - channelMinMidi[leadChannel] : 0)
+                           << "arpRows=" << channelArpRows[leadChannel]
+                           << "noteRows=" << channelNoteRows[leadChannel]
+                           << "routedTo=SN CH1";
     }
 
     void importMidiFile()
@@ -13091,12 +18347,14 @@ setPlaybackUiPlaying(false);
         int maxRow = 0;
         for (const MidiNoteEvent& ev : std::as_const(notes)) {
             const int row = qMax(0, qRound(static_cast<double>(ev.startTick) / ticksPerRow));
+            const int endRow = qMax(row + 1, qRound(static_cast<double>(ev.endTick) / ticksPerRow));
             byRow[row].append(ev);
-            maxRow = qMax(maxRow, row);
+            maxRow = qMax(maxRow, endRow);
         }
 
         const int patternCount = qBound(1, (maxRow / rowsPerPattern) + 1, 256);
         m_soundPatterns.clear();
+        QMap<int, QSet<int>> releaseChannels;
 
         for (int p = 0; p < patternCount; ++p) {
             QJsonArray patternRows;
@@ -13104,6 +18362,23 @@ setPlaybackUiPlaying(false);
             for (int r = 0; r < rowsPerPattern; ++r) {
                 QStringList values = midiEmptyPatternRow(r);
                 const int absoluteRow = p * rowsPerPattern + r;
+                if (sgmSoundEnabled()) {
+                    while (values.size() < 29)
+                        values << "---" << "--" << "---" << "---";
+                }
+
+                // MIDI note lengths become explicit tracker releases. A new note on
+                // the same PSG voice later in this row simply overwrites the release.
+                for (int voice : releaseChannels.value(absoluteRow)) {
+                    const int base = 1 + voice * 4;
+                    if (base + 3 < values.size()) {
+                        values[base + 0] = "===";
+                        values[base + 1] = "--";
+                        values[base + 2] = "V00";
+                        values[base + 3] = "---";
+                    }
+                }
+
                 QVector<MidiNoteEvent> events = byRow.value(absoluteRow);
 
                 std::sort(events.begin(), events.end(), [](const MidiNoteEvent& a, const MidiNoteEvent& b) {
@@ -13117,14 +18392,13 @@ setPlaybackUiPlaying(false);
                 });
 
                 QVector<MidiNoteEvent> tonal;
-                bool hasDrum = false;
+                QVector<MidiNoteEvent> drums;
 
                 for (const MidiNoteEvent& ev : std::as_const(events)) {
-                    if (ev.channel == 9) {
-                        hasDrum = true;
-                    } else {
+                    if (ev.channel == 9)
+                        drums.append(ev);
+                    else
                         tonal.append(ev);
-                    }
                 }
 
                 std::sort(tonal.begin(), tonal.end(), [](const MidiNoteEvent& a, const MidiNoteEvent& b) {
@@ -13134,32 +18408,63 @@ setPlaybackUiPlaying(false);
                 if (!tonal.isEmpty()) {
                     const MidiNoteEvent mel = tonal.value(0);
                     values[1] = midiNoteName(mel.note);
-                    values[2] = "01";
-                    values[3] = QString("V%1").arg(qBound(4, mel.velocity / 8, 15), 2, 16, QLatin1Char('0')).toUpper();
+                    values[2] = QString("%1").arg(snInstrumentForMidiProgram(mel.program), 2, 16, QLatin1Char('0')).toUpper();
+                    values[3] = QString("V%1").arg(qBound(3, qRound(mel.velocity * 15.0 / 127.0), 15), 2, 16, QLatin1Char('0')).toUpper();
                     values[4] = "---";
+                    const int endRow = qMax(absoluteRow + 1, qRound(static_cast<double>(mel.endTick) / ticksPerRow));
+                    releaseChannels[endRow].insert(0);
                 }
 
                 if (tonal.size() >= 2) {
                     const MidiNoteEvent harm = tonal.value(1);
                     values[5] = midiNoteName(harm.note);
-                    values[6] = "02";
-                    values[7] = QString("V%1").arg(qBound(3, harm.velocity / 10, 12), 2, 16, QLatin1Char('0')).toUpper();
+                    values[6] = QString("%1").arg(snInstrumentForMidiProgram(harm.program), 2, 16, QLatin1Char('0')).toUpper();
+                    values[7] = QString("V%1").arg(qBound(2, qRound(harm.velocity * 13.0 / 127.0), 13), 2, 16, QLatin1Char('0')).toUpper();
                     values[8] = "---";
+                    const int endRow = qMax(absoluteRow + 1, qRound(static_cast<double>(harm.endTick) / ticksPerRow));
+                    releaseChannels[endRow].insert(1);
                 }
 
                 if (tonal.size() >= 3) {
                     const MidiNoteEvent bass = tonal.last();
                     values[9] = midiNoteName(bass.note);
-                    values[10] = "03";
-                    values[11] = QString("V%1").arg(qBound(4, bass.velocity / 9, 13), 2, 16, QLatin1Char('0')).toUpper();
+                    values[10] = QString("%1").arg(snInstrumentForMidiProgram(bass.program), 2, 16, QLatin1Char('0')).toUpper();
+                    values[11] = QString("V%1").arg(qBound(3, qRound(bass.velocity * 14.0 / 127.0), 14), 2, 16, QLatin1Char('0')).toUpper();
                     values[12] = "---";
+                    const int endRow = qMax(absoluteRow + 1, qRound(static_cast<double>(bass.endTick) / ticksPerRow));
+                    releaseChannels[endRow].insert(2);
                 }
 
-                if (hasDrum) {
-                    values[13] = "---";
-                    values[14] = "08";
-                    values[15] = "V0C";
-                    values[16] = "S02";
+                if (!drums.isEmpty()) {
+                    const MidiNoteEvent drum = *std::max_element(drums.constBegin(), drums.constEnd(), [](const MidiNoteEvent& a, const MidiNoteEvent& b) {
+                        return a.velocity < b.velocity;
+                    });
+                    const int drumInst = snDrumInstrumentForMidiNote(drum.note);
+                    const int noiseCode = snNoiseCodeForMidiNote(drum.note);
+                    values[13] = QString("N%1").arg(noiseCode, 2, 16, QLatin1Char('0')).toUpper();
+                    values[14] = QString("%1").arg(drumInst, 2, 16, QLatin1Char('0')).toUpper();
+                    values[15] = QString("V%1").arg(qBound(4, qRound(drum.velocity * 15.0 / 127.0), 15), 2, 16, QLatin1Char('0')).toUpper();
+                    values[16] = QString("S%1").arg(noiseCode, 2, 16, QLatin1Char('0')).toUpper();
+                }
+
+                // When SGM is enabled, use AY1/AY2/AY3 for additional harmony instead
+                // of throwing away MIDI polyphony. The existing tracker row already
+                // has 3 extra channel groups in SGM mode.
+                if (sgmSoundEnabled() && tonal.size() > 3) {
+                    while (values.size() < 29)
+                        values << "---" << "--" << "---" << "---";
+
+                    const int extraCount = qMin(3, tonal.size() - 3);
+                    for (int ay = 0; ay < extraCount; ++ay) {
+                        const MidiNoteEvent ev = tonal.value(2 + ay);
+                        const int base = 17 + ay * 4;
+                        values[base + 0] = midiNoteName(ev.note);
+                        values[base + 1] = QString("%1").arg(ayInstrumentForMidiProgram(ev.program), 2, 16, QLatin1Char('0')).toUpper();
+                        values[base + 2] = QString("V%1").arg(qBound(4, qRound(ev.velocity * 15.0 / 127.0), 15), 2, 16, QLatin1Char('0')).toUpper();
+                        values[base + 3] = "---";
+                        const int endRow = qMax(absoluteRow + 1, qRound(static_cast<double>(ev.endTick) / ticksPerRow));
+                        releaseChannels[endRow].insert(4 + ay);
+                    }
                 }
 
                 QJsonArray jsonRow;
@@ -13247,7 +18552,7 @@ setPlaybackUiPlaying(false);
         QMessageBox::information(
             this,
             tr("Import MIDI"),
-            tr("Imported %1 note(s) into %2 pattern(s).\n\nMapping:\nCH1 = highest/melody\nCH2 = second voice\nCH3 = lowest/bass\nNOISE = MIDI drums when present")
+            tr("Imported %1 note(s) into %2 pattern(s).\n\nGeneral MIDI Program Change is mapped to PSG instrument families.\nVelocity controls PSG volume.\nCH1/CH2/CH3 carry melody/harmony/bass, NOISE maps MIDI drums, and with SGM enabled AY1/AY2/AY3 keep extra polyphony.")
                 .arg(notes.size())
                 .arg(patternCount)
         );
@@ -13257,7 +18562,7 @@ setPlaybackUiPlaying(false);
     {
         QJsonObject root;
         root["format"] = "ADAMP_CVBASIC_SOUND_SONG";
-        root["version"] = 1;
+        root["version"] = 2;
 
         QJsonObject song;
         song["name"] = m_songNameEdit ? m_songNameEdit->text() : QString();
@@ -13270,6 +18575,7 @@ setPlaybackUiPlaying(false);
         song["volume"] = m_volumeSpin ? m_volumeSpin->value() : 15;
         song["channel"] = m_activeChannelCombo ? m_activeChannelCombo->currentIndex() : 0;
         song["step"] = m_stepSpin ? m_stepSpin->value() : 1;
+        song["sgmSound"] = sgmSoundEnabled();
 
         root["song"] = song;
         root["orderTable"] = tableToJson(m_orderTable);
@@ -13287,11 +18593,34 @@ setPlaybackUiPlaying(false);
         root["patternTable"] = tableToJson(m_patternTable);
         root["currentPattern"] = m_currentPatternIndex;
         root["instrumentsTable"] = tableToJson(m_instrumentsTable);
-return root;
+
+        // buildSoundSongJson() is const: never mutate editor state here.
+        // Work with local copies and refresh only the currently visible AY bank
+        // from the table before serializing.
+        QJsonArray ayBanks[3] = {
+            m_ayInstrumentBanks[0],
+            m_ayInstrumentBanks[1],
+            m_ayInstrumentBanks[2]
+        };
+        const int visibleAyBank = qBound(0, m_currentAyBank, 2);
+        if (m_ayInstrumentsTable)
+            ayBanks[visibleAyBank] = tableToJson(m_ayInstrumentsTable);
+
+        QJsonObject ayByChannel;
+        ayByChannel["A"] = ayBanks[0];
+        ayByChannel["B"] = ayBanks[1];
+        ayByChannel["C"] = ayBanks[2];
+        root["ayInstrumentsByChannel"] = ayByChannel;
+
+        // Legacy field remains AY A for older ADAMP builds.
+        root["ayInstrumentsTable"] = ayBanks[0];
+        return root;
     }
 
     bool applySoundSongJson(const QJsonObject& root)
     {
+        m_loadedModConverted = false;
+
         if (root.value("format").toString() != "ADAMP_CVBASIC_SOUND_SONG") {
             QMessageBox::warning(this, tr("Open Song"), tr("Not a valid ADAMP sound song file."));
             return false;
@@ -13314,7 +18643,9 @@ return root;
         if (m_defaultInstrumentSpin) m_defaultInstrumentSpin->setValue(song.value("defaultInstrument").toInt(1));
         if (m_octaveSpin) m_octaveSpin->setValue(song.value("octave").toInt(4));
         if (m_volumeSpin) m_volumeSpin->setValue(song.value("volume").toInt(15));
-        if (m_activeChannelCombo) m_activeChannelCombo->setCurrentIndex(qBound(0, song.value("channel").toInt(0), 3));
+        const bool useSgmSound = song.value("sgmSound").toBool(false);
+        setSgmSoundEnabled(useSgmSound);
+        if (m_activeChannelCombo) m_activeChannelCombo->setCurrentIndex(qBound(0, song.value("channel").toInt(0), useSgmSound ? 6 : 3));
         if (m_stepSpin) m_stepSpin->setValue(song.value("step").toInt(1));
 
         jsonToTable(m_orderTable, root.value("orderTable").toArray());
@@ -13344,6 +18675,18 @@ return root;
         else
             jsonToTable(m_patternTable, root.value("patternTable").toArray());
 
+        // Backwards compatibility: old v1 songs have only 17 columns.
+        // Fill the new AY1/AY2/AY3 cells with proper empty tracker values.
+        if (m_patternTable) {
+            for (int r = 0; r < m_patternTable->rowCount(); ++r) {
+                for (int c = 17; c < 29; ++c) {
+                    QTableWidgetItem* it = m_patternTable->item(r, c);
+                    if (!it || it->text().trimmed().isEmpty())
+                        setPatternCell(r, c, defaultPatternValueForColumn(c));
+                }
+            }
+        }
+
         saveCurrentPatternToMemory();
 
         const QJsonArray instrumentsJson = root.value("instrumentsTable").toArray();
@@ -13354,7 +18697,48 @@ return root;
         } else {
             resetDefaultInstrumentsTable();
         }
-if (m_patternTable && m_rowSpin) {
+
+        const QJsonObject ayByChannel = root.value("ayInstrumentsByChannel").toObject();
+        if (!ayByChannel.isEmpty() && m_ayInstrumentsTable) {
+            m_ayInstrumentBanks[0] = ayByChannel.value("A").toArray();
+            m_ayInstrumentBanks[1] = ayByChannel.value("B").toArray();
+            m_ayInstrumentBanks[2] = ayByChannel.value("C").toArray();
+
+            // Missing channel banks fall back to A.
+            if (m_ayInstrumentBanks[0].isEmpty()) {
+                resetDefaultAyInstrumentsTable();
+                m_ayInstrumentBanks[0] = tableToJson(m_ayInstrumentsTable);
+            }
+            for (int i = 1; i < 3; ++i)
+                if (m_ayInstrumentBanks[i].isEmpty())
+                    m_ayInstrumentBanks[i] = m_ayInstrumentBanks[0];
+
+            m_currentAyBank = 0;
+            if (m_ayBankChannelCombo) {
+                QSignalBlocker blocker(m_ayBankChannelCombo);
+                m_ayBankChannelCombo->setCurrentIndex(0);
+            }
+            QSignalBlocker tableBlocker(m_ayInstrumentsTable);
+            jsonToTable(m_ayInstrumentsTable, m_ayInstrumentBanks[0]);
+        } else {
+            const QJsonArray ayInstrumentsJson = root.value("ayInstrumentsTable").toArray();
+            if (!ayInstrumentsJson.isEmpty() && m_ayInstrumentsTable) {
+                // Backwards compatibility: old shared bank becomes A, B and C.
+                for (int i = 0; i < 3; ++i)
+                    m_ayInstrumentBanks[i] = ayInstrumentsJson;
+                m_currentAyBank = 0;
+                QSignalBlocker tableBlocker(m_ayInstrumentsTable);
+                jsonToTable(m_ayInstrumentsTable, ayInstrumentsJson);
+            } else {
+                resetDefaultAyInstrumentsTable();
+                const QJsonArray defaults = tableToJson(m_ayInstrumentsTable);
+                for (int i = 0; i < 3; ++i)
+                    m_ayInstrumentBanks[i] = defaults;
+                m_currentAyBank = 0;
+            }
+        }
+
+        if (m_patternTable && m_rowSpin) {
             renumberPatternRows();
             m_rowSpin->setRange(0, qMax(0, m_patternTable->rowCount() - 1));
             m_rowSpin->setValue(0);
@@ -13493,9 +18877,19 @@ if (m_patternTable && m_rowSpin) {
         if (!m_outputEdit)
             return;
 
-        // Compacte output is nu de standaard: data één keer dumpen,
-        // timing/WAIΤ zit centraal in de player wanneer Add Player aan staat.
-        m_outputEdit->setPlainText(buildCompactCvBasicSongBlock(false));
+        // Compact output is the song DATA that will be inserted into CVBasic.
+        const QString source = buildCompactCvBasicSongBlock(false);
+        m_outputEdit->setPlainText(source);
+
+        if (m_outputSizeLabel)
+            m_outputSizeLabel->setText(cvBasicSongSizeText(source));
+
+        const CvBasicSongSizeInfo sizeInfo = calculateCvBasicSongDataSize(source);
+        qDebug().noquote()
+            << "[ADAMP SOUND] CVBasic song DATA size="
+            << sizeInfo.dataBytes << "bytes"
+            << "banks16k=" << sizeInfo.banks16k
+            << "freeLastBank=" << sizeInfo.freeInLastBank;
     }
 
 private:
@@ -13513,6 +18907,7 @@ private:
     QSpinBox* m_octaveSpin = nullptr;
     QSpinBox* m_volumeSpin = nullptr;
     QComboBox* m_activeChannelCombo = nullptr;
+    SoundKeyboardOverlayWidget* m_soundKeyboardWidget = nullptr;
 
     QTimer* m_playTimer = nullptr;
     QTimer* m_liveInstrumentRestartTimer = nullptr;
@@ -13525,25 +18920,82 @@ private:
     int m_playingOrderColumn = 0;
     int m_playingPatternIndex = 0;
     bool m_isPatternPlaying = false;
+    int m_lastFollowPlayRow = -1;
     bool m_streamPlayerUiFollow = false;
 
-    bool m_playbackHeldActive[4] = {false, false, false, false};
-    int m_playbackHeldPeriod[4] = {0, 0, 0, 0};
-    int m_playbackHeldVolume[4] = {0, 0, 0, 0};
+    bool m_playbackHeldActive[7] = {false, false, false, false, false, false, false};
+    int m_playbackHeldPeriod[7] = {0, 0, 0, 0, 0, 0, 0};
+    int m_playbackHeldVolume[7] = {0, 0, 0, 0, 0, 0, 0};
+    int m_playbackActiveInstrument[7] = {-1, -1, -1, -1, -1, -1, -1};
+    QString m_playbackActiveNote[7];
 
     QCheckBox* m_loopSongCheck = nullptr;
     QCheckBox* m_followPlayCheck = nullptr;
     QCheckBox* m_autoUpdateCheck = nullptr;
     QCheckBox* m_addPlayerCheck = nullptr;
     QCheckBox* m_keyboardTestOnlyCheck = nullptr;
+    QCheckBox* m_sgmSoundCheck = nullptr;
     QCheckBox* m_mirrorCheck = nullptr;
     QCheckBox* m_fillDownCheck = nullptr;
 
-    QTableWidget* m_orderTable = nullptr;
+    QTableWidget* m_orderTable = nullptr;          // internal horizontal storage
+    QTableWidget* m_orderSequenceView = nullptr;   // visible vertical editor
+    QLabel* m_orderSequenceCountLabel = nullptr;
+    QWidget* m_soundRightPanel = nullptr; // 10 px narrower in SGM mode
+        QLabel* m_patternRowHeaderLabel = nullptr; // blank 28 px cell in SGM mode
     QTabWidget* m_editorTabs = nullptr;
     QTableWidget* m_patternTable = nullptr;
     SoundPatternDelegate* m_patternDelegate = nullptr;
     QTableWidget* m_instrumentsTable = nullptr;
+    QComboBox* m_snEditChannelCombo = nullptr;
+    QComboBox* m_snInstrumentSelectCombo = nullptr;
+    int m_snSelectedInstrument[4] = {1, 1, 1, 1};
+
+    QWidget* m_ayInstrumentsPage = nullptr;
+    QTableWidget* m_ayInstrumentsTable = nullptr;
+    QComboBox* m_ayBankChannelCombo = nullptr;
+    QComboBox* m_ayInstrumentSelectCombo = nullptr;
+    QJsonArray m_ayInstrumentBanks[3];
+    int m_currentAyBank = 0;
+    int m_aySelectedInstrument[3] = {1, 1, 1};
+
+    QLabel* m_activeInstrumentLabels[7] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+
+    QLineEdit* m_ayNameEdit = nullptr;
+    QCheckBox* m_ayToneCheck = nullptr;
+    QCheckBox* m_ayNoiseCheck = nullptr;
+    QCheckBox* m_ayEnvCheck = nullptr;
+    QSpinBox* m_ayShapeSpin = nullptr;
+    QSpinBox* m_ayEnvPeriodSpin = nullptr;
+    QSpinBox* m_ayNoisePeriodSpin = nullptr;
+    QSlider* m_ayAttackSlider = nullptr;
+    QSpinBox* m_ayAttackSpin = nullptr;
+    QSlider* m_ayDecaySlider = nullptr;
+    QSpinBox* m_ayDecaySpin = nullptr;
+    QSlider* m_aySustainSlider = nullptr;
+    QSpinBox* m_aySustainSpin = nullptr;
+    QSlider* m_ayReleaseSlider = nullptr;
+    QSpinBox* m_ayReleaseSpin = nullptr;
+    QSlider* m_ayVibratoSlider = nullptr;
+    QSpinBox* m_ayVibratoSpin = nullptr;
+    QLineEdit* m_ayArpEdit = nullptr;
+    QLineEdit* m_ayVolumeMacroEdit = nullptr;
+    QLineEdit* m_ayPitchMacroEdit = nullptr;
+    QLineEdit* m_ayNoiseMacroEdit = nullptr;
+    QLineEdit* m_ayAutoEnvEdit = nullptr;
+    QLineEdit* m_ayWaveMacroEdit = nullptr;
+    QLineEdit* m_ayEnvShapeMacroEdit = nullptr;
+    QLineEdit* m_ayEnvPeriodMacroEdit = nullptr;
+    QLineEdit* m_ayPhaseResetMacroEdit = nullptr;
+    SoundMacroGraphWidget* m_ayVolumeMacroGraph = nullptr;
+    SoundMacroGraphWidget* m_ayPitchMacroGraph = nullptr;
+    SoundMacroGraphWidget* m_ayNoiseMacroGraph = nullptr;
+    SoundMacroGraphWidget* m_ayWaveMacroGraph = nullptr;
+    SoundMacroGraphWidget* m_ayEnvShapeMacroGraph = nullptr;
+    SoundMacroGraphWidget* m_ayEnvPeriodMacroGraph = nullptr;
+    SoundMacroGraphWidget* m_ayPhaseResetMacroGraph = nullptr;
+    AyEnvelopeModulationPreviewWidget* m_ayEnvelopePreview = nullptr;
+    bool m_updatingAyVisualEditor = false;
 
     QLineEdit* m_instNameEdit = nullptr;
     QComboBox* m_instTypeCombo = nullptr;
@@ -13557,21 +19009,49 @@ private:
     QSlider* m_instWaveXSlider = nullptr;
     QSpinBox* m_instWaveYSpin = nullptr;
     QSlider* m_instWaveYSlider = nullptr;
-    SoundInstrumentWavePreviewWidget* m_instWavePreview = nullptr;
+    QLineEdit* m_instVolumeMacroEdit = nullptr;
+    QLineEdit* m_instPitchMacroEdit = nullptr;
+    QLineEdit* m_instArpMacroEdit = nullptr;
+    QLineEdit* m_instNoiseMacroEdit = nullptr;
+    SoundMacroGraphWidget* m_instVolumeMacroGraph = nullptr;
+    SoundMacroGraphWidget* m_instPitchMacroGraph = nullptr;
+    SoundMacroGraphWidget* m_instArpMacroGraph = nullptr;
+    SoundMacroGraphWidget* m_instNoiseMacroGraph = nullptr;
     SoundInstrumentEnvelopePreviewWidget* m_instEnvPreview = nullptr;
     bool m_updatingInstrumentEditor = false;
 
+    QListWidget* m_sfxList = nullptr;
+    QLineEdit* m_sfxNameEdit = nullptr;
+    QSpinBox* m_sfxLengthSpin = nullptr;
+    QSpinBox* m_sfxStepMsSpin = nullptr;
+    QCheckBox* m_sfxSgmCheck = nullptr;
+    QLabel* m_sfxChannelHeaders[7] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    QTableWidget* m_sfxTable = nullptr;
+    QJsonArray m_sfxBank;
+    int m_currentSfxIndex = -1;
+    bool m_loadingSfx = false;
+    QTimer* m_sfxTimer = nullptr;
+    int m_sfxPlayRow = 0;
+    QString m_sfxFilePath;
+
+    QLabel* m_outputSizeLabel = nullptr;
     QPlainTextEdit* m_outputEdit = nullptr;
     QLabel* m_noteInfoLabel = nullptr;
     QLabel* m_playbackStatusLabel = nullptr;
     SoundVuLedBarWidget* m_vuLedBar = nullptr;
-    QLabel* m_channelHeaderLabels[4] = {nullptr, nullptr, nullptr, nullptr};
-    bool m_channelAudible[4] = {true, true, true, true}; // Runtime editor on/off only. Not saved/exported.
-    int m_vuLevels[4] = {0, 0, 0, 0};
+    QLabel* m_channelHeaderLabels[7] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    bool m_channelAudible[7] = {true, true, true, true, true, true, true}; // Runtime editor on/off only. Not saved/exported.
+    int m_vuLevels[7] = {0, 0, 0, 0, 0, 0, 0};
+    qint64 m_lastVuUiUpdateMs = 0;
+    int m_pendingVuLevels[7] = {0, 0, 0, 0, 0, 0, 0};
 
     QStringList m_patternClipboard;
     QJsonArray m_patternClipboardJson;
     QString m_soundSongFilePath;
+    QString m_loadedModPath;
+    QByteArray m_loadedModData;
+    bool m_loadedModConverted = false;
+    ModReferencePlayer* m_modReferencePlayer = nullptr;
 
     QMap<int, QJsonArray> m_soundPatterns;
     int m_currentPatternIndex = 0;
@@ -13614,9 +19094,75 @@ CvBasicEditorWindow::~CvBasicEditorWindow()
     m_printer = nullptr;
 }
 
+void CvBasicEditorWindow::setDarkTheme(bool dark)
+{
+    QList<QWidget*> themedWidgets = findChildren<QWidget*>();
+    themedWidgets.prepend(this);
+
+    auto lightVersion = [](QString style) {
+        const struct { const char* dark; const char* light; } colors[] = {
+            {"#3A3A3A", "#F5F5F5"}, {"#242424", "#FFFFFF"},
+            {"#2C2C2C", "#EEEEEE"}, {"#2E2E2E", "#ECECEC"},
+            {"#252525", "#FFFFFF"}, {"#202020", "#FAFAFA"},
+            {"#1E1E1E", "#C8C8C8"}, {"#151515", "#F0F0F0"},
+            {"#303030", "#E2E2E2"}, {"#4A4A4A", "#DDDDDD"},
+            {"#5A5A5A", "#CCCCCC"}, {"#5C5C5C", "#B8B8B8"},
+            {"#555555", "#C8C8C8"}, {"#404040", "#C0C0C0"},
+            {"#6A6A6A", "#ADADAD"},
+            {"#BBBBBB", "#505050"}, {"#B8C6D8", "#405060"}
+        };
+        int colorIndex = 0;
+        for (const auto& color : colors) {
+            const QString marker = QStringLiteral("__ADAMP_LIGHT_%1__").arg(colorIndex++);
+            style.replace(QRegularExpression(QRegularExpression::escape(QString::fromLatin1(color.dark)),
+                                             QRegularExpression::CaseInsensitiveOption),
+                          marker);
+        }
+        colorIndex = 0;
+        for (const auto& color : colors) {
+            style.replace(QStringLiteral("__ADAMP_LIGHT_%1__").arg(colorIndex++),
+                          QString::fromLatin1(color.light));
+        }
+        style.replace(QRegularExpression(QStringLiteral("color\\s*:\\s*white"),
+                                         QRegularExpression::CaseInsensitiveOption),
+                      QStringLiteral("color: #202020"));
+        style.replace(QRegularExpression(QStringLiteral("(?<!-)color\\s*:\\s*#(?:FFFFFF|F0F0F0|EAEAEA|E0E0E0|DADADA)"),
+                                         QRegularExpression::CaseInsensitiveOption),
+                      QStringLiteral("color: #202020"));
+        return style;
+    };
+
+    for (QWidget* widget : themedWidgets) {
+        if (!widget)
+            continue;
+        const char propertyName[] = "adampDarkStyleSheet";
+        if (!widget->property(propertyName).isValid())
+            widget->setProperty(propertyName, widget->styleSheet());
+
+        const QString original = widget->property(propertyName).toString();
+        widget->setStyleSheet(dark ? original : lightVersion(original));
+    }
+
+    if (!dark) {
+        // Day-mode source editor colours.
+        setStyleSheet(styleSheet() + QStringLiteral(
+            "QPlainTextEdit#cvBasicSourceEditor {"
+            " background-color: #696867; color: #E0E0E0;"
+            " selection-background-color: #0078D7; selection-color: #FFFFFF;"
+            "}"));
+    }
+
+    if (auto* soundPage = dynamic_cast<CvBasicSoundEditorPage*>(m_soundPage))
+        soundPage->setDarkTheme(dark);
+
+    // Pages and tools without a private stylesheet inherit these colours.
+    setPalette(qApp->palette());
+    update();
+}
+
 void CvBasicEditorWindow::setSoundChannelVuLevel(int channel, int level)
 {
-    channel = qBound(0, channel, 3);
+    channel = qBound(0, channel, 6);
     level = qBound(0, level, 15);
 
     if (auto* soundPage = dynamic_cast<CvBasicSoundEditorPage*>(m_soundPage))
@@ -13979,6 +19525,127 @@ CvBasicEditorWindow::BuildLineInfo CvBasicEditorWindow::sourceLineForCombinedLin
     return m_buildLineMap.at(combinedLine - 1);
 }
 
+CvBasicEditorWindow::BuildLineInfo CvBasicEditorWindow::sourceLineForCompilerLine(int compilerLine) const
+{
+    if (compilerLine <= 0)
+        return BuildLineInfo();
+
+    // First try the exact physical line in the generated _combined.bas file.
+    // This is correct for CVBasic builds that count every generated REM/blank line.
+    BuildLineInfo direct = sourceLineForCombinedLine(compilerLine);
+    if (direct.tabIndex >= 0 && direct.localLine > 0)
+        return direct;
+
+    // Some CVBasic diagnostics count only the actual user source stream and do not
+    // include the separator/header lines that ADAMP inserts between source tabs.
+    // Build a second, logical mapping over ONLY the real lines in the tabs.
+    int logical = compilerLine;
+    if (m_codeTabs) {
+        for (int i = 0; i < m_codeTabs->count(); ++i) {
+            QPlainTextEdit* ed = sourceEditorAt(i);
+            if (!ed)
+                continue;
+
+            const QStringList lines = ed->toPlainText().split('\n', Qt::KeepEmptyParts);
+            const int count = lines.size();
+            if (logical <= count) {
+                BuildLineInfo info;
+                info.tabIndex = i;
+                info.localLine = logical;
+                info.tabName = sourceTabName(i);
+                return info;
+            }
+            logical -= count;
+        }
+    } else if (m_editor) {
+        const int count = m_editor->toPlainText().split('\n', Qt::KeepEmptyParts).size();
+        if (logical <= count) {
+            BuildLineInfo info;
+            info.tabIndex = 0;
+            info.localLine = logical;
+            info.tabName = tr("Main");
+            return info;
+        }
+    }
+
+    // Last-resort: if the compiler line happens to point at one of our generated
+    // separator lines, associate it with the closest real source line.
+    if (!m_buildLineMap.isEmpty()) {
+        int idx = qBound(0, compilerLine - 1, m_buildLineMap.size() - 1);
+        for (int delta = 1; delta < 16; ++delta) {
+            const int before = idx - delta;
+            if (before >= 0) {
+                const BuildLineInfo info = m_buildLineMap.at(before);
+                if (info.tabIndex >= 0 && info.localLine > 0)
+                    return info;
+            }
+            const int after = idx + delta;
+            if (after < m_buildLineMap.size()) {
+                const BuildLineInfo info = m_buildLineMap.at(after);
+                if (info.tabIndex >= 0 && info.localLine > 0)
+                    return info;
+            }
+        }
+    }
+
+    return BuildLineInfo();
+}
+
+
+CvBasicEditorWindow::BuildLineInfo CvBasicEditorWindow::sourceLineForDiagnostic(const QString& description, int compilerLine) const
+{
+    // GASM80 assembler diagnostics also use "at line N".  Those line numbers
+    // belong to the generated Z80 assembly, NOT to the combined BASIC source.
+    // For an undefined CVBasic label, recover the corresponding BASIC source
+    // location from the symbol name instead of treating the assembler line as
+    // a BASIC line number.
+    const QRegularExpression undefLabelRegex(
+        QStringLiteral("undefined\\s+label\\s+['\\\"]?(CVB_[A-Za-z0-9_.$@?]+)['\\\"]?"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch um = undefLabelRegex.match(description);
+    if (um.hasMatch()) {
+        QString symbol = um.captured(1);
+        if (symbol.startsWith(QStringLiteral("CVB_"), Qt::CaseInsensitive))
+            symbol = symbol.mid(4);
+
+        if (!symbol.isEmpty() && m_codeTabs) {
+            const QRegularExpression tokenRegex(
+                QStringLiteral("(^|[^A-Za-z0-9_.$@?])%1([^A-Za-z0-9_.$@?]|$)")
+                    .arg(QRegularExpression::escape(symbol)),
+                QRegularExpression::CaseInsensitiveOption);
+
+            BuildLineInfo firstMatch;
+            int matchCount = 0;
+            for (int i = 0; i < m_codeTabs->count(); ++i) {
+                QPlainTextEdit* ed = sourceEditorAt(i);
+                if (!ed)
+                    continue;
+                const QStringList lines = ed->toPlainText().split('\n', Qt::KeepEmptyParts);
+                for (int local = 0; local < lines.size(); ++local) {
+                    if (!tokenRegex.match(lines.at(local)).hasMatch())
+                        continue;
+                    if (matchCount == 0) {
+                        firstMatch.tabIndex = i;
+                        firstMatch.localLine = local + 1;
+                        firstMatch.tabName = sourceTabName(i);
+                    }
+                    ++matchCount;
+                }
+            }
+            if (matchCount > 0)
+                return firstMatch;
+        }
+    }
+
+    // Only interpret the diagnostic number as a BASIC line if it can actually
+    // fit inside the generated BASIC source.  This prevents an assembler line
+    // such as 12850 from being incorrectly clamped to the last source tab.
+    if (compilerLine > 0 && compilerLine <= m_buildLineMap.size())
+        return sourceLineForCompilerLine(compilerLine);
+
+    return BuildLineInfo();
+}
+
 bool CvBasicEditorWindow::writeCombinedSourceForBuild()
 {
     if (m_buildSourcePath.isEmpty())
@@ -14002,11 +19669,11 @@ void CvBasicEditorWindow::setupUi()
 {
     setWindowTitle("CVBasic Editor");
 
-    // Fixed window size for the CVBasic Editor.
-    // Pas deze twee waarden aan als je later toch groter/kleiner wil.
-    const int fixedWindowWidth = 1350;
-    const int fixedWindowHeight = 950;
-    setFixedSize(fixedWindowWidth, fixedWindowHeight);
+    // V8.69: CVBasic Editor is resizable and can be maximized.
+    // Keep the previous 1350x950 size as the normal/default size.
+    setMinimumSize(1100, 760);
+    resize(1350, 950);
+    setWindowFlag(Qt::WindowMaximizeButtonHint, true);
 
     // Zelfde font als de emulator-dialogs: resource font luculent.ttf.
     // De menubalk laten we ongemoeid; die behoudt zijn bestaande font.
@@ -14199,7 +19866,10 @@ void CvBasicEditorWindow::setupUi()
     m_errorTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_errorTable->setAlternatingRowColors(true);
 
-    connect(m_errorTable, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+    // Compiler errors refer to the combined temporary source.  Every error-row stores
+    // the translated source-tab and local line number, so navigating an error always
+    // goes to the line number shown in that tab (tabs each start at line 1).
+    const auto gotoMappedError = [this](int row, int) {
         if (!m_errorTable || row < 0 || row >= m_errorTable->rowCount())
             return;
 
@@ -14209,12 +19879,30 @@ void CvBasicEditorWindow::setupUi()
 
         const int tabIndex = lineItem->data(Qt::UserRole + 1).toInt();
         const int localLine = lineItem->data(Qt::UserRole + 2).toInt();
+        if (tabIndex < 0 || localLine <= 0)
+            return;
 
-        if (m_codeTabs && tabIndex >= 0 && tabIndex < m_codeTabs->count())
+        if (m_mainPages && m_basicPage)
+            m_mainPages->setCurrentWidget(m_basicPage);
+        if (m_tabs && m_codeTabs)
+            m_tabs->setCurrentWidget(m_codeTabs);
+        if (m_codeTabs && tabIndex < m_codeTabs->count())
             m_codeTabs->setCurrentIndex(tabIndex);
 
+        m_editor = activeEditor();
         gotoSourceLine(localLine);
-    });
+        if (m_editor) {
+            m_editor->setFocus(Qt::OtherFocusReason);
+            QTextCursor c = m_editor->textCursor();
+            c.select(QTextCursor::LineUnderCursor);
+            m_editor->setTextCursor(c);
+        }
+        updateCursorStatus();
+    };
+
+    // One click is enough to inspect a compiler error; double click keeps working too.
+    connect(m_errorTable, &QTableWidget::cellClicked, this, gotoMappedError);
+    connect(m_errorTable, &QTableWidget::cellDoubleClicked, this, gotoMappedError);
 
     errorLayout->addLayout(countLayout);
     errorLayout->addWidget(m_errorTable, 1);
@@ -14234,9 +19922,12 @@ void CvBasicEditorWindow::setupUi()
 
     rootLayout->addWidget(verticalSplitter, 1);
     m_mainPages = new QTabWidget(this);
-    m_mainPages->tabBar()->hide();
-    m_mainPages->setDocumentMode(true);
-    m_mainPages->addTab(m_basicPage, tr("BASIC"));
+    m_mainPages->setObjectName("cvBasicSuiteTabs");
+    m_mainPages->setDocumentMode(false);
+    m_mainPages->setMovable(false);
+    m_mainPages->setTabsClosable(false);
+    m_mainPages->tabBar()->show();
+    m_mainPages->addTab(m_basicPage, tr("BASIC EDITOR"));
 
     QSettings pluginSettings(QCoreApplication::applicationDirPath() + "/settings.ini", QSettings::IniFormat);
     pluginSettings.beginGroup("cvbasic");
@@ -14276,7 +19967,7 @@ void CvBasicEditorWindow::setupUi()
     };
 
     m_spritePage = spriteWidget;
-    m_mainPages->addTab(m_spritePage, tr("SPRITES"));
+    m_mainPages->addTab(m_spritePage, tr("SPRITE EDITOR"));
 
     CvBasicSoundEditorPage* soundWidget = new CvBasicSoundEditorPage(m_mainPages);
     soundWidget->onInsertRequested = [this](const QString& text) {
@@ -14340,8 +20031,12 @@ void CvBasicEditorWindow::setupUi()
         updateStatusText(tr("Sound stream stopped"));
     };
 
+    soundWidget->onChannelAudibleChanged = [this](int channel, bool audible) {
+        emit soundEditorChannelAudibleChanged(channel, audible);
+    };
+
     m_soundPage = soundWidget;
-    m_mainPages->addTab(m_soundPage, tr("SOUND"));
+    m_mainPages->addTab(m_soundPage, tr("SOUND EDITOR"));
 
     CvBasicPaintEditorPage* paintWidget = new CvBasicPaintEditorPage(m_mainPages);
     paintWidget->onInsertRequested = [this](const QString& text) {
@@ -14376,12 +20071,56 @@ void CvBasicEditorWindow::setupUi()
     paintWidget->onTitleChanged = [this, paintWidget](const QString& title) {
         const int index = m_mainPages ? m_mainPages->indexOf(paintWidget) : -1;
         if (index >= 0)
-            m_mainPages->setTabText(index, tr("PAINT - %1").arg(title));
+            m_mainPages->setTabText(index, tr("GRAPHICS EDITOR - %1").arg(title));
     };
 
     m_paintPage = paintWidget;
-    m_mainPages->addTab(m_paintPage, tr("PAINT"));
+    m_mainPages->addTab(m_paintPage, tr("GRAPHICS EDITOR"));
     paintWidget->refreshPaintProjectTitle();
+
+    // Credits are part of the suite itself instead of living in a separate Help menu.
+    QWidget* creditsPage = new QWidget(m_mainPages);
+    QVBoxLayout* creditsLayout = new QVBoxLayout(creditsPage);
+    creditsLayout->setContentsMargins(24, 24, 24, 24);
+    creditsLayout->setSpacing(12);
+
+    QFrame* creditsBox = new QFrame(creditsPage);
+    creditsBox->setObjectName("creditsBox");
+    creditsBox->setFrameShape(QFrame::StyledPanel);
+    QVBoxLayout* creditsBoxLayout = new QVBoxLayout(creditsBox);
+    creditsBoxLayout->setContentsMargins(18, 22, 18, 22);
+
+    QLabel* creditsText = new QLabel(creditsBox);
+    creditsText->setAlignment(Qt::AlignCenter);
+    creditsText->setTextFormat(Qt::RichText);
+    creditsText->setOpenExternalLinks(true);
+    creditsText->setWordWrap(true);
+    creditsText->setText(
+        "<div align='center'>"
+        "<h2>CVBASIC SUITE</h2>"
+        "BASIC EDITOR - SPRITE EDITOR - GRAPHICS EDITOR - SOUND EDITOR<br><br>"
+        "&copy; ADAM+ EMULATOR PLUG-IN DVdH 2026<br>"
+        "<a href='https://github.com/dvdh1961/ADAMP'>https://github.com/dvdh1961/ADAMP</a><br><br>"
+        "FREEWARE<br><br>"
+        "CVBasic by &Oacute;scar Toledo Guti&eacute;rrez<br>"
+        "<a href='https://nanochess.org/cvbasic.html'>https://nanochess.org/cvbasic.html</a><br>"
+        "<a href='https://github.com/nanochess/CVBasic'>https://github.com/nanochess/CVBasic</a>"
+        "</div>"
+    );
+    creditsBoxLayout->addStretch(1);
+    creditsBoxLayout->addWidget(creditsText);
+    creditsBoxLayout->addStretch(1);
+    creditsLayout->addWidget(creditsBox, 1);
+    m_mainPages->addTab(creditsPage, tr("CREDITS"));
+
+    connect(m_mainPages, &QTabWidget::currentChanged, this, [this](int index) {
+        if (!m_mainPages)
+            return;
+        const QString tab = m_mainPages->tabText(index);
+        updateStatusText(tab);
+        if (m_mainPages->widget(index) == m_basicPage)
+            refreshBasicEditorLayout();
+    });
 
     setCentralWidget(m_mainPages);
 
@@ -14434,6 +20173,8 @@ void CvBasicEditorWindow::setupUi()
         "QToolButton:pressed { background-color: #5A5A5A; padding-top: 5px; padding-left: 9px; }"
 
         "QTabWidget::pane { border: 1px solid #555555; background-color: #3A3A3A; top: -1px; }"
+        "QTabWidget#cvBasicSuiteTabs > QTabBar::tab { font-weight: bold; padding: 7px 16px; min-width: 105px; }"
+        "QFrame#creditsBox { background-color:#242424; border:1px solid #555555; }"
         "QTabBar::tab {"
         "  background-color: #242424;"
         "  color: #FFFFFF;"
@@ -14657,17 +20398,10 @@ void CvBasicEditorWindow::setupMenusAndToolbar()
     // Geen global Edit/View menu: BASIC edit + view opties zitten in de editor-popup.
     setupAllSourceEditorContextMenus();
 
-    QMenu* toolsMenu = menuBar()->addMenu(tr("PLUG-INS"));
-    toolsMenu->addAction(m_actBasicEditor);
-    toolsMenu->addSeparator();
-    toolsMenu->addAction(m_actSpriteEditor);
-    toolsMenu->addSeparator();
-    toolsMenu->addAction(m_actSoundEditor);
-    toolsMenu->addSeparator();
-    toolsMenu->addAction(m_actPaintEditor);
-
-    QMenu* helpMenu = menuBar()->addMenu(tr("Help"));
-    helpMenu->addAction(m_actAbout);
+    // V9.20: suite navigation is handled entirely by the main editor tabs.
+    // The old PLUG-INS / Help menu navigation is no longer needed.
+    menuBar()->clear();
+    menuBar()->hide();
 
     // CVBasic project-toolbar op de BASIC page zelf.
     QToolBar* tb = new QToolBar(tr("CVBasic"), m_basicPage ? m_basicPage : this);
@@ -14692,6 +20426,17 @@ void CvBasicEditorWindow::setupMenusAndToolbar()
 
     tb->addAction(m_actCompile);
     tb->addAction(m_actCompileRun);
+
+    m_sgmCheck = new QCheckBox(tr("SGM"), tb);
+    m_sgmCheck->setToolTip(tr("Compile with CVBasic --sgm (24 KB RAM; requires SGM or ADAM)"));
+    connect(m_sgmCheck, &QCheckBox::toggled, this, [this](bool enabled) {
+        saveSettings();
+        m_dirty = true;
+        updateWindowTitle();
+        updateStatusText(enabled ? tr("SGM compilation enabled")
+                                 : tr("Standard ColecoVision compilation enabled"));
+    });
+    tb->addWidget(m_sgmCheck);
 
     QWidget* tbSpacer = new QWidget(tb);
     tbSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -14768,6 +20513,11 @@ void CvBasicEditorWindow::loadSettings()
     m_buildDirPath = QDir::cleanPath(s.value("buildDir").toString().trimmed());
     m_lastOpenDir  = QDir::cleanPath(s.value("lastOpenDir").toString().trimmed());
 
+    if (m_sgmCheck) {
+        const QSignalBlocker blocker(m_sgmCheck);
+        m_sgmCheck->setChecked(s.value("sgmEnabled", true).toBool());
+    }
+
     restoreGeometry(s.value("geometry").toByteArray());
     s.endGroup();
 
@@ -14786,6 +20536,8 @@ void CvBasicEditorWindow::saveSettings()
     QSettings s(QCoreApplication::applicationDirPath() + "/settings.ini", QSettings::IniFormat);
     s.beginGroup("cvbasic");
     s.setValue("geometry", saveGeometry());
+    if (m_sgmCheck)
+        s.setValue("sgmEnabled", m_sgmCheck->isChecked());
     s.endGroup();
     s.sync();
 }
@@ -15603,6 +21355,20 @@ bool CvBasicEditorWindow::maybeSaveBeforeDestructiveAction()
     if (!m_dirty)
         return true;
 
+    // The untouched starter remark is only a placeholder, not a real project
+    // change. Do not ask to save it before opening/new/closing.
+    if (sourceTabCount() == 1) {
+        if (QPlainTextEdit *editor = sourceEditorAt(0)) {
+            const QString source = editor->toPlainText().trimmed();
+            const QString starterText = QStringLiteral("CVBasic test program for ADAM+ / ColecoVision");
+            if (source == QStringLiteral("'") + starterText ||
+                source.compare(QStringLiteral("REM ") + starterText, Qt::CaseInsensitive) == 0) {
+                m_dirty = false;
+                return true;
+            }
+        }
+    }
+
     const QMessageBox::StandardButton ret = QMessageBox::question(
         this,
         tr("CVBasic Project"),
@@ -15632,6 +21398,7 @@ bool CvBasicEditorWindow::writeCurrentFile(const QString& filePath)
     root["format"] = "ADAMP_CVBasic_Project";
     root["version"] = 1;
     root["mainTab"] = m_codeTabs ? m_codeTabs->currentIndex() : 0;
+    root["sgm"] = m_sgmCheck && m_sgmCheck->isChecked();
 
     QJsonArray tabs;
     if (m_codeTabs) {
@@ -15677,6 +21444,11 @@ bool CvBasicEditorWindow::readFile(const QString& filePath)
     if (doc.isObject() && doc.object().value("format").toString() == "ADAMP_CVBasic_Project") {
         const QJsonObject root = doc.object();
         const QJsonArray tabs = root.value("tabs").toArray();
+
+        if (m_sgmCheck && root.contains("sgm")) {
+            const QSignalBlocker blocker(m_sgmCheck);
+            m_sgmCheck->setChecked(root.value("sgm").toBool(false));
+        }
 
         for (int i = 0; i < tabs.size(); ++i) {
             const QJsonObject tab = tabs.at(i).toObject();
@@ -15831,11 +21603,52 @@ void CvBasicEditorWindow::startBuild(bool runAfterBuild)
     startCvBasic();
 }
 
+bool CvBasicEditorWindow::buildSourceRequiresSgm() const
+{
+    QString text;
+
+    QFile f(m_buildSourcePath);
+    if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        text = QString::fromUtf8(f.readAll());
+        f.close();
+    }
+
+    if (text.isEmpty()) {
+        if (QPlainTextEdit* ed = activeEditor())
+            text = ed->toPlainText();
+    }
+
+    const QString upper = text.toUpper();
+
+    // ADAMP-generated SGM songs announce the target explicitly.
+    if (upper.contains("REM CHIP   : SN76489 + SGM AY-3-8910"))
+        return true;
+
+    // SOUND 5..9 are the SGM AY-3-8910 interface in CVBasic.
+    static const QRegularExpression aySoundRx(
+        QStringLiteral(R"(\bSOUND\s+[5-9]\s*,)"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    return aySoundRx.match(text).hasMatch();
+}
+
 void CvBasicEditorWindow::startCvBasic()
 {
     m_buildStep = BuildStep::CvBasic;
-    updateStatusText("Compiling CVBasic...");
 
+    const bool requestedSgm = m_sgmCheck && m_sgmCheck->isChecked();
+    const bool sourceNeedsSgm = buildSourceRequiresSgm();
+    const bool useSgm = requestedSgm || sourceNeedsSgm;
+
+    if (sourceNeedsSgm && !requestedSgm) {
+        appendOutput("NOTE: SGM sound detected in source; forcing CVBasic --sgm automatically.\n");
+        updateStatusText("Compiling CVBasic (SGM auto-detected)...");
+    } else {
+        updateStatusText(useSgm ? "Compiling CVBasic (SGM)..." : "Compiling CVBasic...");
+    }
+
+    m_stdoutPending.clear();
+    m_stderrPending.clear();
     m_process = new QProcess(this);
     m_process->setProcessChannelMode(QProcess::SeparateChannels);
     m_process->setWorkingDirectory(QFileInfo(m_cvbasicExePath).absolutePath());
@@ -15848,9 +21661,12 @@ void CvBasicEditorWindow::startCvBasic()
             this, &CvBasicEditorWindow::onProcessFinished);
 
     QStringList args;
+    if (useSgm)
+        args << QStringLiteral("--sgm");
     args << m_buildSourcePath << m_asmPath;
 
-    appendOutput("> " + quotedNativePath(m_cvbasicExePath) + " --sgm "
+    appendOutput("> " + quotedNativePath(m_cvbasicExePath)
+                 + (useSgm ? QStringLiteral(" --sgm ") : QStringLiteral(" "))
                  + quotedNativePath(m_buildSourcePath) + " "
                  + quotedNativePath(m_asmPath) + "\n\n");
     m_process->start(m_cvbasicExePath, args);
@@ -15866,6 +21682,8 @@ void CvBasicEditorWindow::startGasm80()
     m_buildStep = BuildStep::Gasm80;
     updateStatusText("Assembling ROM...");
 
+    m_stdoutPending.clear();
+    m_stderrPending.clear();
     m_process = new QProcess(this);
     m_process->setProcessChannelMode(QProcess::SeparateChannels);
     m_process->setWorkingDirectory(QFileInfo(m_gasm80ExePath).absolutePath());
@@ -15892,6 +21710,8 @@ void CvBasicEditorWindow::onProcessFinished(int exitCode, QProcess::ExitStatus e
     if (m_process) {
         onProcessReadyReadStdout();
         onProcessReadyReadStderr();
+        routeProcessText(m_stdoutPending, QString(), true);
+        routeProcessText(m_stderrPending, QString(), true);
     }
 
     if (exitStatus != QProcess::NormalExit || exitCode != 0) {
@@ -15917,24 +21737,61 @@ void CvBasicEditorWindow::onProcessFinished(int exitCode, QProcess::ExitStatus e
     }
 }
 
+void CvBasicEditorWindow::routeProcessText(QString& pending, const QString& chunk, bool flush)
+{
+    pending += chunk;
+
+    // QProcess may split one compiler diagnostic over multiple readyRead signals.
+    // Parse only complete physical lines; otherwise a split such as
+    // "Error: ... at li" + "ne 12850" would bypass the line-number mapper.
+    for (;;) {
+        int cut = -1;
+        int newlineLen = 0;
+        const int lf = pending.indexOf('\n');
+        const int cr = pending.indexOf('\r');
+        if (lf >= 0 && (cr < 0 || lf < cr)) { cut = lf; newlineLen = 1; }
+        else if (cr >= 0) {
+            cut = cr; newlineLen = (cr + 1 < pending.size() && pending.at(cr + 1) == '\n') ? 2 : 1;
+        }
+
+        if (cut < 0)
+            break;
+
+        const QString line = pending.left(cut);
+        pending.remove(0, cut + newlineLen);
+        const QString complete = line + '\n';
+        if (line.contains(QStringLiteral("error"), Qt::CaseInsensitive) ||
+            line.contains(QStringLiteral("warning"), Qt::CaseInsensitive) ||
+            line.contains(QStringLiteral("failed"), Qt::CaseInsensitive))
+            appendError(complete);
+        else
+            appendOutput(complete);
+    }
+
+    if (flush && !pending.isEmpty()) {
+        const QString tail = pending;
+        pending.clear();
+        if (tail.contains(QStringLiteral("error"), Qt::CaseInsensitive) ||
+            tail.contains(QStringLiteral("warning"), Qt::CaseInsensitive) ||
+            tail.contains(QStringLiteral("failed"), Qt::CaseInsensitive))
+            appendError(tail);
+        else
+            appendOutput(tail);
+    }
+}
+
 void CvBasicEditorWindow::onProcessReadyReadStdout()
 {
     if (!m_process)
         return;
-
-    const QString text = QString::fromLocal8Bit(m_process->readAllStandardOutput());
-    if (!text.isEmpty())
-        appendOutput(text);
+    routeProcessText(m_stdoutPending, QString::fromLocal8Bit(m_process->readAllStandardOutput()));
 }
 
 void CvBasicEditorWindow::onProcessReadyReadStderr()
 {
     if (!m_process)
         return;
-
-    const QString text = QString::fromLocal8Bit(m_process->readAllStandardError());
-    if (!text.isEmpty())
-        appendError(text);
+    routeProcessText(m_stderrPending, QString::fromLocal8Bit(m_process->readAllStandardError()));
 }
 
 void CvBasicEditorWindow::finishBuildSuccess()
@@ -15981,23 +21838,47 @@ void CvBasicEditorWindow::appendOutput(const QString& text)
 
 void CvBasicEditorWindow::appendError(const QString& text)
 {
-    appendOutput(text);
+    // CVBasic reports line numbers for the generated combined source.  Rewrite
+    // those diagnostics before they are shown so the user sees the source tab
+    // and the line number as numbered in that tab.
+    const QRegularExpression lineRegex(
+        QStringLiteral("(?:\\bat\\s+)?\\bline\\b\\s*[:=]?\\s*(\\d+)"),
+        QRegularExpression::CaseInsensitiveOption);
 
-    // Simple error/warning detection for the error table.
-    const QStringList lines = text.split(QRegularExpression("[\\r\\n]+"), Qt::SkipEmptyParts);
-    const QRegularExpression lineRegex(QStringLiteral("(?:line|Line|LINE)\\s*[:= ]\\s*(\\d+)"));
+    const QStringList physicalLines = text.split(QRegularExpression("(\\r\\n|\\n|\\r)"), Qt::KeepEmptyParts);
+    QString translatedText;
 
-    for (const QString& line : lines) {
-        const bool isWarning = line.contains("warning", Qt::CaseInsensitive);
-        const bool isError = line.contains("error", Qt::CaseInsensitive) || line.contains("failed", Qt::CaseInsensitive);
+    for (int i = 0; i < physicalLines.size(); ++i) {
+        const QString& rawLine = physicalLines.at(i);
+        QString displayLine = rawLine;
+
+        const bool isWarning = rawLine.contains(QStringLiteral("warning"), Qt::CaseInsensitive);
+        const bool isError = rawLine.contains(QStringLiteral("error"), Qt::CaseInsensitive) ||
+                             rawLine.contains(QStringLiteral("failed"), Qt::CaseInsensitive);
+
+        int combinedLine = -1;
+        const QRegularExpressionMatch match = lineRegex.match(rawLine);
+        if (match.hasMatch())
+            combinedLine = match.captured(1).toInt();
+
+        BuildLineInfo mapped;
+        if (combinedLine > 0)
+            mapped = sourceLineForDiagnostic(rawLine, combinedLine);
+
+        if ((isError || isWarning) && mapped.tabIndex >= 0 && mapped.localLine > 0) {
+            // Preserve the compiler's actual message, but replace the misleading
+            // combined-source line reference with the line the user sees.
+            displayLine.replace(match.capturedStart(0), match.capturedLength(0),
+                                tr("line %1").arg(mapped.localLine));
+            displayLine += tr("  [tab: %1]").arg(mapped.tabName);
+        }
+
+        translatedText += displayLine;
+        if (i + 1 < physicalLines.size())
+            translatedText += '\n';
 
         if (!isWarning && !isError)
             continue;
-
-        int lineNumber = -1;
-        const QRegularExpressionMatch match = lineRegex.match(line);
-        if (match.hasMatch())
-            lineNumber = match.captured(1).toInt();
 
         if (isWarning) {
             ++m_warningCount;
@@ -16011,8 +21892,10 @@ void CvBasicEditorWindow::appendError(const QString& text)
                 m_errorsLabel->setText(QString("● %1 Errors").arg(m_errorCount));
         }
 
-        addErrorRow(line.trimmed(), lineNumber);
+        addErrorRow(rawLine.trimmed(), combinedLine);
     }
+
+    appendOutput(translatedText);
 }
 
 void CvBasicEditorWindow::addErrorRow(const QString& description, int line)
@@ -16021,8 +21904,8 @@ void CvBasicEditorWindow::addErrorRow(const QString& description, int line)
         return;
 
     BuildLineInfo mapped;
-    if (m_buildStep == BuildStep::CvBasic)
-        mapped = sourceLineForCombinedLine(line);
+    if (line > 0)
+        mapped = sourceLineForDiagnostic(description, line);
 
     const int row = m_errorTable->rowCount();
     m_errorTable->insertRow(row);

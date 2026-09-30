@@ -6,7 +6,7 @@
         <file>images/ctrl_superaction.png</file>
         <file>images/hw_sgm.png</file>
         <file>images/machine_adam.png</file>
-        <file>images/machine_adamp.png</file>
+        <file>images/machine_atari.png</file>
         <file>images/machine_coleco.png</file>
         <file>images/joypad.png</file>
         <file>images/hw_printer.png</file>
@@ -58,7 +58,6 @@
         <file>images/LOAD.png</file>
         <file>images/BROWSE.png</file>
         <file>images/DEFAULT.png</file>
-        <file>images/adamp_logo1.png</file>
         <file>images/UP.png</file>
         <file>images/DELDIR.png</file>
         <file>images/NEWDIR.png</file>
@@ -91,6 +90,13 @@
         <file>images/SND_RESTART.png</file>
         <file>images/SND_LOOP.png</file>
         <file>images/SND_STOP.png</file>
+        <file>images/Atari.png</file>
+        <file>images/ADAMP_SPLASH_LOGO.png</file>
+        <file>images/adamp_logo1.png</file>
+        <file>images/SND_LOOP_D.png</file>
+        <file>images/SND_PLAY_D.png</file>
+        <file>images/SND_RESTART_D.png</file>
+        <file>images/SND_STOP_D.png</file>
     </qresource>
     <qresource prefix="/sounds">
         <file>sounds/adam_tape.wav</file>

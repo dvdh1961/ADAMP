@@ -15,6 +15,7 @@ public:
 
     // Getters
     QString romPath() const;
+    QString atariRomPath() const;
     QString diskPath() const;
     QString tapePath() const;
     QString statePath() const;
@@ -39,6 +40,7 @@ public:
 
     // Setters
     void setRomPath(const QString &path);
+    void setAtariRomPath(const QString &path);
     void setDiskPath(const QString &path);
     void setTapePath(const QString &path);
     void setStatePath(const QString &path);
@@ -63,6 +65,7 @@ public:
 
 private slots:
     void onBrowseRomPath();
+    void onBrowseAtariRomPath();
     void onBrowseDiskPath();
     void onBrowseTapePath();
     void onBrowseStatePath();
@@ -102,7 +105,7 @@ private slots:
 
 private:
     // Edits
-    QLineEdit *m_romPathEdit, *m_diskPathEdit, *m_tapePathEdit, *m_statePathEdit;
+    QLineEdit *m_romPathEdit, *m_atariRomPathEdit, *m_diskPathEdit, *m_tapePathEdit, *m_statePathEdit;
     QLineEdit *m_breakpointPathEdit, *m_screenshotPathEdit, *m_symbolPathEdit;
     QLineEdit *m_adamBezelPathEdit, *m_cvBezelPathEdit;
     QLineEdit *m_colecoBiosPathEdit, *m_eosBiosPathEdit, *m_writerBiosPathEdit;
@@ -118,7 +121,7 @@ private:
     QComboBox *m_adamBootModeCombo = nullptr;
 
     // SET Knoppen
-    QPushButton *m_romPathBtn, *m_diskPathBtn, *m_tapePathBtn, *m_statePathBtn;
+    QPushButton *m_romPathBtn, *m_atariRomPathBtn, *m_diskPathBtn, *m_tapePathBtn, *m_statePathBtn;
     QPushButton *m_breakpointPathBtn, *m_screenshotPathBtn, *m_symbolPathBtn;
     QPushButton *m_adamBezelPathBtn, *m_cvBezelPathBtn;
     QPushButton *m_colecoBiosPathBtn, *m_eosBiosPathBtn, *m_writerBiosPathBtn;

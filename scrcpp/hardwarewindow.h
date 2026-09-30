@@ -15,13 +15,29 @@ class QDialogButtonBox;
 // Machine types
 enum MachineType {
     MACHINE_COLECO  = 0,
-    MACHINE_ADAM    = 1
+    MACHINE_ADAM    = 1,
+    MACHINE_ATARI2600 = 2
 };
 
 enum VdpType {
-    VDP_TMS  = 0,
-    VDP_F18A = 1
+    VDP_TMS      = 0,
+    VDP_F18A     = 1,
+    VDP_PICO9918 = 2
 };
+
+inline bool vdpHasF18A(int vdpType)
+{
+    return vdpType == VDP_F18A || vdpType == VDP_PICO9918;
+}
+
+inline const char* vdpTypeName(int vdpType)
+{
+    switch (vdpType) {
+    case VDP_F18A:     return "F18A";
+    case VDP_PICO9918: return "PICO9918";
+    default:           return "TMS9928A/TMS9918A";
+    }
+}
 
 struct HardwareConfig {
     MachineType machine = MACHINE_COLECO;
@@ -47,6 +63,7 @@ struct HardwareConfig {
     // Controllers
     bool Joys = false;
     bool AdamNet    = false;
+    bool fujiNetDirectRom = false;
     bool Cartridge   = false;
 
     QString biosColeco = "Internal";
@@ -64,8 +81,10 @@ public:
     void updateAvailability();
 
     void setLoadedMediaDisplayNames(
+        MachineType activeMachine,
         const QString& colecoCartridgeName,
         const QString& adamCartridgeName,
+        const QString& atariCartridgeName,
         const QString& tape1Name,
         const QString& tape2Name,
         const QString& disc1Name,
@@ -83,12 +102,14 @@ private slots:
     void onPrinterClicked();
     void onToggleSGM(bool checked);
     void onToggleC80(bool checked);
+    void onTestMcu2();
 
 private:
     void buildUi();
     void loadFromConfig(const HardwareConfig& c);
     HardwareConfig readFromUi() const;
     void updatePaletteSwatches();
+    void updateMediaVisibility(MachineType activeMachine);
     void checkRealAdamP();
 
     QGroupBox*   m_groupMachine = nullptr;
@@ -97,16 +118,17 @@ private:
     QToolButton* m_btnAdamP   = nullptr;
     QButtonGroup* m_machineGroup = nullptr;
 
-    QGroupBox*   m_groupCtrl = nullptr;
-    QToolButton* m_btnJoys = nullptr;
-    QToolButton* m_btnAdamnet   = nullptr;
-    QToolButton* m_btnCartridge = nullptr;
-    QButtonGroup* m_ctrlGroup = nullptr;
-
     QGroupBox*   m_groupAddHw = nullptr;
     QToolButton* m_btnSGM  = nullptr;
     QToolButton* m_btn80C = nullptr;
     QToolButton* m_btnPrinter = nullptr;
+
+    QGroupBox* m_groupAdamNet = nullptr;
+    QComboBox* m_cboDisk1Backend = nullptr;
+    QCheckBox* m_chkFujiNetDirectRom = nullptr;
+    QLabel* m_lblMcu2Status = nullptr;
+    class QPushButton* m_btnTestMcu2 = nullptr;
+    bool m_mcu2ProbeSucceeded = false;
 
     QGroupBox*   m_groupVideo = nullptr;
     QComboBox*   m_cboDisplay = nullptr;
@@ -128,6 +150,15 @@ private:
     QLabel* m_lblEmuD5 = nullptr; // D5 (Disc 1)
     QLabel* m_lblEmuD6 = nullptr; // D6 (Disc 2)
     QLabel* m_lblEmuD7 = nullptr; // D7 (Disc 3)
+    QLabel* m_lblEmuVCS = nullptr; // Atari 2600 cartridge
+
+    QLabel* m_lblRowCC = nullptr;
+    QLabel* m_lblRowCA = nullptr;
+    QLabel* m_lblRowD1 = nullptr;
+    QLabel* m_lblRowD2 = nullptr;
+    QLabel* m_lblRowD5 = nullptr;
+    QLabel* m_lblRowD6 = nullptr;
+    QLabel* m_lblRowVCS = nullptr;
 
     QLabel* m_lblAdamP = nullptr;
 

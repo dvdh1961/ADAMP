@@ -58,12 +58,13 @@ SpriteWindow::SpriteWindow(QWidget *parent)
         m_spriteListWidget->insertRow(i);
 
         QTableWidgetItem *itemNum = new QTableWidgetItem(QString::number(i));
-        itemNum->setForeground(Qt::white);
+        const bool dayMode = QApplication::palette().color(QPalette::Window).lightness() >= 128;
+        itemNum->setForeground(dayMode ? QColor(QStringLiteral("#191919")) : QColor(Qt::white));
         m_spriteListWidget->setItem(i, 0, itemNum);
 
         for (int j = 1; j < 6; ++j) {
             QTableWidgetItem *item = new QTableWidgetItem("");
-            item->setForeground(Qt::white);
+            item->setForeground(dayMode ? QColor(QStringLiteral("#191919")) : QColor(Qt::white));
             m_spriteListWidget->setItem(i, j, item);
         }
     }

@@ -5,6 +5,7 @@
 #include "inputwidget.h"
 #include "logwindow.h"
 #include "debuggerwindow.h"
+#include "ataridebuggerwindow.h"
 #include "disasm_bridge.h"
 #include "cartridgeinfowindow.h"
 #include "ntablewindow.h"
@@ -56,6 +57,18 @@
 #include <QUrl>
 #include <QMessageBox>
 #include <QProgressDialog>
+#include <QSaveFile>
+#include <QEventLoop>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QHostInfo>
+#include <QUdpSocket>
+#include <QElapsedTimer>
+#include <QApplication>
+#include <QStyleFactory>
+#include "6801/adnet_mcu2.h"
+#include "vdp_bridge.h"
 
 
 // MainWindow core (constructor/destructor)
@@ -103,14 +116,27 @@ MainWindow::MainWindow(QWidget *parent)
     m_openColecoRomAction(nullptr)
 
 {
+    const QByteArray picoConfigPath =
+        QDir(QCoreApplication::applicationDirPath()).filePath("pico9918.cfg").toLocal8Bit();
+    vdp_bridge_set_config_path(picoConfigPath.constData());
+
     setUpLogWindow();
     configurePlatformSettings();
 
     QCoreApplication::setOrganizationName("DVdHSoft");
     QCoreApplication::setApplicationName("ADAMP_EMU");
+    setObjectName(QStringLiteral("adampMainWindow"));
+
+    // Restore the visual mode before the UI is assembled.  Night mode remains
+    // the default for existing installations.
+    QSettings themeSettings;
+    m_darkTheme = themeSettings.value("appearance/darkTheme", true).toBool();
+    applyDayNightTheme(m_darkTheme);
 
     // Version
-    appVersion = "1.3.08.26";
+    // Keep the Atari core revision visible so a stale shadow-build cannot be
+    // mistaken for the newly compiled PAL renderer.
+    appVersion = QStringLiteral("2.0.09.26");
 
     setWindowTitle(QString("ADAM+ Emulator - v%1").arg(appVersion));
 
@@ -127,7 +153,7 @@ MainWindow::MainWindow(QWidget *parent)
     //m_bottomBlackBar->hide();
 
     m_splashLabel = new QLabel(this);
-    QPixmap splash(":/images/images/ADAMP_SPLASH.png");
+    QPixmap splash(":/images/images/ADAMP_SPLASH_LOGO.png");
 
     if (!splash.isNull())
     {
@@ -158,13 +184,15 @@ MainWindow::MainWindow(QWidget *parent)
 
     QHBoxLayout *hLayout = new QHBoxLayout(m_logoContainer);
     hLayout->setContentsMargins(0, 0, 0, 0);
-    hLayout->setSpacing(0);
+    //hLayout->setSpacing(0);
 
-    m_logoLabel0 = new QLabel(m_logoContainer);
-    QPixmap logo0Pixmap(":/images/images/adamp_logo0.png");
-    m_logoLabel0->setPixmap(logo0Pixmap);
-    m_logoLabel0->setScaledContents(false);
-    hLayout->addWidget(m_logoLabel0);
+    //m_logoLabel0 = new QLabel(m_logoContainer);
+    //QPixmap logo0Pixmap(":/images/images/adamp_logo0.png");
+    //m_logoLabel0->setPixmap(logo0Pixmap);
+    //m_logoLabel0->setScaledContents(false);
+    //hLayout->addWidget(m_logoLabel0);
+
+    hLayout->addSpacing(10);
 
     m_powerBtn = new QPushButton(m_logoContainer);
     m_powerBtn->setCheckable(true);
@@ -205,12 +233,14 @@ MainWindow::MainWindow(QWidget *parent)
     m_resetCartBtn->setCursor(Qt::PointingHandCursor);
     m_resetCartBtn->setFocusPolicy(Qt::NoFocus);
 
-    m_logoLabel2 = new QLabel(m_logoContainer);
-    QPixmap logo2Pixmap(":/images/images/adamp_logo2.png");
-    m_logoLabel2->setPixmap(logo2Pixmap);
-    m_logoLabel2->setScaledContents(false);
+    //m_logoLabel2 = new QLabel(m_logoContainer);
+    //QPixmap logo2Pixmap(":/images/images/adamp_logo2.png");
+    //m_logoLabel2->setPixmap(logo2Pixmap);
+    //m_logoLabel2->setScaledContents(false);
 
-    hLayout->addWidget(m_logoLabel2);
+    //hLayout->addWidget(m_logoLabel2);
+
+    hLayout->addSpacing(10);
 
     m_logoContainer->setLayout(hLayout);
 
@@ -252,9 +282,55 @@ MainWindow::MainWindow(QWidget *parent)
 
     setStatusBar();
 
+    // Dedicated overlay for the frameless application's outer edge.  A QSS
+    // border on QMainWindow is not reliably painted above its dock areas and
+    // central widget on Windows.
+    m_windowBorderOverlay = new QFrame(this);
+    m_windowBorderOverlay->setObjectName(QStringLiteral("windowBorderOverlay"));
+    m_windowBorderOverlay->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_windowBorderOverlay->setFrameShape(QFrame::NoFrame);
+    m_windowBorderOverlay->setGeometry(rect());
+    m_windowBorderOverlay->raise();
+
     loadSettings();
 
     setupUI();
+    setupThemeButton();
+
+    connect(m_inputWidget, &InputWidget::atariKeypadShortcut,
+            this, [this](int key) {
+        if (m_machineType != MACHINE_ATARI2600)
+            return;
+
+        if (key == 1) {
+            if (m_atariColorAction)
+                m_atariColorAction->trigger();
+            return;
+        }
+
+        if (key == 2) {
+            m_atariLeftDifficultyA = !m_atariLeftDifficultyA;
+            if (m_atariLeftDifficultyAAction) m_atariLeftDifficultyAAction->setChecked(m_atariLeftDifficultyA);
+            if (m_atariLeftDifficultyBAction) m_atariLeftDifficultyBAction->setChecked(!m_atariLeftDifficultyA);
+            m_inputWidget->setAtari2600LeftDifficultyA(m_atariLeftDifficultyA);
+            saveSettings();
+            updateAtariStatusBar();
+            return;
+        }
+
+        if (key == 3) {
+            m_atariRightDifficultyA = !m_atariRightDifficultyA;
+            if (m_atariRightDifficultyAAction) m_atariRightDifficultyAAction->setChecked(m_atariRightDifficultyA);
+            if (m_atariRightDifficultyBAction) m_atariRightDifficultyBAction->setChecked(!m_atariRightDifficultyA);
+            m_inputWidget->setAtari2600RightDifficultyA(m_atariRightDifficultyA);
+            saveSettings();
+            updateAtariStatusBar();
+            return;
+        }
+
+        if (key == 4 && m_atariGameResetAction)
+            m_atariGameResetAction->trigger();
+    });
 
     m_joystick = new SimpleJoystick(this);
 
@@ -286,6 +362,9 @@ MainWindow::MainWindow(QWidget *parent)
     if (m_actTogglePaddleMode) {
         onTogglePaddleMode(m_usePaddleMode);
     }
+    if (m_actToggleDrivingControllerMode) {
+        onToggleDrivingControllerMode(m_useDrivingControllerMode);
+    }
 
     m_screenWidget->setScalingMode(static_cast<ScreenWidget::ScalingMode>(m_scalingMode));
 
@@ -296,7 +375,10 @@ MainWindow::MainWindow(QWidget *parent)
     }
 
     if (m_sysLabel) {
-        m_sysLabel->setText(m_machineType ? "ADAM" : "COLECO");
+        if (m_machineType == MACHINE_ATARI2600)
+            m_sysLabel->setText("ATARI 2600");
+        else
+            m_sysLabel->setText(m_machineType == MACHINE_ADAM ? "ADAM" : "COLECO");
     }
 
     m_c80Enabled = false;
@@ -310,7 +392,7 @@ MainWindow::MainWindow(QWidget *parent)
     cpm80_reset();
 
     HardwareConfig initialConfig;
-    initialConfig.machine = (m_machineType ? MACHINE_ADAM : MACHINE_COLECO);
+    initialConfig.machine = static_cast<MachineType>(m_machineType);
     initialConfig.realhardware = m_realhardware;
     initialConfig.palette = m_paletteIndex;
     initialConfig.vdpType = m_vdpType;
@@ -318,6 +400,7 @@ MainWindow::MainWindow(QWidget *parent)
     initialConfig.c80Enabled = m_c80Enabled;
     initialConfig.Joys = m_ctrlJoys;
     initialConfig.AdamNet = m_ctrlAdamNet;
+    initialConfig.fujiNetDirectRom = m_fujiNetDirectRom;
     initialConfig.Cartridge = m_ctrlCartridge;
 
     m_hardwareWindow = new HardwareWindow(initialConfig, this);
@@ -338,8 +421,119 @@ MainWindow::MainWindow(QWidget *parent)
 
     setupEmulatorThread();
 
+    mcu2_set_fuji_boot_interceptor(
+        [this](const QByteArray &headerBlocks, const QString &mountedPath) {
+            int decision = -1;
+            if (QThread::currentThread() == thread())
+                return handleFujiNetBootIntercept(headerBlocks, mountedPath);
+            QMetaObject::invokeMethod(
+                this,
+                [this, &decision, headerBlocks, mountedPath]() {
+                    decision = handleFujiNetBootIntercept(headerBlocks, mountedPath);
+                },
+                Qt::BlockingQueuedConnection);
+            return decision;
+        });
+
+    mcu2_set_fuji_coleco_rom_ready_handler(
+        [this](const QString &romPath) {
+            QMetaObject::invokeMethod(this, [this, romPath]() {
+                /* The D5 loader reached the first block after the ROM. Let
+                 * that final failed/end-of-media DCB retire before switching
+                 * the running core from ADAM to native Coleco. */
+                qDebug() << "[UI][BOOT] FujiNet ROM saved; software cartridge boot deferred:"
+                         << romPath;
+                QTimer::singleShot(1000, this, [this, romPath]() {
+                    qDebug() << "[UI][BOOT] FujiNet transfer settled -> normal software cartridge route:"
+                             << romPath;
+                    m_adamGameMode = false;
+                    adamnet_set_game_mode(false);
+                    loadColecoRomFromPath(romPath, true);
+                });
+            }, Qt::QueuedConnection);
+        });
+
+    mcu2_set_fuji_coleco_rom_progress_handler(
+        [this](qint64 loadedBytes, qint64 totalBytes, bool finished) {
+            QMetaObject::invokeMethod(this, [this, loadedBytes, totalBytes, finished]() {
+                if (finished) {
+                    if (m_fujiRomProgressDialog) {
+                        m_fujiRomProgressDialog->close();
+                        m_fujiRomProgressDialog->deleteLater();
+                        m_fujiRomProgressDialog = nullptr;
+                    }
+                    return;
+                }
+
+                if (!m_fujiRomProgressDialog) {
+                    m_fujiRomProgressDialog = new QProgressDialog(this);
+                    m_fujiRomProgressDialog->setWindowTitle(
+                        tr("Loading FujiNet cartridge"));
+                    m_fujiRomProgressDialog->setCancelButton(nullptr);
+                    m_fujiRomProgressDialog->setAutoClose(false);
+                    m_fujiRomProgressDialog->setAutoReset(false);
+                    m_fujiRomProgressDialog->setMinimumDuration(0);
+                    m_fujiRomProgressDialog->setWindowModality(Qt::WindowModal);
+                    m_fujiRomProgressDialog->show();
+                }
+
+                const qint64 loadedKiB = loadedBytes / 1024;
+                if (totalBytes > 0) {
+                    const int totalKiB = int(totalBytes / 1024);
+                    const int valueKiB = qBound(0, int(loadedKiB), totalKiB);
+                    const int percent = totalKiB > 0
+                        ? (valueKiB * 100) / totalKiB : 0;
+                    m_fujiRomProgressDialog->setRange(0, totalKiB);
+                    m_fujiRomProgressDialog->setValue(valueKiB);
+                    m_fujiRomProgressDialog->setLabelText(
+                        tr("Loading native Coleco ROM from FujiNet\n"
+                           "%1 KiB / %2 KiB — %3%")
+                            .arg(valueKiB).arg(totalKiB).arg(percent));
+                } else {
+                    m_fujiRomProgressDialog->setRange(0, 0);
+                    m_fujiRomProgressDialog->setLabelText(
+                        loadedBytes == 0
+                            ? tr("Determining FujiNet ROM size…")
+                            : tr("Loading native Coleco ROM from FujiNet\n"
+                                 "%1 KiB received").arg(loadedKiB));
+                }
+            }, Qt::QueuedConnection);
+        });
+
+    mcu2_set_fuji_direct_rom_fetch_handler(
+        [this](const QString &host, const QString &path) {
+            if (QThread::currentThread() == thread())
+                return fetchFujiNetRomDirect(host, path);
+            QString result;
+            QMetaObject::invokeMethod(this, [this, &result, host, path]() {
+                result = fetchFujiNetRomDirect(host, path);
+            }, Qt::BlockingQueuedConnection);
+            return result;
+        });
+
+    /* The initial hardware configuration can queue an ADAM reset before the
+     * interceptor exists. Queue one correctly ordered hardware power boot:
+     * retained-media choice/D9 first, BIOS reset second. */
+    if (m_machineType == MACHINE_ADAM && m_ctrlAdamNet) {
+        QMetaObject::invokeMethod(
+            m_colecoController,
+            [ctrl = m_colecoController]() {
+                /* If the already queued initial reset consumed the probe, do
+                 * not interrupt its boot with a second power cycle. */
+                if (mcu2_fuji_reset_boot_probe_is_armed())
+                    ctrl->powerOffMachine(true);
+            },
+            Qt::QueuedConnection);
+    }
+
+    QMetaObject::invokeMethod(m_colecoController,"setAtari2600PhosphorEffect",
+                              Qt::QueuedConnection,Q_ARG(bool,m_atariPhosphorEffect));
+
     if (m_inputWidget) {
         m_inputWidget->setController(m_colecoController);
+        m_inputWidget->setAtari2600Color(m_atariColor);
+        m_inputWidget->setAtari2600LeftDifficultyA(m_atariLeftDifficultyA);
+        m_inputWidget->setAtari2600RightDifficultyA(m_atariRightDifficultyA);
         qDebug() << "[MAINWINDOW] Controller connected to InputWidget";
     }
 
@@ -352,6 +546,8 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_debugWin = new DebuggerWindow(this);
     m_debugWin->setController(m_colecoController);
+    m_atariDebugWin = new AtariDebuggerWindow(this);
+    m_atariDebugWin->setController(m_colecoController);
 
     connect(m_debugWin, &DebuggerWindow::requestStepCPU,
             this,       &MainWindow::onDebuggerStepCPU);
@@ -432,8 +628,312 @@ MainWindow::MainWindow(QWidget *parent)
 
 }
 
+QString MainWindow::fetchFujiNetRomDirect(const QString &hostValue,
+                                          const QString &pathValue)
+{
+    const QString cancelledResult = QStringLiteral("::ADAMP_DIRECT_CANCELLED::");
+    const QString host = hostValue.trimmed();
+    QString path = pathValue.trimmed();
+    if (host.isEmpty() || path.isEmpty()) {
+        qWarning() << "[UI][DIRECT] missing FujiNet host/path metadata";
+        return QString();
+    }
+    if (!path.startsWith('/'))
+        path.prepend('/');
+
+    if (!m_fujiRomProgressDialog) {
+        m_fujiRomProgressDialog = new QProgressDialog(this);
+        m_fujiRomProgressDialog->setWindowTitle(tr("Loading FujiNet cartridge"));
+        m_fujiRomProgressDialog->setCancelButtonText(tr("Cancel"));
+        m_fujiRomProgressDialog->setAutoClose(false);
+        m_fujiRomProgressDialog->setAutoReset(false);
+        m_fujiRomProgressDialog->setMinimumDuration(0);
+        m_fujiRomProgressDialog->setWindowModality(Qt::WindowModal);
+    }
+    /* A live D9 route may already have created the indeterminate physical
+     * progress dialog while probing the header. Convert that same dialog to
+     * a cancellable direct-download dialog as well. */
+    m_fujiRomProgressDialog->setCancelButtonText(tr("Cancel"));
+    m_fujiRomProgressDialog->setRange(0, 0);
+    m_fujiRomProgressDialog->setLabelText(
+        tr("Connecting directly to %1…").arg(host));
+    m_fujiRomProgressDialog->show();
+
+    const QString outputDir = QDir(QCoreApplication::applicationDirPath())
+        .filePath(QStringLiteral("media/roms/FujiNet"));
+    if (!QDir().mkpath(outputDir)) {
+        m_fujiRomProgressDialog->close();
+        m_fujiRomProgressDialog->deleteLater();
+        m_fujiRomProgressDialog = nullptr;
+        return QString();
+    }
+    const QString outputPath = QDir(outputDir).filePath(QStringLiteral("FujiNet.rom"));
+    QSaveFile output(outputPath);
+    if (!output.open(QIODevice::WriteOnly)) {
+        m_fujiRomProgressDialog->close();
+        m_fujiRomProgressDialog->deleteLater();
+        m_fujiRomProgressDialog = nullptr;
+        return QString();
+    }
+
+    qint64 loaded = 0;
+    qint64 total = -1;
+    QByteArray validationBytes;
+    bool transferOk = false;
+    bool cancelled = false;
+    QString failure;
+    const QMetaObject::Connection cancelConnection = connect(
+        m_fujiRomProgressDialog, &QProgressDialog::canceled,
+        this, [&cancelled]() { cancelled = true; });
+    auto updateProgress = [&]() {
+        if (total > 0) {
+            m_fujiRomProgressDialog->setRange(0, 1000);
+            m_fujiRomProgressDialog->setValue(int(qMin<qint64>(1000,
+                loaded * 1000 / total)));
+            m_fujiRomProgressDialog->setLabelText(
+                tr("Loading FujiNet cartridge directly: %1 / %2 KiB (%3%)")
+                    .arg(loaded / 1024).arg(total / 1024)
+                    .arg(loaded * 100 / total));
+        } else {
+            m_fujiRomProgressDialog->setRange(0, 0);
+            m_fujiRomProgressDialog->setLabelText(
+                tr("Loading FujiNet cartridge directly: %1 KiB").arg(loaded / 1024));
+        }
+        QApplication::processEvents();
+    };
+    auto store = [&](const QByteArray &chunk) -> bool {
+        if (chunk.isEmpty()) return true;
+        if (loaded + chunk.size() > 16 * 1024 * 1024) {
+            failure = tr("ROM exceeds the 16 MiB safety limit");
+            return false;
+        }
+        validationBytes.append(chunk);
+        if (output.write(chunk) != chunk.size()) {
+            failure = output.errorString();
+            return false;
+        }
+        loaded += chunk.size();
+        updateProgress();
+        return true;
+    };
+
+    const bool webSource = host.startsWith(QStringLiteral("http://"), Qt::CaseInsensitive)
+        || host.startsWith(QStringLiteral("https://"), Qt::CaseInsensitive)
+        || host.compare(QStringLiteral("SD"), Qt::CaseInsensitive) == 0;
+    if (webSource) {
+        QUrl url(host.compare(QStringLiteral("SD"), Qt::CaseInsensitive) == 0
+                     ? QStringLiteral("http://fujinet.local/dav") : host);
+        QString urlPath = url.path();
+        if (!urlPath.endsWith('/')) urlPath += '/';
+        urlPath += path.mid(1);
+        url.setPath(urlPath);
+        QNetworkAccessManager manager;
+        QNetworkRequest request(url);
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                             QNetworkRequest::NoLessSafeRedirectPolicy);
+        QNetworkReply *reply = manager.get(request);
+        connect(m_fujiRomProgressDialog, &QProgressDialog::canceled,
+                reply, &QNetworkReply::abort);
+        QEventLoop loop;
+        connect(reply, &QNetworkReply::downloadProgress, this,
+                [&](qint64 received, qint64 announced) {
+            Q_UNUSED(received)
+            if (announced > 0) total = announced;
+            updateProgress();
+        });
+        connect(reply, &QIODevice::readyRead, this, [&]() {
+            if (!failure.isEmpty() || cancelled) return;
+            store(reply->readAll());
+        });
+        connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        loop.exec();
+        if (failure.isEmpty()) store(reply->readAll());
+        transferOk = !cancelled && failure.isEmpty()
+            && reply->error() == QNetworkReply::NoError;
+        if (!transferOk && failure.isEmpty()) failure = reply->errorString();
+        reply->deleteLater();
+    } else {
+        const QHostInfo info = QHostInfo::fromName(host);
+        QHostAddress address;
+        for (const QHostAddress &candidate : info.addresses()) {
+            if (candidate.protocol() == QAbstractSocket::IPv4Protocol) {
+                address = candidate;
+                break;
+            }
+        }
+        if (address.isNull()) {
+            failure = tr("TNFS host could not be resolved");
+        } else {
+            QUdpSocket socket;
+            socket.connectToHost(address, 16384);
+            quint16 session = 0;
+            quint8 sequence = 0;
+            auto transaction = [&](quint8 command, const QByteArray &payload,
+                                   QByteArray *response) -> bool {
+                for (int attempt = 0; attempt < 4; ++attempt) {
+                    if (cancelled) return false;
+                    QByteArray packet;
+                    packet.append(char(session & 0xff));
+                    packet.append(char((session >> 8) & 0xff));
+                    packet.append(char(sequence));
+                    packet.append(char(command));
+                    packet.append(payload);
+                    socket.write(packet);
+                    socket.flush();
+                    QElapsedTimer timer;
+                    timer.start();
+                    while (timer.elapsed() < 1600) {
+                        if (cancelled) return false;
+                        if (!socket.waitForReadyRead(100)) {
+                            QApplication::processEvents();
+                            continue;
+                        }
+                        while (socket.hasPendingDatagrams()) {
+                            QByteArray reply;
+                            reply.resize(int(socket.pendingDatagramSize()));
+                            socket.readDatagram(reply.data(), reply.size());
+                            if (reply.size() >= 5 && quint8(reply[2]) == sequence
+                                && quint8(reply[3]) == command) {
+                                ++sequence;
+                                *response = reply;
+                                return true;
+                            }
+                        }
+                    }
+                }
+                ++sequence;
+                return false;
+            };
+            QByteArray response;
+            QByteArray mount;
+            mount.append(char(0)); mount.append(char(1));
+            mount.append('/'); mount.append(char(0));
+            mount.append(char(0)); mount.append(char(0));
+            if (!transaction(0x00, mount, &response) || quint8(response[4]) != 0) {
+                failure = tr("TNFS mount failed");
+            } else {
+                session = quint8(response[0]) | (quint16(quint8(response[1])) << 8);
+                QByteArray pathUtf8 = path.toUtf8();
+                pathUtf8.append(char(0));
+                if (!transaction(0x24, pathUtf8, &response)
+                    || quint8(response[4]) != 0 || response.size() < 15) {
+                    failure = tr("TNFS file information failed");
+                } else {
+                    total = quint8(response[11])
+                        | (qint64(quint8(response[12])) << 8)
+                        | (qint64(quint8(response[13])) << 16)
+                        | (qint64(quint8(response[14])) << 24);
+                    QByteArray open;
+                    open.append(char(1)); open.append(char(0));
+                    open.append(char(0)); open.append(char(0));
+                    open.append(pathUtf8);
+                    if (!transaction(0x29, open, &response)
+                        || quint8(response[4]) != 0 || response.size() < 6) {
+                        failure = tr("TNFS open failed");
+                    } else {
+                        const quint8 handle = quint8(response[5]);
+                        transferOk = true;
+                        while (loaded < total) {
+                            if (cancelled) {
+                                transferOk = false;
+                                break;
+                            }
+                            const quint16 wanted = quint16(qMin<qint64>(525, total - loaded));
+                            QByteArray read;
+                            read.append(char(handle));
+                            read.append(char(wanted & 0xff));
+                            read.append(char((wanted >> 8) & 0xff));
+                            if (!transaction(0x21, read, &response)
+                                || response.size() < 7 || quint8(response[4]) != 0) {
+                                transferOk = false;
+                                failure = tr("TNFS read failed at %1 KiB").arg(loaded / 1024);
+                                break;
+                            }
+                            const int count = quint8(response[5])
+                                | (int(quint8(response[6])) << 8);
+                            if (count <= 0 || response.size() < 7 + count
+                                || !store(response.mid(7, count))) {
+                                transferOk = false;
+                                if (failure.isEmpty()) failure = tr("Invalid TNFS read response");
+                                break;
+                            }
+                        }
+                        QByteArray closePayload(1, char(handle));
+                        transaction(0x23, closePayload, &response);
+                    }
+                }
+                QByteArray none;
+                transaction(0x01, none, &response);
+            }
+        }
+    }
+
+    bool signatureOk = false;
+    auto hasHeaderAt = [&](qint64 offset) {
+        if (offset < 0 || offset + 1 >= validationBytes.size()) return false;
+        const quint8 a = quint8(validationBytes[int(offset)]);
+        const quint8 b = quint8(validationBytes[int(offset + 1)]);
+        return (a == 0xAA && b == 0x55) || (a == 0x55 && b == 0xAA);
+    };
+    for (qint64 offset = 0; offset + 1 < validationBytes.size();
+         offset += 16 * 1024) {
+        if (hasHeaderAt(offset)) {
+            signatureOk = true;
+            break;
+        }
+    }
+    /* Match coleco_loadcart(): some banked images place the boot header at
+     * the beginning of their final 16 KiB bank rather than at an absolute
+     * 16 KiB boundary. Small legacy carts and known 128 KiB headerless carts
+     * are accepted by that same established software loader. */
+    if (!signatureOk && validationBytes.size() >= 16 * 1024)
+        signatureOk = hasHeaderAt(validationBytes.size() - 16 * 1024);
+    if (!signatureOk && (validationBytes.size() <= 32 * 1024
+                         || validationBytes.size() == 128 * 1024))
+        signatureOk = true;
+    const bool sizeOk = loaded >= 8 * 1024 && loaded <= 16 * 1024 * 1024
+        && (total <= 0 || loaded == total);
+    disconnect(cancelConnection);
+    if (cancelled) {
+        output.cancelWriting();
+        qDebug() << "[UI][DIRECT] download cancelled by user; physical fallback suppressed";
+        m_fujiRomProgressDialog->close();
+        m_fujiRomProgressDialog->deleteLater();
+        m_fujiRomProgressDialog = nullptr;
+        return cancelledResult;
+    }
+    if (!transferOk || !signatureOk || !sizeOk) {
+        output.cancelWriting();
+        qWarning() << "[UI][DIRECT] direct ROM rejected; host=" << host
+                   << "path=" << path << "loaded=" << loaded << "total=" << total
+                   << "bank-header=" << signatureOk << "error=" << failure;
+        m_fujiRomProgressDialog->close();
+        m_fujiRomProgressDialog->deleteLater();
+        m_fujiRomProgressDialog = nullptr;
+        return QString();
+    }
+    if (!output.commit()) {
+        qWarning() << "[UI][DIRECT] unable to commit ROM:" << output.errorString();
+        m_fujiRomProgressDialog->close();
+        m_fujiRomProgressDialog->deleteLater();
+        m_fujiRomProgressDialog = nullptr;
+        return QString();
+    }
+    m_fujiRomProgressDialog->setValue(1000);
+    m_fujiRomProgressDialog->close();
+    m_fujiRomProgressDialog->deleteLater();
+    m_fujiRomProgressDialog = nullptr;
+    qDebug() << "[UI][DIRECT] complete; protocol=" << (webSource ? "HTTP/WebDAV" : "TNFS")
+             << "bytes=" << loaded << "file=" << outputPath;
+    return outputPath;
+}
+
 MainWindow::~MainWindow()
 {
+    mcu2_set_fuji_direct_rom_fetch_handler(Mcu2FujiDirectRomFetch());
+    mcu2_set_fuji_coleco_rom_ready_handler(Mcu2FujiColecoRomReady());
+    mcu2_set_fuji_coleco_rom_progress_handler(Mcu2FujiColecoRomProgress());
+    mcu2_set_fuji_boot_interceptor(Mcu2FujiBootInterceptor());
     if (m_emulatorThread) {
         m_emulatorThread->quit();
         m_emulatorThread->wait(1000);

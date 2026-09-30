@@ -9,6 +9,7 @@
 #include <QVector>
 
 class QAction;
+class QCheckBox;
 class QLabel;
 class QPlainTextEdit;
 class QPrinter;
@@ -36,6 +37,7 @@ public:
                       const QString& gasm80Exe,
                       const QString& buildDir,
                       const QString& sourceDir);
+    void setDarkTheme(bool dark);
 
 signals:
     // Wordt verzonden wanneer gasm80 succesvol een .rom heeft gemaakt.
@@ -57,6 +59,7 @@ signals:
     // period/code -1 means HOLD previous state.
     void soundEditorStreamPlayRequested(const QVariantList& rows, int rowMs, bool loop);
     void soundEditorStreamStopRequested();
+    void soundEditorChannelAudibleChanged(int channel, bool audible);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -149,9 +152,12 @@ private:
 
     QString buildCombinedSource();
     BuildLineInfo sourceLineForCombinedLine(int combinedLine) const;
+    BuildLineInfo sourceLineForCompilerLine(int compilerLine) const;
+    BuildLineInfo sourceLineForDiagnostic(const QString& description, int compilerLine) const;
     bool writeCombinedSourceForBuild();
 
     void startBuild(bool runAfterBuild);
+    bool buildSourceRequiresSgm() const;
     void startCvBasic();
     void startGasm80();
     void finishBuildSuccess();
@@ -160,6 +166,7 @@ private:
 
     void appendOutput(const QString& text);
     void appendError(const QString& text);
+    void routeProcessText(QString& pending, const QString& chunk, bool flush = false);
     void setCurrentFile(const QString& filePath);
     void updateWindowTitle();
     void updateStatusText(const QString& text);
@@ -229,6 +236,7 @@ private:
     QAction* m_actPaintEditor = nullptr;
     QAction* m_actCompile = nullptr;
     QAction* m_actCompileRun = nullptr;
+    QCheckBox* m_sgmCheck = nullptr;
     QAction* m_actChooseCvBasic = nullptr;
     QAction* m_actChooseGasm80 = nullptr;
     QAction* m_actOpenBuildFolder = nullptr;
@@ -249,6 +257,8 @@ private:
     QString m_buildSourcePath;
     QString m_lastFindText;
     QVector<BuildLineInfo> m_buildLineMap;
+    QString m_stdoutPending;
+    QString m_stderrPending;
 
     int m_errorCount = 0;
     int m_warningCount = 0;

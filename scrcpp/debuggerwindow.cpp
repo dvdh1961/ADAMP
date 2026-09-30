@@ -1328,7 +1328,7 @@ void DebuggerWindow::onMemAddrNext()
     const int bytesPerLine = 16;
     uint32_t maxAddr = 0xFFFF;
     if (m_currentMemSourceIndex == 2) {
-        maxAddr = 0x1FFFF; // 128K
+        maxAddr = 0x2FFFF; // 192K: 64K intrinsic + 128K expansion RAM
     }
     if (m_memDumpStartAddr < (maxAddr - bytesPerLine)) {
         m_memDumpStartAddr += bytesPerLine;
@@ -1391,7 +1391,9 @@ void DebuggerWindow::updateBreakpointList()
 
         bool isEffectivelyEnabled = m_breakpointsEnabled && bp.enabled;
 
-        label->setStyleSheet(QString("color: %1").arg(isEffectivelyEnabled ? "white" : "#555555"));
+        const bool dayMode = QGuiApplication::palette().color(QPalette::Window).lightness() >= 128;
+        label->setStyleSheet(QString("color: %1").arg(
+            isEffectivelyEnabled ? (dayMode ? "#191919" : "white") : "#555555"));
 
         QCheckBox* checkBox = new QCheckBox();
         checkBox->setChecked(bp.enabled);
@@ -1559,7 +1561,9 @@ void DebuggerWindow::onBpCheckboxToggled(bool checked)
         QLabel* label = itemWidget->findChild<QLabel*>();
         if (label) {
             bool isEffectivelyEnabled = m_breakpointsEnabled && checked;
-            label->setStyleSheet(QString("color: %1").arg(isEffectivelyEnabled ? "white" : "#555555"));
+            const bool dayMode = QGuiApplication::palette().color(QPalette::Window).lightness() >= 128;
+            label->setStyleSheet(QString("color: %1").arg(
+                isEffectivelyEnabled ? (dayMode ? "#191919" : "white") : "#555555"));
         }
     }
 
@@ -1860,8 +1864,8 @@ void DebuggerWindow::updateSymbolsList()
         QLabel* label = new QLabel(display);
         label->setFont(fixedFont);
 
-        // Geef een kleur aan symbolen (b.v. Geel)
-        label->setStyleSheet("color: yellow");
+        const bool dayMode = QGuiApplication::palette().color(QPalette::Window).lightness() >= 128;
+        label->setStyleSheet(dayMode ? "color: #191919" : "color: yellow");
 
         layout->addWidget(label);
         layout->addStretch(1); // Geen checkbox

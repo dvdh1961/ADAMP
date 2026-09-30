@@ -15,6 +15,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QImage>
+#include <QRegularExpression>
 
 #include "CORE/cv.h"
 
@@ -299,6 +300,21 @@ void NTableWindow::setupUI()
     connect(m_gridCheck, &QCheckBox::toggled, this, &NTableWindow::onOptionToggled);
     connect(m_tilesCheck, &QCheckBox::toggled, this, &NTableWindow::onOptionToggled);
     connect(m_bwCheck, &QCheckBox::toggled, this, &NTableWindow::onOptionToggled);
+
+    if (QApplication::palette().color(QPalette::Window).lightness() >= 128) {
+        const auto makeTextBlack = [](QWidget *widget) {
+            QString style = widget->styleSheet();
+            style.replace(QRegularExpression("color\\s*:\\s*(white|cyan|yellow|#A{6})",
+                                             QRegularExpression::CaseInsensitiveOption),
+                          "color: #191919");
+            if (!style.contains(QRegularExpression("color\\s*:", QRegularExpression::CaseInsensitiveOption)))
+                style += " color: #191919;";
+            widget->setStyleSheet(style);
+        };
+        for (QLabel *label : findChildren<QLabel*>()) makeTextBlack(label);
+        for (QGroupBox *box : findChildren<QGroupBox*>()) makeTextBlack(box);
+        for (QCheckBox *check : findChildren<QCheckBox*>()) makeTextBlack(check);
+    }
 }
 
 void NTableWindow::setupMenus()

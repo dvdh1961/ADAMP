@@ -6,6 +6,7 @@
 #include <QTimer>
 #include <array>
 #include <map>  // TOEVOEGEN
+#include "CORE/cvkpad.h"
 
 class ColecoController;  // TOEVOEGEN - Forward declaration
 
@@ -26,7 +27,8 @@ public:
     void processHardwareRoute(int idx, bool jStorage, bool kpStorage, bool trStorage, bool pressed);
     // TOEVOEGEN - ADAM keyboard support:
     void setController(ColecoController* controller);
-    void setMachineType(int type);      // 0=Coleco, 1=ADAM
+    void setMachineType(int type);      // 0=Coleco, 1=ADAM, 2=Atari 2600
+    void releaseAtari2600Controls();
     void setAdamGameMode(bool enabled);  // true=game mode, false=keyboard mode
     void setKeyboardOverlay(bool enabled);
 
@@ -44,8 +46,16 @@ public slots:
     void setJoystickFireR(bool pressed);
     void setJoystickStart(bool pressed);
     void setJoystickSelect(bool pressed);
+    void setAtari2600Color(bool enabled);
+    void setAtari2600LeftDifficultyA(bool enabled);
+    void setAtari2600RightDifficultyA(bool enabled);
     void setJoystickAnalogX(int value);
     void setPaddleMode(bool usePaddle);
+    void setDrivingControllerMode(bool enabled);
+    void setPaddleVertical(bool vertical);
+
+signals:
+    void atariKeypadShortcut(int key);
 
 private:
     QWidget *m_target = nullptr;
@@ -69,12 +79,24 @@ private:
 
     int m_analogXValue = 0;
     bool m_isPaddleMode = false;
+    bool m_isDrivingControllerMode = false;
+    ColecoControllerState m_drivingPad2;
+    bool m_paddleKeyLeft = false;
+    bool m_paddleKeyRight = false;
+    bool m_paddleVertical = false;
 
     // TOEVOEGEN - ADAM keyboard support:
     ColecoController* m_controller = nullptr;
     int m_machineType = 0;           // 0=Coleco, 1=ADAM
     bool m_adamGameMode = false;     // In ADAM: false=keyboard, true=game
     bool m_keyboardOverlay = false;  // Keyboard overlay enabled
+    bool m_atariResetPressed = false;
+    bool m_atariSelectPressed = false;
+    bool m_atariColor = true;
+    bool m_atariLeftDifficultyA = false;
+    bool m_atariRightDifficultyA = false;
+    int m_atariHighlightedKey = -1;
+    unsigned int m_atariHighlightSequence = 0;
 
     // Special keys mapping (van KbWidget)
     std::map<int, uint8_t> m_specialKeyMap;
@@ -90,6 +112,8 @@ private:
     void handleSpecialKey(QKeyEvent *e, bool pressed);
     uint8_t getAdamCodeForQtKey(int qtKey) const;
     void updatePadAndBridge(int idx, bool jStorage, bool kpStorage, bool trStorage, bool pressed);
+    void pushAtari2600State();
+    void pushAtari2600ConsoleSwitches();
 
 };
 

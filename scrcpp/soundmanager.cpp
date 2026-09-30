@@ -832,7 +832,11 @@ void SoundManager::mixPreviewIntoBuffer(int16_t* stereo, int framesStereo)
             default: break;
             }
 
-            double amp = (static_cast<double>(ch.volume) / 15.0) * (i == 3 ? 360.0 : 700.0) * envMult;
+            // Match the SN preview/SFX level to the real SoundEditorPlayer song mix.
+            // Song playback uses baseAmplitude 6000 with snMaster 0.60 => 3600 per SN voice.
+            // The old preview values (700 tone / 360 noise) made SFX several times quieter
+            // than music even at V0F.  Use the same SN reference level here.
+            double amp = (static_cast<double>(ch.volume) / 15.0) * 3600.0 * envMult;
 
             // Korte fade-in op nieuwe noot/instrument. Dit voorkomt klik/kraak op harde PSG-overgangen.
             if (ch.transitionSamples > 0) {
@@ -900,8 +904,10 @@ void SoundManager::mixPreviewIntoBuffer(int16_t* stereo, int framesStereo)
         if (!anyActive && !m_streamPlaying)
             continue;
 
-        // Eén limiter, niet dubbel. Iets lager plafond.
-        mixed = std::tanh(mixed / 7000.0) * 7000.0;
+        // Keep enough headroom for up to four simultaneous SN SFX voices.
+        // 4 * 3600 = 14400 before envelope shaping, so the old 7000 ceiling
+        // compressed SFX far below the song player's perceived level.
+        mixed = std::tanh(mixed / 18000.0) * 18000.0;
 
         const int l = qBound(-32768, static_cast<int>(stereo[frame * 2 + 0]) + static_cast<int>(mixed), 32767);
         const int r = qBound(-32768, static_cast<int>(stereo[frame * 2 + 1]) + static_cast<int>(mixed), 32767);

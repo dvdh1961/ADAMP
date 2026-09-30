@@ -21,8 +21,10 @@ class ScreenWidget;
 class InputWidget;
 class LogWidget;
 class DebuggerWindow;
+class AtariDebuggerWindow;
 class QAction;
 class QLabel;
+class QFrame;
 class CartridgeInfoDialog;
 class NTableWindow;
 class PatternWindow;
@@ -81,6 +83,7 @@ public slots:
     void onToggleSGM(bool checked);
     void onToggleKeyboard(bool on);
     void onToggleVideoStandard();
+    void onResetGeometry();
     void onShowNameTable();
     void onShowPatternTable();
     void onShowSpriteTable();
@@ -127,6 +130,9 @@ private slots:
     void onEjectAdamRom();
     void onOpenColecoRom();
     void onEjectColecoRom();
+    void onOpenAtari2600Rom();
+    void onPrepareHardwareMedia();
+    void onEjectAtari2600Rom();
     // --- MEDIA STATUS UPDATE SLOTS ---
     void onDiskStatusChanged(int drive, const QString& fileName);
     void onTapeStatusChanged(int drive, const QString& fileName);
@@ -140,8 +146,10 @@ private slots:
     void onResetAdamBtnClicked();
     void onResetCartBtnClicked();
     void onCartridgeStatusChanged(const QString& colecoName, const QString& adamName);
+    void onAtari2600CartridgeStatusChanged(const QString& fileName);
     void onPowerBtnClicked();
     void onTogglePaddleMode(bool checked);
+    void onToggleDrivingControllerMode(bool checked);
     void onSaveSymbolDefinitions();
     void onLoadSymbolDefinitions();
     void onColorFilterModeChanged(QAction* action);
@@ -155,6 +163,7 @@ private slots:
     void onStartBasicInject();
     void onStopBasicInject();
     void injectNextBasicCharacter();
+    void onToggleDayNight();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -167,8 +176,11 @@ protected:
     void onScanlinesModeChanged(QAction* action);
 
 private:
+    void updateAtariStatusBar();
     // helpers
     void setupUI();
+    void setupThemeButton();
+    void applyDayNightTheme(bool dark);
     void setupEmulatorThread();
     void setStatusBar();
     void setUpLogWindow();
@@ -181,14 +193,19 @@ private:
     void updateFullScreenWallpaper();
     bool m_isShuttingDown = false;
     QProgressDialog *m_shutdownDialog = nullptr;
+    QProgressDialog *m_fujiRomProgressDialog = nullptr;
     void switchToAdamMode();
     void switchToColecoMode();
+    void switchToAtari2600Mode();
     void updateHardwareWindowMediaDisplay();
     void handleFatalBiosError(const QString& errorMessage);
     void loadExternalBiosRoms();
     void mountAdamStartupImageIfNeeded();
     void stopResetCartBlinkAndSetFinalIcon();
     void loadColecoRomFromPath(const QString& filePath, bool autoRun);
+    int handleFujiNetBootIntercept(const QByteArray &headerBlocks,
+                                   const QString &mountedPath);
+    QString fetchFujiNetRomDirect(const QString &host, const QString &path);
 
 private:
     // emulator thread en controller
@@ -204,6 +221,9 @@ private:
     ScreenWidget *m_screenWidget = nullptr;
     InputWidget  *m_inputWidget  = nullptr;
     LogWidget    *m_logView      = nullptr;
+    QFrame       *m_windowBorderOverlay = nullptr;
+    QPushButton  *m_themeButton  = nullptr;
+    bool          m_darkTheme    = true;
 
     QWidget      *m_logoContainer = nullptr;  // Het transparante panel dat m_logoLabel vervangt
     QLabel       *m_logoLabel0    = nullptr;  // adamp_logo0.png
@@ -240,9 +260,20 @@ private:
     QAction *m_actShowLog         = nullptr;
     QAction *m_actToggleKeyboard  = nullptr;
     QAction *m_debuggerAction     = nullptr; // Debugger (F8)
+    QMenu   *m_toolsMenu          = nullptr;
+    QMenu   *m_atariInputsMenu    = nullptr;
+    QAction *m_atariGameSelectAction = nullptr;
+    QAction *m_atariGameResetAction = nullptr;
+    QAction *m_atariColorAction = nullptr;
+    QAction *m_atariLeftDifficultyAAction = nullptr;
+    QAction *m_atariLeftDifficultyBAction = nullptr;
+    QAction *m_atariRightDifficultyAAction = nullptr;
+    QAction *m_atariRightDifficultyBAction = nullptr;
+    QAction *m_atariPhosphorEffectAction = nullptr;
     QAction *m_actToggleSGM       = nullptr;
     QAction *m_actToggleNTSC      = nullptr;
     QAction *m_actTogglePAL       = nullptr;
+    QAction *m_actResetGeometry   = nullptr;
     QAction *m_cartInfoAction     = nullptr;
     QAction *m_actShowNameTable   = nullptr;
     QAction *m_actShowPatternTable = nullptr;
@@ -268,6 +299,7 @@ private:
     QAction *m_loadTapeActionB    = nullptr;
     QAction *m_loadTapeActionC    = nullptr;
     QAction *m_loadTapeActionD    = nullptr;
+    QAction *m_prepareHardwareMediaAction = nullptr;
     QAction *m_ejectDiskActionA   = nullptr;
     QAction *m_ejectDiskActionB   = nullptr;
     QAction *m_ejectDiskActionC   = nullptr;
@@ -327,6 +359,8 @@ private:
     QAction *m_actJoystickXbox    = nullptr;
     int m_joystickType = 0; // 0=General, 1=PS, 2=Xbox (NIEUWE MEMBER)
     QAction *m_actTogglePaddleMode = nullptr;
+    QAction *m_actToggleDrivingControllerMode = nullptr;
+    QAction *m_actPaddleDirectionUpDown = nullptr;
 
     QAction* m_actShowTerminal = nullptr;
     DebugTerminalWidget* m_debugTerminal = nullptr;
@@ -343,6 +377,8 @@ private:
     qsizetype m_basicInjectPosition = 0;
 
     bool m_usePaddleMode = false;
+    bool m_useDrivingControllerMode = false;
+    bool m_paddleDirectionUpDown = false;
     bool m_useDTsound = false;
 
     bool m_isDiskLoadedA;
@@ -370,6 +406,8 @@ private:
 
     QString m_loadedTapeNames[4]; // D1 t/m D4
     QString m_loadedDiskNames[4]; // D5 t/m D8
+    bool m_hardwareDiskMedia[4] = { false, false, false, false };
+    bool m_hardwareTapeMedia[4] = { false, false, false, false };
 
     int  m_scalingMode;
     bool m_startFullScreen;
@@ -385,14 +423,17 @@ private:
 
     void updateMediaMenuState();
     void updateMediaStatusLabels();
+    void releaseAllMedia(bool preservePhysicalFujiD5);
 
     // debugger venster
     DebuggerWindow *m_debugWin = nullptr;
+    AtariDebuggerWindow *m_atariDebugWin = nullptr;
     CartridgeInfoDialog *m_cartInfoDialog = nullptr;
     HardwareWindow   *m_hardwareWindow = nullptr;
 
     bool m_isPaused = false;
     QString m_romPath;
+    QString m_atariRomPath;
     QString m_diskPath;
     QString m_tapePath;
     QString m_statePath;
@@ -417,10 +458,12 @@ private:
     QString m_writerBiosPath;
    QAction *m_openAdamRomAction = nullptr;
     QAction *m_openColecoRomAction = nullptr;
+    QAction *m_openAtari2600RomAction = nullptr;
     bool m_isAdamRomLoaded = false;
     bool m_isColecoRomLoaded = false;
     QString m_currentARomName;
     QString m_currentRomName;
+    QString m_currentAtari2600RomName;
     QAction *m_actReleaseAll = nullptr;
 
     // BIOS Status Menu
@@ -430,14 +473,19 @@ private:
     QAction *m_actWriterBiosSource = nullptr;
 
     int m_paletteIndex = 0;
-    int m_vdpType = 0; // 0=TMS, 1=F18A
+    int m_vdpType = 0; // 0=TMS, 1=F18A, 2=PICO9918
     bool m_f18a80SelfTest = false;
     int m_machineType = 0; // 0=Coleco, 1=ADAM
+    bool m_atariColor = true;
+    bool m_atariLeftDifficultyA = false;
+    bool m_atariRightDifficultyA = false;
+    bool m_atariPhosphorEffect = true;
     bool m_realhardware = false;
     bool m_sgmEnabled       = false;
     bool m_c80Enabled      = false;
     bool m_ctrlJoys     = false;
     bool m_ctrlAdamNet       = false;
+    bool m_fujiNetDirectRom = false;
     bool m_ctrlCartridge  = false;
     bool m_resetAdamLocked  = false;
     bool m_AdamTMedia_insert = false;

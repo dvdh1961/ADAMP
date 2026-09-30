@@ -45,6 +45,10 @@ QObject* createSoundPreviewBridge(CvBasicEditorWindow* editor, quintptr hostWind
                      soundEditorPlayer, &SoundEditorPlayer::hardReset,
                      Qt::UniqueConnection);
 
+    QObject::connect(editor, &CvBasicEditorWindow::soundEditorChannelAudibleChanged,
+                     soundEditorPlayer, &SoundEditorPlayer::setChannelAudible,
+                     Qt::UniqueConnection);
+
     QObject::connect(soundManager, &SoundManager::previewVuMeterChanged,
                      editor, &CvBasicEditorWindow::setSoundChannelVuLevel,
                      Qt::UniqueConnection);

@@ -15,6 +15,7 @@ class QTreeView;
 class QLineEdit;
 class QComboBox;
 class QPushButton;
+class QShowEvent;
 
 class CustomFileDialog : public QDialog
 {
@@ -22,7 +23,7 @@ class CustomFileDialog : public QDialog
 
 public:
     enum AcceptMode { AcceptOpen, AcceptSave };
-    enum PathType { PathDefault = 0, PathRom, PathDisk, PathTape, PathState, PathScreenshot, PathSymbol, PathInjected };
+    enum PathType { PathDefault = 0, PathRom, PathAtariRom, PathDisk, PathTape, PathState, PathScreenshot, PathSymbol, PathInjected };
 
     explicit CustomFileDialog(QWidget *parent = nullptr);
 
@@ -38,6 +39,7 @@ protected:
     void setInitialDirectory(const QString &dir);
     void setNameFilters(const QString &filter);
     bool eventFilter(QObject *obj, QEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 private slots:
     void onTreeViewClicked(const QModelIndex &index);
@@ -66,12 +68,17 @@ private:
     QString    m_selectedFile;
     QStringList m_filterPatterns;
     QString    m_limitPath;
+    QString    m_restoreFilePath;
     PathType   m_pathType = PathDefault;
 
     void loadLastVisitedPath(const QString &initialDir, AcceptMode mode);
     void saveLastVisitedPath();
+    void saveCurrentDirectory();
+    void restoreLastSelection();
+    void centerRestoredSelection();
     void updateFileSystemFilter(const QString &currentPath);
     QString keyFromPathType(PathType type, AcceptMode mode) const;
+    QString selectionKeyFromPathType(PathType type, AcceptMode mode) const;
     bool isFileAccepted(const QString &fileName);
 };
 

@@ -129,6 +129,18 @@ void InputWidget::setMachineType(int type)
     m_machineType = type;
 }
 
+void InputWidget::releaseAtari2600Controls()
+{
+    m_pad0.up=m_pad0.down=m_pad0.left=m_pad0.right=false;
+    m_pad0.fireL=m_pad0.fireR=false;
+    m_atariResetPressed=false;
+    m_atariSelectPressed=false;
+    if(m_machineType==2){
+        pushAtari2600State();
+        pushAtari2600ConsoleSwitches();
+    }
+}
+
 void InputWidget::setAdamGameMode(bool enabled)
 {
     m_adamGameMode = enabled;
@@ -194,6 +206,20 @@ void InputWidget::attachTo(QWidget *target)
 
 bool InputWidget::eventFilter(QObject *obj, QEvent *ev)
 {
+    // The overlay is normally hidden and therefore does not own keyboard
+    // focus. Capture the user's mapped controller keys while Driving
+    // Controller Mode is active; all unmapped keys keep their existing route.
+    if (m_machineType == 0 && m_isDrivingControllerMode
+            && (ev->type() == QEvent::KeyPress
+                || ev->type() == QEvent::KeyRelease)) {
+        auto *keyEvent = static_cast<QKeyEvent *>(ev);
+        if (findIndexForQtKey(m_mapP1, keyEvent->key()) >= 0) {
+            handleKey(keyEvent, ev->type() == QEvent::KeyPress);
+            keyEvent->accept();
+            return true;
+        }
+    }
+
     if (obj == m_target) {
         switch (ev->type()) {
         case QEvent::Resize:
@@ -252,6 +278,111 @@ bool InputWidget::handleKey(QKeyEvent *e, bool pressed)
     const bool kpStorage = (idx >= IDX_HASH && idx <= IDX_9);
     const bool trStorage = (idx == IDX_TL || idx == IDX_TR);
 
+    const bool paddleNegativeKey = m_paddleVertical ? idx == IDX_UP : idx == IDX_LEFT;
+    const bool paddlePositiveKey = m_paddleVertical ? idx == IDX_DOWN : idx == IDX_RIGHT;
+
+    if (m_machineType == 0 && m_isPaddleMode
+            && (key == Qt::Key_Left || key == Qt::Key_Right)) {
+        if (key == Qt::Key_Left) m_paddleKeyLeft = pressed;
+        if (key == Qt::Key_Right) m_paddleKeyRight = pressed;
+        int paddleValue = 0;
+        if (m_paddleKeyLeft && !m_paddleKeyRight) paddleValue = -32767;
+        if (m_paddleKeyRight && !m_paddleKeyLeft) paddleValue = 32767;
+        m_analogXValue = paddleValue;
+        ib_set_analog_x1(static_cast<int16_t>(paddleValue));
+        if (pressed) m_flash = 1.0;
+        update();
+        return true;
+    }
+
+    // Expansion Module #2 occupies port 1. The regular hand controller in
+    // port 2 supplies the H-pattern gear lever. All keyboard assignments are
+    // taken from the user's keypad mapper; no physical keys are hard-coded.
+    if (m_machineType == 0 && m_isDrivingControllerMode && isMapped) {
+        if (jStorage) {
+            if (idx == IDX_UP) m_drivingPad2.up = pressed;
+            if (idx == IDX_DOWN) m_drivingPad2.down = pressed;
+            if (idx == IDX_LEFT) m_drivingPad2.left = pressed;
+            if (idx == IDX_RIGHT) m_drivingPad2.right = pressed;
+
+            int gear = 0;
+            if (m_drivingPad2.up && !m_drivingPad2.down)
+                gear = m_drivingPad2.right ? 3 : 1;
+            else if (m_drivingPad2.down && !m_drivingPad2.up)
+                gear = m_drivingPad2.right ? 4 : 2;
+            ib_set_driving_gear(uint8_t(gear));
+        } else if (idx == IDX_HASH) {
+            // Mapper BUTTON # controls the accelerator pedal (port 1 pin 6).
+            m_pad0.fireL = pressed;
+            m_pad0.fireR = pressed;
+        } else if (kpStorage) {
+            const int kp = (idx == IDX_HASH) ? 11
+                         : (idx == IDX_STAR) ? 10
+                         : (idx - IDX_0);
+            if (pressed) m_drivingPad2.keypad = kp;
+            else if (m_drivingPad2.keypad == kp) m_drivingPad2.keypad = -1;
+        } else if (trStorage) {
+            // Per requested mapper layout: Trigger R turns left and
+            // Trigger L turns right.
+            if (idx == IDX_TR) m_paddleKeyLeft = pressed;
+            if (idx == IDX_TL) m_paddleKeyRight = pressed;
+            int driveValue = 0;
+            if (m_paddleKeyLeft && !m_paddleKeyRight) driveValue = -32767;
+            if (m_paddleKeyRight && !m_paddleKeyLeft) driveValue = 32767;
+            m_analogXValue = driveValue;
+            ib_set_analog_x1(static_cast<int16_t>(driveValue));
+        }
+        if (pressed) m_flash = 1.0;
+        coleco_setController(0, m_pad0);
+        coleco_setController(1, m_drivingPad2);
+        update();
+        return true;
+    }
+
+    if (m_machineType == 2 && m_isPaddleMode
+            && (paddleNegativeKey || paddlePositiveKey)) {
+        if (paddleNegativeKey) m_paddleKeyLeft = pressed;
+        if (paddlePositiveKey) m_paddleKeyRight = pressed;
+        if (pressed) m_flash = 1.0;
+        update();
+        return true;
+    }
+
+    // Atari console switches use the ADAM controller keypad buttons 1..4.
+    // Keep the normal visual pressed/released state, but toggle only once on
+    // the initial press edge.
+    if (m_machineType == 2 && kpStorage) {
+        const int kp = (idx == IDX_HASH) ? 11
+                     : (idx == IDX_STAR) ? 10
+                     : (idx - IDX_0);
+        if (kp >= 1 && kp <= 4) {
+            if (pressed) {
+                m_pad0.keypad = kp;
+                m_keypadHeld = kp;
+                m_atariHighlightedKey = kp;
+                ++m_atariHighlightSequence;
+                m_flash = 1.0;
+                if (!e->isAutoRepeat())
+                    emit atariKeypadShortcut(kp);
+            } else if (m_keypadHeld == kp) {
+                m_pad0.keypad = -1;
+                m_keypadHeld = -1;
+                // Keep a short visible indication after a fast key tap. This
+                // prevents press and release being painted in the same frame.
+                const unsigned int highlightSequence = m_atariHighlightSequence;
+                QTimer::singleShot(140, this, [this, kp, highlightSequence]() {
+                    if (m_atariHighlightSequence == highlightSequence
+                            && m_atariHighlightedKey == kp) {
+                        m_atariHighlightedKey = -1;
+                        update();
+                    }
+                });
+            }
+            update();
+            return true;
+        }
+    }
+
     // ------------------------------------------------------------
     // ADAM Writer/BASIC cursor fix:
     // A0..A3 blijven keyboard-only, anders dubbele cursorstap.
@@ -309,6 +440,12 @@ bool InputWidget::handleKey(QKeyEvent *e, bool pressed)
         this->update();
     }
 
+    if (m_machineType == 2 && isMapped)
+    {
+        pushAtari2600State();
+        return true;
+    }
+
     // ------------------------------------------------------------
     // ADAM mode
     // ------------------------------------------------------------
@@ -356,6 +493,83 @@ void InputWidget::updatePadAndBridge(int idx, bool jStorage, bool kpStorage, boo
         int kp = (idx == IDX_HASH) ? 11 : (idx == IDX_STAR) ? 10 : (idx - IDX_0);
         ib_set_keypad_bit(kp, pressed); //
     }
+}
+
+void InputWidget::pushAtari2600State()
+{
+    if (!m_controller)
+        return;
+
+    if (m_isPaddleMode) {
+        QMetaObject::invokeMethod(
+            m_controller,
+            "setAtari2600Paddle",
+            Qt::QueuedConnection,
+            Q_ARG(int, 0),
+            Q_ARG(int, m_analogXValue),
+            Q_ARG(bool, m_pad0.fireL));
+        pushAtari2600ConsoleSwitches();
+        return;
+    }
+
+    const bool up = m_pad0.up;
+    const bool down = m_pad0.down;
+    const bool left = m_pad0.left;
+    const bool right = m_pad0.right;
+    // Atari 2600 has one fire button: ADAM controller A / TRIG L.
+    const bool fire = m_pad0.fireL;
+
+    QMetaObject::invokeMethod(
+        m_controller,
+        "setAtari2600Joystick",
+        Qt::QueuedConnection,
+        Q_ARG(int, 0),
+        Q_ARG(bool, up),
+        Q_ARG(bool, down),
+        Q_ARG(bool, left),
+        Q_ARG(bool, right),
+        Q_ARG(bool, fire)
+        );
+
+    // A button-state update can also have changed controller button B.
+    pushAtari2600ConsoleSwitches();
+}
+
+void InputWidget::pushAtari2600ConsoleSwitches()
+{
+    if (!m_controller)
+        return;
+    QMetaObject::invokeMethod(
+        m_controller,
+        "setAtari2600ConsoleSwitches",
+        Qt::QueuedConnection,
+        Q_ARG(bool, m_atariResetPressed),
+        Q_ARG(bool, m_atariSelectPressed || m_pad0.fireR),
+        Q_ARG(bool, m_atariColor),
+        Q_ARG(bool, m_atariLeftDifficultyA),
+        Q_ARG(bool, m_atariRightDifficultyA)
+        );
+}
+
+void InputWidget::setAtari2600Color(bool enabled)
+{
+    m_atariColor = enabled;
+    if (m_machineType == 2)
+        pushAtari2600ConsoleSwitches();
+}
+
+void InputWidget::setAtari2600LeftDifficultyA(bool enabled)
+{
+    m_atariLeftDifficultyA = enabled;
+    if (m_machineType == 2)
+        pushAtari2600ConsoleSwitches();
+}
+
+void InputWidget::setAtari2600RightDifficultyA(bool enabled)
+{
+    m_atariRightDifficultyA = enabled;
+    if (m_machineType == 2)
+        pushAtari2600ConsoleSwitches();
 }
 
 void InputWidget::processHardwareRoute(int idx, bool jStorage, bool kpStorage, bool trStorage, bool pressed)
@@ -423,6 +637,8 @@ void InputWidget::processHardwareRoute(int idx, bool jStorage, bool kpStorage, b
     }
 
     coleco_setController(0, m_pad0);
+    if (m_machineType == 2)
+        pushAtari2600State();
 
     qDebug() << "[INPUT] coleco_setController:"
              << "up=" << m_pad0.up
@@ -436,6 +652,31 @@ void InputWidget::processHardwareRoute(int idx, bool jStorage, bool kpStorage, b
 
 void InputWidget::stepOverlay()
 {
+    if (m_machineType == 0 && m_isDrivingControllerMode) {
+        int next = 0;
+        if (m_paddleKeyLeft && !m_paddleKeyRight) next = -32767;
+        if (m_paddleKeyRight && !m_paddleKeyLeft) next = 32767;
+        if (next != m_analogXValue) {
+            m_analogXValue = next;
+            ib_set_analog_x1(static_cast<int16_t>(next));
+        }
+    }
+
+    if (m_machineType == 2 && m_isPaddleMode) {
+        int next = m_analogXValue;
+        // Keyboard cursors emulate a slowly turning analog paddle.  A large
+        // step made the on-screen paddle cross almost the complete playfield
+        // in about one second.
+        constexpr int paddleKeyboardStep = 140;
+        if (m_paddleKeyLeft && !m_paddleKeyRight) next -= paddleKeyboardStep;
+        if (m_paddleKeyRight && !m_paddleKeyLeft) next += paddleKeyboardStep;
+        next = qBound(-32768, next, 32767);
+        if (next != m_analogXValue) {
+            m_analogXValue = next;
+            ib_set_analog_x1(static_cast<int16_t>(next));
+            pushAtari2600State();
+        }
+    }
     // laat flash langzaam uitdoven
     if (m_flash > 0.0) m_flash = qMax(0.0, m_flash - 0.08);
     update(); // triggert paintEvent
@@ -480,7 +721,8 @@ void InputWidget::drawHud(QPainter &p, const QRect &r)
     const bool btnR      = m_pad0.fireR;
 
     auto keyPressed = [&](int bit)->bool {
-        return (m_pad0.keypad == bit);
+        return (m_pad0.keypad == bit)
+               || (m_machineType == 2 && m_atariHighlightedKey == bit);
     };
 
     p.setRenderHint(QPainter::Antialiasing, true);
@@ -601,11 +843,11 @@ void InputWidget::drawHud(QPainter &p, const QRect &r)
 
         QRect indicatorRect;
         if (m_analogXValue > 0) {
-            // Naar links
-            indicatorRect.setRect(analogCenter.x() - indicatorWidth, barY, indicatorWidth, barHeight);
-        } else if (m_analogXValue < 0){
             // Naar rechts
             indicatorRect.setRect(analogCenter.x(), barY, indicatorWidth, barHeight);
+        } else if (m_analogXValue < 0){
+            // Naar links
+            indicatorRect.setRect(analogCenter.x() - indicatorWidth, barY, indicatorWidth, barHeight);
         }
 
         p.drawRect(indicatorRect);
@@ -712,6 +954,14 @@ void InputWidget::paintEvent(QPaintEvent *e)
 
 void InputWidget::setJoystickDirection(bool up, bool down, bool left, bool right)
 {
+    if (m_isDrivingControllerMode && m_machineType == 0) {
+        m_drivingPad2.up = up;
+        m_drivingPad2.down = down;
+        m_drivingPad2.left = left;
+        m_drivingPad2.right = right;
+        coleco_setController(1, m_drivingPad2);
+        return;
+    }
     // A. Verticale Invoer (Wordt ALTIJD bewerkt)
     m_pad0.up = up;
     m_pad0.down = down;
@@ -746,6 +996,8 @@ void InputWidget::setJoystickDirection(bool up, bool down, bool left, bool right
 
     // 2. PUSH KNOPPEN/KEYPAD: Hierdoor wordt de D-pad status van m_pad0 naar s_pad gepusht.
     coleco_setController(0, m_pad0);
+    if (m_machineType == 2)
+        pushAtari2600State();
 
     // 3. De Bridge-synchronisatie vindt ALLEEN plaats in coleco_paddle() nu.
 }
@@ -753,17 +1005,35 @@ void InputWidget::setJoystickDirection(bool up, bool down, bool left, bool right
 void InputWidget::setJoystickFireL(bool pressed)
 {
     m_pad0.fireL = pressed;
+    if (m_isDrivingControllerMode && m_machineType == 0)
+        m_pad0.fireR = pressed;
     coleco_setController(0, m_pad0);
+    if (m_machineType == 2)
+        pushAtari2600State();
 }
 
 void InputWidget::setJoystickFireR(bool pressed)
 {
     m_pad0.fireR = pressed;
     coleco_setController(0, m_pad0);
+    if (m_machineType == 2)
+        pushAtari2600State();
 }
 
 void InputWidget::setJoystickStart(bool pressed)
 {
+    if (m_machineType == 2) {
+        m_atariResetPressed = pressed;
+        pushAtari2600ConsoleSwitches();
+        return;
+    }
+
+    if (m_isDrivingControllerMode && m_machineType == 0) {
+        m_drivingPad2.keypad = pressed ? 1 : -1;
+        coleco_setController(1, m_drivingPad2);
+        return;
+    }
+
     // Start knop -> Druk Keypad '1' in
     if (pressed) { m_pad0.keypad = 1; }
     else if (m_pad0.keypad == 1) { m_pad0.keypad = -1; }
@@ -774,6 +1044,18 @@ void InputWidget::setJoystickStart(bool pressed)
 
 void InputWidget::setJoystickSelect(bool pressed)
 {
+    if (m_machineType == 2) {
+        m_atariSelectPressed = pressed;
+        pushAtari2600ConsoleSwitches();
+        return;
+    }
+
+    if (m_isDrivingControllerMode && m_machineType == 0) {
+        m_drivingPad2.keypad = pressed ? 10 : -1;
+        coleco_setController(1, m_drivingPad2);
+        return;
+    }
+
     // Select knop -> Druk Keypad '*' (index 10) in
     if (pressed) { m_pad0.keypad = 10; }
     else if (m_pad0.keypad == 10) { m_pad0.keypad = -1; }
@@ -799,6 +1081,9 @@ void InputWidget::setJoystickAnalogX(int value)
     // Sla de waarde op voor de visualisatie in paintEvent
     m_analogXValue = value;
 
+    if (m_machineType == 2 && m_isPaddleMode)
+        pushAtari2600State();
+
     // Hertekenen forceren (om de balk bij te werken)
     update();
 }
@@ -806,8 +1091,39 @@ void InputWidget::setJoystickAnalogX(int value)
 void InputWidget::setPaddleMode(bool usePaddle)
 {
     m_isPaddleMode = usePaddle;
+    if (m_machineType == 0)
+        coleco_setDrivingMode(usePaddle || m_isDrivingControllerMode);
+    if (!usePaddle)
+        m_paddleKeyLeft = m_paddleKeyRight = false;
+    if (!usePaddle && !m_isDrivingControllerMode) {
+        m_analogXValue = 0;
+        ib_set_analog_x1(0);
+    }
+    if (m_machineType == 2)
+        pushAtari2600State();
     // We kunnen hier optioneel een visuele indicatie geven
     // update();
+}
+
+void InputWidget::setDrivingControllerMode(bool enabled)
+{
+    m_isDrivingControllerMode = enabled;
+    coleco_setDrivingMode(enabled || (m_machineType == 0 && m_isPaddleMode));
+    m_paddleKeyLeft = m_paddleKeyRight = false;
+    m_drivingPad2 = ColecoControllerState{};
+    ib_set_driving_gear(0);
+    coleco_setController(1, m_drivingPad2);
+    if (!enabled) {
+        m_analogXValue = 0;
+        ib_set_analog_x1(0);
+    }
+    update();
+}
+
+void InputWidget::setPaddleVertical(bool vertical)
+{
+    m_paddleVertical = vertical;
+    m_paddleKeyLeft = m_paddleKeyRight = false;
 }
 
 void InputWidget::handleSpecialKey(QKeyEvent *e, bool pressed)

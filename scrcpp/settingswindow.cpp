@@ -53,6 +53,7 @@ QString appDefaultPath(const QString& relativePath)
 }
 
 QString defaultRomPath()        { return appDefaultPath("media/roms"); }
+QString defaultAtariRomPath()   { return appDefaultPath("media/aroms"); }
 QString defaultDiskPath()       { return appDefaultPath("media/disks"); }
 QString defaultTapePath()       { return appDefaultPath("media/tapes"); }
 QString defaultStatePath()      { return appDefaultPath("media/states"); }
@@ -244,8 +245,9 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     QGridLayout *mediaLayout = createTabLayout();
     mediaTab->setLayout(mediaLayout);
     addRowNoAction(mediaLayout, 0, tr("ROM Path:"),  m_romPathEdit,  m_romPathBtn);
-    addRowNoAction(mediaLayout, 1, tr("Disk Path:"), m_diskPathEdit, m_diskPathBtn);
-    addRowNoAction(mediaLayout, 2, tr("Tape Path:"), m_tapePathEdit, m_tapePathBtn);
+    addRowNoAction(mediaLayout, 1, tr("ATARI ROM Path:"), m_atariRomPathEdit, m_atariRomPathBtn);
+    addRowNoAction(mediaLayout, 2, tr("Disk Path:"), m_diskPathEdit, m_diskPathBtn);
+    addRowNoAction(mediaLayout, 3, tr("Tape Path:"), m_tapePathEdit, m_tapePathBtn);
     addTabBottomIcon(mediaLayout, "MEDIA");
     tabs->addTab(mediaTab, tr("MEDIA"));
 
@@ -341,6 +343,7 @@ SettingsWindow::SettingsWindow(QWidget *parent)
 
     // --- Connecties ---
     connect(m_romPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseRomPath);
+    connect(m_atariRomPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseAtariRomPath);
     connect(m_diskPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseDiskPath);
     connect(m_tapePathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseTapePath);
     connect(m_statePathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseStatePath);
@@ -393,6 +396,7 @@ SettingsWindow::SettingsWindow(QWidget *parent)
 
 // --- Getters ---
 QString SettingsWindow::romPath() const         { return pathFromEdit(m_romPathEdit); }
+QString SettingsWindow::atariRomPath() const    { return pathFromEdit(m_atariRomPathEdit); }
 QString SettingsWindow::diskPath() const        { return pathFromEdit(m_diskPathEdit); }
 QString SettingsWindow::tapePath() const        { return pathFromEdit(m_tapePathEdit); }
 QString SettingsWindow::statePath() const       { return pathFromEdit(m_statePathEdit); }
@@ -420,6 +424,7 @@ int SettingsWindow::adamBootMode() const
 
 // --- Setters ---
 void SettingsWindow::setRomPath(const QString &path)          { setPathText(m_romPathEdit, path); }
+void SettingsWindow::setAtariRomPath(const QString &path)     { setPathText(m_atariRomPathEdit, path); }
 void SettingsWindow::setDiskPath(const QString &path)         { setPathText(m_diskPathEdit, path); }
 void SettingsWindow::setTapePath(const QString &path)         { setPathText(m_tapePathEdit, path); }
 void SettingsWindow::setStatePath(const QString &path)        { setPathText(m_statePathEdit, path); }
@@ -474,6 +479,7 @@ void SettingsWindow::setAdamBootMode(int mode)
 void SettingsWindow::onResetAllPathsToDefault()
 {
     setPathText(m_romPathEdit, defaultRomPath());
+    setPathText(m_atariRomPathEdit, defaultAtariRomPath());
     setPathText(m_diskPathEdit, defaultDiskPath());
     setPathText(m_tapePathEdit, defaultTapePath());
     setPathText(m_statePathEdit, defaultStatePath());
@@ -512,6 +518,13 @@ void SettingsWindow::onBrowseRomPath()
 {
     QString dir = QFileDialog::getExistingDirectory(this, tr("Select ROM Directory"), pathFromEdit(m_romPathEdit));
     if (!dir.isEmpty()) setPathText(m_romPathEdit, dir);
+}
+
+void SettingsWindow::onBrowseAtariRomPath()
+{
+    QString dir = QFileDialog::getExistingDirectory(
+        this, tr("Select Atari 2600 ROM Directory"), pathFromEdit(m_atariRomPathEdit));
+    if (!dir.isEmpty()) setPathText(m_atariRomPathEdit, dir);
 }
 
 void SettingsWindow::onBrowseDiskPath()

@@ -34,6 +34,7 @@
 #include <QMouseEvent>
 #include <QSignalBlocker>
 #include <QTableWidgetItem>
+#include <QGuiApplication>
 
 /* ---------------------------------------------------------------------------------------------------------------------*/
 AimDialog::AimDialog(QWidget *parent) : QDialog(parent) {
@@ -195,7 +196,9 @@ void AimDialog::setupUi() {
     mainVerticalLayout->setSpacing(1);
 
     QHBoxLayout *columnsLayout = new QHBoxLayout();
-    this->setStyleSheet("QPushButton { color: white; } QPushButton:disabled { color: #888888; }");
+    const bool dayMode = QGuiApplication::palette().color(QPalette::Window).lightness() >= 128;
+    this->setStyleSheet(QString("QPushButton { color: %1; } QPushButton:disabled { color: #888888; }")
+                            .arg(dayMode ? "#191919" : "white"));
 
     // --- BLOK 1: LINKS ---
     QWidget *leftContainer = new QWidget(this);
@@ -372,6 +375,15 @@ void AimDialog::setupUi() {
 
     for (QPushButton *btn : findChildren<QPushButton*>()) {
         btn->setCursor(Qt::PointingHandCursor);
+        if (dayMode) {
+            QString style = btn->styleSheet();
+            style.replace(QRegularExpression("color\\s*:\\s*white",
+                                             QRegularExpression::CaseInsensitiveOption),
+                          "color: #191919");
+            if (!style.contains(QRegularExpression("color\\s*:", QRegularExpression::CaseInsensitiveOption)))
+                style += " color: #191919;";
+            btn->setStyleSheet(style);
+        }
     }
 
     m_volEditL->setCursor(Qt::PointingHandCursor);
@@ -421,8 +433,10 @@ void AimDialog::onModePc() {
     m_tableR->setColumnWidth(2, 85);
     m_tableR->setColumnWidth(3, 85);
 
-    m_btnModePc->setStyleSheet("background-color: darkgreen; color: white; font-weight: bold;");
-    m_btnModeAdam->setStyleSheet("color: white;");
+    const QString buttonText = QGuiApplication::palette().color(QPalette::Window).lightness() >= 128
+                                   ? QStringLiteral("#191919") : QStringLiteral("white");
+    m_btnModePc->setStyleSheet(QString("background-color: darkgreen; color: %1; font-weight: bold;").arg(buttonText));
+    m_btnModeAdam->setStyleSheet(QString("color: %1;").arg(buttonText));
 
     m_btnBrowsPc->setEnabled(true);
     m_btnNewImgR->setEnabled(true);
@@ -440,8 +454,10 @@ void AimDialog::onModePc() {
 /* ---------------------------------------------------------------------------------------------------------------------*/
 void AimDialog::onModeAdam()
 {
-    m_btnModeAdam->setStyleSheet("background-color: darkgreen; color: white; font-weight: bold;");
-    m_btnModePc->setStyleSheet("color: white;");
+    const QString buttonText = QGuiApplication::palette().color(QPalette::Window).lightness() >= 128
+                                   ? QStringLiteral("#191919") : QStringLiteral("white");
+    m_btnModeAdam->setStyleSheet(QString("background-color: darkgreen; color: %1; font-weight: bold;").arg(buttonText));
+    m_btnModePc->setStyleSheet(QString("color: %1;").arg(buttonText));
 
     m_btnBrowsPc->setEnabled(false);
     m_btnNewImgR->setEnabled(false);
