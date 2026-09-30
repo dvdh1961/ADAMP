@@ -464,6 +464,8 @@ void f18a_gpu_start(F18aGpu *gpu, uint16_t address)
 {
     if (!gpu || !gpu->memory || gpu->memory_size == 0u) return;
     memset(gpu->workspace, 0, sizeof(gpu->workspace));
+    gpu->trace_position = 0u;
+    gpu->trace_count = 0u;
     gpu->pc = address; gpu->st = 0u; gpu->last_opcode = 0u;
     gpu->running = 1u; gpu->idle = 0u; gpu->stop_reason = F18A_GPU_STOP_NONE;
 }
@@ -475,6 +477,11 @@ unsigned int f18a_gpu_execute(F18aGpu *gpu, unsigned int instruction_budget)
     while (gpu->running && executed < instruction_budget) {
         const uint16_t instruction_pc = gpu->pc;
         const uint16_t opcode = gpu_read_word(gpu, instruction_pc);
+        gpu->trace_pc[gpu->trace_position] = instruction_pc;
+        gpu->trace_opcode[gpu->trace_position] = opcode;
+        gpu->trace_position = (uint8_t)((gpu->trace_position + 1u) & 31u);
+        if (gpu->trace_count < 32u)
+            ++gpu->trace_count;
         gpu->last_opcode = opcode; gpu->pc = (uint16_t)(gpu->pc + 2u); ++executed;
         if (gpu_execute_immediate(gpu, opcode) || gpu_execute_jump(gpu, opcode) ||
             gpu_execute_shift(gpu, opcode) || gpu_execute_single(gpu, opcode) ||

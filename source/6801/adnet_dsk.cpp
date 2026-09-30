@@ -176,8 +176,19 @@ void UpdateDSK_EOS(byte N,byte Dev,int V)
         LEN = GetDCBLen(Dev);
         LEN = LEN<0x0400? LEN:0x0400;
         SEC = GetDCBSector(Dev);
+        /*
+         * Only flush bytes that were actually read by this command.
+         *
+         * In particular, EOS software probes blocks beyond the physical end
+         * of a 160K disk.  The old code left last_command_read/savedLEN from
+         * the preceding successful command intact.  When such a probe failed,
+         * the completion poll consequently copied 1K of stale HoldingBuf data
+         * to the new destination (often address 0000), corrupting the running
+         * program.
+         */
         savedBUF = BUF;
-        savedLEN = LEN;
+        savedLEN = 0;
+        last_command_read = false;
         /* For each 512-byte sector... */
         for(I=0, SEC<<=1 ; I<LEN ; ++SEC, I+=0x200)
         {
@@ -189,19 +200,18 @@ void UpdateDSK_EOS(byte N,byte Dev,int V)
             if(!Data)
             {
                 SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x02);
-                SetDCB(Dev,DCB_SEC_LO, 0);
-                SetDCB(Dev,DCB_SEC_HI, 0);
                 break;
             }
             /* Read or write sectors */
             K = I+0x200>LEN? LEN-I:0x200;
             if(V==CMD_READ)
             {
-                last_command_read = true;
                 for(J=0;J<K;++J,++BUF)
                 {
                     HoldingBuf[I+J] = Data[J];
                 }
+                savedLEN += K;
+                last_command_read = true;
             }
             else
             {
@@ -215,8 +225,6 @@ void UpdateDSK_EOS(byte N,byte Dev,int V)
             if(J<K)
             {
                 SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|0x06);
-                SetDCB(Dev,DCB_SEC_LO, 0);
-                SetDCB(Dev,DCB_SEC_HI, 0);
                 break;
             }
         }
@@ -510,5 +518,3 @@ void UpdateDSK_TDOS(byte N, byte Dev, int V)
         break;
     }
 }
-
-

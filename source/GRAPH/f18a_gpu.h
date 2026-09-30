@@ -25,6 +25,10 @@ typedef struct F18aGpu
     uint16_t st;
     uint16_t workspace[16];
     uint16_t last_opcode;
+    uint16_t trace_pc[32];
+    uint16_t trace_opcode[32];
+    uint8_t trace_position;
+    uint8_t trace_count;
     uint8_t running;
     uint8_t idle;
     F18aGpuStopReason stop_reason;

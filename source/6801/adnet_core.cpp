@@ -22,8 +22,11 @@
 #include <QDebug>
 
 #include "6801/adnet_core.h"
+#include "6801/adnet_mcu2.h"
+#include "6801/adnet_mcu2_fujinet.h"
 #include "CORE/cv.h"
 #include <cstdio>
+#include <cstdarg>
 #include <atomic>
 
 #define RAM(A)  (RAM_Memory[A])
@@ -55,6 +58,22 @@ byte last_command_read;
 byte io_show_status;
 byte KBDStatus, LastKey, DiskID;
 word savedBUF, savedLEN;
+
+void adamnet_eos_trace(const char* format, ...)
+{
+    static FILE* trace = nullptr;
+    if (!trace)
+        trace = std::fopen("ADAMP_EOS_TRACE.log", "w");
+    if (!trace)
+        return;
+
+    va_list args;
+    va_start(args, format);
+    std::vfprintf(trace, format, args);
+    va_end(args);
+    std::fputc('\n', trace);
+    std::fflush(trace);
+}
 
 // --- AdamNet Hooks (aangeroepen door coleco.cpp) ---
 //--------------------------------------------------------------------------------------
@@ -252,17 +271,25 @@ byte ChangeDisk(byte N,const char *FileName)
 extern "C" unsigned char adamnet_read_io(int Address)
 {
         Address &= 0xFF;
-        unsigned char retval = 0x02; // DOE (bit 1) is altijd 1
+        unsigned char retval = 0x02; // DOE (bit 1) is always available.
 
         // Poorten 0xE0 t/m 0xE3 worden gebruikt voor het lezen van de AdamNet Status/Data.
         if (Address >= 0xE0 && Address <= 0xE3)
         {
-            // Lees de status uit PCBTable[0] (PCB_CMD_STAT)
-            retval = PCBTable[0];
+            /* Preserve DOE while reporting the asynchronous Data-In Full
+             * notification. Returning PCBTable[0] directly changed 0x02
+             * into 0x01, which is not a valid ready status for EOS.
+             */
+            retval |= (PCBTable[0] & AN_STAT_DIF);
 
             if (!m_cpm_enabled)
             {
-             PCBTable[0] &= ~0x01; // Wis Bit 0: Data-In Full
+             if (PCBTable[0] & AN_STAT_DIF)
+             {
+                 qDebug() << "[ADAMNET] EOS acknowledged Data-In Full; port="
+                          << Qt::hex << Address << "status=" << int(retval);
+             }
+             PCBTable[0] &= ~AN_STAT_DIF;
             }
         }
         return retval;
@@ -317,6 +344,7 @@ void WritePCB_EOS(word A,byte V)
     /* If writing a PCB command... */
     if(A==PCB_CMD_STAT)
     {
+        adamnet_eos_trace("PCB command=%02X pcb=%04X maxdcb=%u", V, PCBAddr, GetMaxDCB());
         switch(V)
         {
         case CMD_PCB_SYNC1: /* Sync Z80 */
@@ -326,14 +354,35 @@ void WritePCB_EOS(word A,byte V)
             SetPCB(PCB_CMD_STAT,RSP_STATUS|V);
             break;
         case CMD_PCB_SNA: /* Rellocate PCB */
-            MovePCB(GetPCBBase(),GetMaxDCB());
+        {
+            const word oldPcb = PCBAddr;
+            const word newPcb = GetPCBBase();
+            const byte maxDcb = GetMaxDCB();
+            /* The Z80 waits for 83 at the command byte of the old PCB.  Reply
+             * there before changing PCBAddr; otherwise SetPCB() writes 83 at
+             * the new PCB and the caller loops forever on the old 03.
+             */
+            RAM_Memory[oldPcb] = RSP_STATUS | V;
+            MovePCB(newPcb,maxDcb);
             SetPCB(PCB_CMD_STAT,RSP_STATUS|V);
+            qDebug() << "[AdamNet] PCB relocated from"
+                     << QStringLiteral("%1").arg(oldPcb,4,16,QLatin1Char('0'))
+                     << "to"
+                     << QStringLiteral("%1").arg(newPcb,4,16,QLatin1Char('0'))
+                     << "; SNA response 83 preserved at old PCB";
             break;
+        }
         case CMD_PCB_IDLE:
         case CMD_PCB_WAIT:
             break;
         case CMD_PCB_RESET:
-            memset(PCBTable,0,0x10000);
+            /*
+             * A PCB reset must rebuild the default EOS PCB mapping as well as
+             * reset the attached devices.  Merely clearing PCBTable makes the
+             * AdamNet hooks unreachable: after that, even a new SNA/relocate
+             * command can no longer be observed by the emulator.
+             */
+            ResetPCB_EOS();
             break;
         default:
             memset(PCBTable,0,0x10000);
@@ -354,7 +403,24 @@ void WritePCB_EOS(word A,byte V)
 // Reset PCB and attached hardware.
 void ResetPCB_EOS(void)
 {
+    mcu2_disk_reset();
     m_cpm_selected = false;
+
+    /*
+     * A PCB reset cancels every outstanding AdamNet transfer.
+     *
+     * Without this, a delayed EOS disk read survives the reset.  Recipe
+     * Filer issues a read of directory block 1 to $0000 and then resets and
+     * synchronizes the PCB.  The stale completion used to copy that block
+     * into RAM while EOS had its return stack at $00F3, replacing the saved
+     * return address with $0000.  The RET at $FA2E consequently jumped into
+     * directory text and the application appeared to hang.
+     */
+    io_busy = 0;
+    last_command_read = 0;
+    savedBUF = 0;
+    savedLEN = 0;
+
     /* PCB/DCB not mapped yet */
     memset(PCBTable,0,0x10000);
 
@@ -363,6 +429,7 @@ void ResetPCB_EOS(void)
     MovePCB(0xFEC0,15);
 
     /* Reset keyboard state */
+    ResetKBDPendingRead();
     KBDStatus = (byte)(RSP_STATUS | 0x00); // Set op 0x80 (Ready, No data)
     LastKey   = 0x00; // Reset oude buffer
 
@@ -384,6 +451,9 @@ void UpdateDCB_EOS(byte Dev,int V)
     /* Compute device ID */
     DevID = (GetDCB(Dev,DCB_DEV_NUM)<<4) + (GetDCB(Dev,DCB_ADD_CODE)&0x0F);
 
+    if (V > 0)
+        adamnet_eos_trace("DCB dev=%u devid=%02X command=%02X", Dev, DevID, V);
+
     /* Depending on the device ID... */
     switch(DevID)
     {
@@ -392,12 +462,30 @@ void UpdateDCB_EOS(byte Dev,int V)
     case 0x04:
     case 0x05:
     case 0x06:
-    case 0x07: UpdateDSK_EOS(DiskID=DevID-4,Dev,V);break;
+    case 0x07:
+        if (mcu2_block_device_is_enabled(DevID)) {
+            UpdateDSK_MCU2_EOS(Dev, V);
+            break;
+        }
+        UpdateDSK_EOS(DiskID=DevID-4,Dev,V);break;
     case 0x08:
     case 0x09:
     case 0x18:
-    case 0x19: UpdateTAP_EOS((DevID>>4)+((DevID&1)<<1),Dev,V);break;
+    case 0x19:
+        if (mcu2_block_device_is_enabled(DevID)) {
+            UpdateDSK_MCU2_EOS(Dev, V);
+            break;
+        }
+        UpdateTAP_EOS((DevID>>4)+((DevID&1)<<1),Dev,V);break;
     case 0x52: UpdateDSK_EOS(DiskID,Dev,-2);break;
+
+    case 0x0F:
+        if (mcu2_disk_is_enabled()) {
+            UpdateFUJINET_MCU2_EOS(Dev, V);
+            break;
+        }
+        SetDCB(Dev, DCB_CMD_STAT, RSP_ACK + 0x0B);
+        break;
 
     default:
         SetDCB(Dev,DCB_CMD_STAT,RSP_ACK+0x0B);
@@ -458,6 +546,8 @@ void WritePCB_CPM(word A, byte V)
 
 void ResetPCB_CPM(void)
 {
+    mcu2_disk_reset();
+    ResetKBDPendingRead();
     m_cpm_selected = true;
     std::memset(PCBTable, 0, 0x10000);
     PCBAddr = 0x0000;
@@ -493,14 +583,84 @@ void AdamFlushCache_CPM(void)
 
         const byte DevID = (GetDCB(Dev, DCB_DEV_NUM) << 4) + (GetDCB(Dev, DCB_ADD_CODE) & 0x0F);
 
+        /* Some ADAM CP/M loaders build a second, temporary block DCB whose
+         * device-number/add-code fields are workspace values rather than the
+         * normal 00/04 D5 identity.  The local software drive historically
+         * gets the next block through its CP/M cache, but a physical D5 must
+         * still receive this DCB.  Keep the compatibility route deliberately
+         * narrow: unknown identity, physical D5 enabled, a 1024-byte block
+         * buffer and either a block READ/WRITE command or a status poll of
+         * that same DCB.  Character devices and recognised drives are never
+         * redirected. */
+        const byte command = byte(V < 0 ? GetDCB(Dev, DCB_CMD_STAT)
+                                        : (V & 0x7F));
+        const bool knownDevice = DevID == 0x01 || DevID == 0x02
+                              || DevID == 0x04 || DevID == 0x05
+                              || DevID == 0x08 || DevID == 0x18;
+        const bool physicalCpmD5Block = !knownDevice
+                                     && mcu2_block_device_is_enabled(0x04)
+                                     && GetDCBLen(Dev) == 0x0400
+                                     && (V < 0 || command == CMD_READ
+                                               || command == CMD_WRITE);
+        if (physicalCpmD5Block) {
+            if (V >= 0) {
+                qDebug() << "[MCU2][CPM] temporary block DCB" << int(Dev)
+                         << "identity=" << Qt::hex << int(DevID)
+                         << "normalised to physical D5; command=" << int(command)
+                         << "sector=" << Qt::dec << GetDCBSector(Dev);
+            }
+            if (V < 0 || command == CMD_READ) {
+                UpdateDSK_MCU2_CPM_D5(Dev, V < 0 ? V : int(command));
+                return;
+            }
+            /* UpdateDSK_MCU2_EOS copies the complete DCB before starting its
+             * asynchronous gateway request.  Present the physical D5 identity
+             * during that copy; otherwise the selected fallback still sends
+             * the request to the temporary add-code (02 = printer). */
+            const byte savedDeviceNumber = GetDCB(Dev, DCB_DEV_NUM);
+            const byte savedAddCode = GetDCB(Dev, DCB_ADD_CODE);
+            SetDCB(Dev, DCB_DEV_NUM, 0x00);
+            SetDCB(Dev, DCB_ADD_CODE, 0x04);
+            UpdateDSK_MCU2_EOS(Dev, V);
+            /* Preserve CP/M's workspace until the real DCB reply completes.
+             * The pending request already owns its normalised copy. */
+            SetDCB(Dev, DCB_DEV_NUM, savedDeviceNumber);
+            SetDCB(Dev, DCB_ADD_CODE, savedAddCode);
+            return;
+        }
+
         switch (DevID)
         {
             case 0x01: UpdateKBD(Dev,V);break;
             case 0x02: UpdatePRN(Dev,V);break;
-            case 0x04: UpdateDSK_CPM(0, Dev, V);break;
-            case 0x05: UpdateDSK_CPM(1, Dev, V);break;
-            case 0x08: UpdateTAP_CPM(0, Dev, V);break;
-            case 0x18: UpdateTAP_CPM(2, Dev, V);break;
+            case 0x04:
+                if (mcu2_block_device_is_enabled(DevID)) {
+                    if (V < 0 || command == CMD_READ)
+                        UpdateDSK_MCU2_CPM_D5(Dev, V < 0 ? V : int(command));
+                    else
+                        UpdateDSK_MCU2_EOS(Dev, V);
+                }
+                else UpdateDSK_CPM(0, Dev, V);
+                break;
+            case 0x05:
+                if (mcu2_block_device_is_enabled(DevID)) UpdateDSK_MCU2_EOS(Dev, V);
+                else UpdateDSK_CPM(1, Dev, V);
+                break;
+            case 0x06:
+            case 0x07:
+            case 0x09:
+            case 0x19:
+                if (mcu2_block_device_is_enabled(DevID)) UpdateDSK_MCU2_EOS(Dev, V);
+                else SetDCB(Dev, DCB_CMD_STAT, RSP_TIMEOUT);
+                break;
+            case 0x08:
+                if (mcu2_block_device_is_enabled(DevID)) UpdateDSK_MCU2_EOS(Dev, V);
+                else UpdateTAP_CPM(0, Dev, V);
+                break;
+            case 0x18:
+                if (mcu2_block_device_is_enabled(DevID)) UpdateDSK_MCU2_EOS(Dev, V);
+                else UpdateTAP_CPM(2, Dev, V);
+                break;
             default:
                 SetDCB(Dev, DCB_CMD_STAT, RSP_TIMEOUT);
            break;
@@ -586,6 +746,8 @@ void WritePCB_TDOS(word A,byte V)
 // Reset PCB and attached hardware.
 void ResetPCB_TDOS(void)
 {
+    mcu2_disk_reset();
+    ResetKBDPendingRead();
     m_cpm_selected = false;
     /* PCB/DCB not mapped yet */
     memset(PCBTable,0,0x10000);
@@ -622,11 +784,21 @@ void UpdateDCB_TDOS(byte Dev, int V)
     case 0x04:
     case 0x05:
     case 0x06:
-    case 0x07: UpdateDSK_TDOS(DiskID=DevID-4,Dev,V);break;
+    case 0x07:
+        if (mcu2_block_device_is_enabled(DevID)) {
+            UpdateDSK_MCU2_EOS(Dev, V);
+            break;
+        }
+        UpdateDSK_TDOS(DiskID=DevID-4,Dev,V);break;
     case 0x08:
     case 0x09:
     case 0x18:
-    case 0x19: UpdateTAP_TDOS((DevID>>4)+((DevID&1)<<1),Dev,V);break;
+    case 0x19:
+        if (mcu2_block_device_is_enabled(DevID)) {
+            UpdateDSK_MCU2_EOS(Dev, V);
+            break;
+        }
+        UpdateTAP_TDOS((DevID>>4)+((DevID&1)<<1),Dev,V);break;
     case 0x52: UpdateDSK_TDOS(DiskID,Dev,-2);break;
     default:
         SetDCB(Dev,DCB_CMD_STAT,RSP_ACK+0x0B);

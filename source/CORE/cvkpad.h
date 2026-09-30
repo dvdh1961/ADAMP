@@ -34,3 +34,8 @@ void coleco_setController(int idx, const ColecoControllerState& s); // 0=port1, 
 uint8_t coleco_io_read(uint8_t port);   // Z80 IN
 void    coleco_io_write(uint8_t port, uint8_t value); // Z80 OUT
 void coleco_push_direction_from_bridge(int idx);
+void coleco_setDrivingMode(bool enabled);
+bool coleco_drivingModeEnabled();
+void coleco_driveWheelStep(int direction); // -1=left, +1=right
+void coleco_driveWheelReleaseEvent();
+bool coleco_driveWheelEventPending();

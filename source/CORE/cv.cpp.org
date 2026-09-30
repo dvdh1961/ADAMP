@@ -38,7 +38,6 @@
 #include "psg_bridge.h"
 #include "CORE/c24xx.h"
 #include "6801/adnet_core.h"
-#include "6801/adnet_mcu2.h"
 #include "cvkpad.h"
 #include "SOUND/snd_ay8910.h"
 #include "disasm_bridge.h"
@@ -54,7 +53,6 @@
 #include "GRAPH/f18a_term80.h"
 #include "GRAPH/f18a_term80_cpm.h"
 #include "GRAPH/f18a_term80_tdos.h"
-#include "vdp_bridge.h"
 
 // BIOS loader prototype
 static int loadBios(const char *filename, BYTE *memory, int sizerm);
@@ -66,44 +64,6 @@ static int g_cpm_trace = 0;
 #endif
 static bool g_cpm_protection_active = false;
 static int  g_cleanup_phase = 0; // 0=Wachten, 1=Injectie DB, 2=Injectie BF, 3=Klaar
-static unsigned long long s_psg_write_count = 0;
-static BYTE s_psg_last_data = 0;
-
-static quint16 hardwarePsgCaller()
-{
-    const quint16 outPc = Z80.pc.w.l;
-    if (outPc != 0xE615)
-        return outPc;
-
-    /* EOS helper E60D pushes BC before OUT (C),B. The CALL return address is
-     * therefore two bytes above the current stack pointer. */
-    return quint16(
-        coleco_readbyte((Z80.sp.w.l + 2) & 0xFFFF)
-        | (quint16(coleco_readbyte((Z80.sp.w.l + 3) & 0xFFFF)) << 8));
-}
-
-static BYTE filterHardwareEosMenuBuzz(BYTE data)
-{
-    if (!mcu2_disk_is_enabled())
-        return data;
-
-    /* The physical FujiNet menu continuously asks the EOS sound manager to
-     * alternate channel-1 volume B7/BA at roughly 60 Hz. On a real ADAM this
-     * is not heard, but feeding those writes into the emulated SN76489 creates
-     * the reported nervous buzz. Suppress only those two volume bytes from
-     * EOS caller E462; direct PSG writes from games and every other EOS sound
-     * command pass through unchanged. BF is channel-1 volume off. */
-    if (hardwarePsgCaller() == 0xE462 && (data == 0xB7 || data == 0xBA)) {
-        static bool reported = false;
-        if (!reported) {
-            qDebug() << "[AUDIO] Filtering FujiNet EOS B7/BA menu buzz; game PSG writes remain enabled";
-            reported = true;
-        }
-        return 0xBF;
-    }
-
-    return data;
-}
 
 static void adamp_vdp_trace(const char *event, unsigned value)
 {
@@ -152,7 +112,7 @@ static void adamp_dump_machine_state()
     QFile ramFile(base + "/ADAMP_RAM.bin");
     if (ramFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
     {
-        // Include the 64 KiB intrinsic RAM and both 64 KiB expansion banks.
+        // Include both the 64 KiB intrinsic RAM and the 64 KiB expansion RAM.
         ramFile.write(reinterpret_cast<const char *>(RAM_Memory),
                       MAX_RAM_SIZE * 1024);
         ramFile.close();
@@ -332,15 +292,8 @@ static inline void DKA_TRACE_BANK(const QString&)
 #ifndef COLECO_VDP_F18A
 #define COLECO_VDP_F18A  1
 #endif
-#ifndef COLECO_VDP_PICO9918
-#define COLECO_VDP_PICO9918  2
-#endif
 
 static int  g_vdpType = COLECO_VDP_TMS;
-static int  g_vdpEngine = COLECO_VDP_ENGINE_LEGACY;
-static bool g_vdpEngineResolved = false;
-static bool g_vdpEnginePinned = false;
-static void vdp_engine_resolve(void);
 static bool g_f18a_irq_level = false;
 
 static inline unsigned int vdp_current_scanlines()
@@ -360,7 +313,7 @@ static inline unsigned int vdp_current_scanlines()
     if (emulator->NTSC)
         return TMS9918_LINES;
 
-    if (coleco_vdp_has_f18a())
+    if (g_vdpType == COLECO_VDP_F18A)
         return TMS9918_LINES;
 
     return TMS9929_LINES;
@@ -373,15 +326,9 @@ static inline void f18a_sync_timing()
 
 void coleco_set_vdp_type(int vdpType)
 {
-    g_vdpType = (vdpType == COLECO_VDP_F18A || vdpType == COLECO_VDP_PICO9918)
-                    ? vdpType : COLECO_VDP_TMS;
-    f18a_set_enabled(coleco_vdp_has_f18a() != 0);
+    g_vdpType = (vdpType == COLECO_VDP_F18A) ? COLECO_VDP_F18A : COLECO_VDP_TMS;
+    f18a_set_enabled(g_vdpType == COLECO_VDP_F18A);
     g_f18a_irq_level = false;
-
-    vdp_engine_resolve();
-    if (!g_vdpEnginePinned)
-        g_vdpEngine = (g_vdpType == COLECO_VDP_PICO9918)
-                          ? COLECO_VDP_ENGINE_PICO9918 : COLECO_VDP_ENGINE_LEGACY;
 
     /*
      * Belangrijk:
@@ -403,59 +350,16 @@ static inline bool coleco_vdp_is_f18a(void)
     return g_vdpType == COLECO_VDP_F18A;
 }
 
-int coleco_vdp_has_f18a(void)
-{
-    return (g_vdpType == COLECO_VDP_F18A || g_vdpType == COLECO_VDP_PICO9918) ? 1 : 0;
-}
-
-void coleco_set_vdp_engine(int engine)
-{
-    g_vdpEngineResolved = true;
-    g_vdpEnginePinned = true;
-    g_vdpEngine = (engine == COLECO_VDP_ENGINE_PICO9918)
-                      ? COLECO_VDP_ENGINE_PICO9918 : COLECO_VDP_ENGINE_LEGACY;
-}
-
-int coleco_get_vdp_engine(void)
-{
-    vdp_engine_resolve();
-    return g_vdpEngine;
-}
-
-static void vdp_engine_resolve(void)
-{
-    if (g_vdpEngineResolved) return;
-    g_vdpEngineResolved = true;
-    const char *requested = std::getenv("ADAMP_VDP_ENGINE");
-    if (requested && std::strcmp(requested, "pico9918") == 0) {
-        g_vdpEngine = COLECO_VDP_ENGINE_PICO9918;
-        g_vdpEnginePinned = true;
-    }
-}
-
-static inline bool coleco_vdp_is_pico9918(void)
-{
-    vdp_engine_resolve();
-    return g_vdpEngine == COLECO_VDP_ENGINE_PICO9918;
-}
-
 static inline void vdp_reset_active(void)
 {
     g_f18a_irq_level = false;
 
-    if (coleco_vdp_is_pico9918()) {
-        vdp_bridge_reset(vdp_current_scanlines());
-        return;
-    }
-
     if (g_vdpType == COLECO_VDP_F18A)
     {
-        /* Tijdelijke F18A trace/VRAM-dump uitgeschakeld.
         const QByteArray tracePath = QDir(QCoreApplication::applicationDirPath())
                                          .filePath("f18a_trace.txt")
                                          .toLocal8Bit();
         f18a_set_trace_path(tracePath.constData());
-        */
         f18a_sync_timing();
         f18a_reset();
         return;
@@ -467,10 +371,6 @@ static inline void vdp_reset_active(void)
 
 static inline void vdp_writedata_active(BYTE value)
 {
-    if (coleco_vdp_is_pico9918()) {
-        vdp_bridge_writedata((unsigned char)value);
-        return;
-    }
     if (coleco_vdp_is_f18a())
     {
         f18a_writedata((unsigned char)value);
@@ -482,11 +382,6 @@ static inline void vdp_writedata_active(BYTE value)
 
 static inline void vdp_writectrl_active(BYTE value)
 {
-
-    if (coleco_vdp_is_pico9918()) {
-        vdp_bridge_writectrl((unsigned char)value);
-        return;
-    }
 
     if (coleco_vdp_is_f18a())
     {
@@ -501,8 +396,6 @@ static inline void vdp_writectrl_active(BYTE value)
 
 static inline BYTE vdp_readdata_active(void)
 {
-    if (coleco_vdp_is_pico9918())
-        return (BYTE)vdp_bridge_readdata();
     if (coleco_vdp_is_f18a())
         return (BYTE)f18a_readdata();
 
@@ -512,13 +405,6 @@ static inline BYTE vdp_readdata_active(void)
 static inline BYTE vdp_readctrl_active(void)
 {
     BYTE value = 0;
-
-    if (coleco_vdp_is_pico9918()) {
-        value = (BYTE)vdp_bridge_readctrl();
-        g_f18a_irq_level = false;
-        z80_set_irq_line(INPUT_LINE_NMI, CLEAR_LINE);
-        return value;
-    }
 
     if (coleco_vdp_is_f18a())
     {
@@ -557,11 +443,6 @@ static inline BYTE vdp_readctrl_active(void)
 static inline void vdp_loop_active(void)
 {
 
-    if (coleco_vdp_is_pico9918()) {
-        g_f18a_irq_level = (vdp_bridge_loop() != 0);
-        return;
-    }
-
 
     if (coleco_vdp_is_f18a())
     {
@@ -592,8 +473,6 @@ static inline void vdp_loop_active(void)
 
 static inline bool vdp_irq_level_active(void)
 {
-    if (coleco_vdp_is_pico9918())
-        return g_f18a_irq_level;
     if (coleco_vdp_is_f18a())
         return g_f18a_irq_level;
 
@@ -1934,7 +1813,6 @@ void coleco_writebyte(unsigned int Address, int Data) { // Vanuit Z80
 //---------------------------------------------------------------------------
 BYTE coleco_ReadByte(int Address)
 {
-    AdamNetKbdDiagnosticMemoryRead((word)(Address & 0xFFFF));
     Address &= 0xFFFF;
 
     // ------------------------------------------------------------
@@ -2198,13 +2076,8 @@ void coleco_writeport(int Address, int Data, int * /**tstates*/)
         break;
 
     case 0xE0: // 0xE0 - 0xFF: Sound Chip Write (SN76489)
-    {
-        const BYTE filteredData = filterHardwareEosMenuBuzz(BYTE(Data));
-        ++s_psg_write_count;
-        s_psg_last_data = filteredData;
-        sn76489_write((uint8_t)filteredData);
+        sn76489_write((uint8_t)Data);
         break;
-    }
     }
 }
 
@@ -2357,159 +2230,9 @@ void coleco_setSpinner(int player, int analogValue)
 }
 
 //---------------------------------------------------------------------------
-static FILE *s_drive_trace_file = nullptr;
-
-static void drive_trace_open()
-{
-    if (s_drive_trace_file) return;
-    QByteArray path = QFile::encodeName(
-        QDir(QCoreApplication::applicationDirPath())
-            .filePath(QStringLiteral("driving_controller_trace.log")));
-    s_drive_trace_file = std::fopen(path.constData(), "w");
-    if (!s_drive_trace_file) {
-        path = QFile::encodeName(
-            QDir::current().filePath(QStringLiteral("driving_controller_trace.log")));
-        s_drive_trace_file = std::fopen(path.constData(), "w");
-    }
-    if (s_drive_trace_file) {
-        std::fprintf(s_drive_trace_file,
-            "ADAMP driving-controller IRQ trace\n"
-            "columns: tstates event analog gear PC SP IFF1 IFF2 IM IRQ ACK NMI_COUNT NMI_STATE/PENDING PSG_COUNT/LAST mem7000-700f mem71c0-71ff mem73e0-73ef\n");
-        std::fflush(s_drive_trace_file);
-    }
-}
-
-static void drive_trace(const char *event, int analogX)
-{
-    if (!s_drive_trace_file) return;
-    std::fprintf(s_drive_trace_file,
-        "%10u %-8s %6d GEAR=%u PC=%04X SP=%04X IFF=%u/%u IM=%u IRQ=%u ACK=%d NMI=%llu STATE=%u/%u PSG=%llu/%02X 7000:",
-        unsigned(tStatesCount), event, analogX, unsigned(ib_driving_gear),
-        unsigned(Z80.pc.w.l), unsigned(Z80.sp.w.l),
-        unsigned(Z80.iff1), unsigned(Z80.iff2), unsigned(Z80.im),
-        unsigned(Z80.irq_state), int(z80_irq_acknowledged),
-        z80_nmi_accepted_count, unsigned(Z80.nmi_state),
-        unsigned(Z80.nmi_pending), s_psg_write_count,
-        unsigned(s_psg_last_data));
-    for (int i = 0; i < 16; ++i)
-        std::fprintf(s_drive_trace_file, "%02X", unsigned(coleco_ReadByte(0x7000 + i)));
-    std::fprintf(s_drive_trace_file, " 71C0:");
-    for (int i = 0; i < 64; ++i)
-        std::fprintf(s_drive_trace_file, "%02X", unsigned(coleco_ReadByte(0x71C0 + i)));
-    std::fprintf(s_drive_trace_file, " 73E0:");
-    for (int i = 0; i < 16; ++i)
-        std::fprintf(s_drive_trace_file, "%02X", unsigned(coleco_ReadByte(0x73E0 + i)));
-    std::fputc('\n', s_drive_trace_file);
-    std::fflush(s_drive_trace_file);
-}
-
-//---------------------------------------------------------------------------
 void coleco_paddle(void)
 {
     static int s_pulse_counter = 0;
-    static long long s_drive_accumulator = 0;
-    static unsigned long long s_last_drive_tstates = 0;
-    static bool s_drive_irq_asserted = false;
-    static unsigned long long s_drive_irq_started = 0;
-    static bool s_drive_trace_active = false;
-    static unsigned int s_drive_last_sample = 0;
-    static unsigned int s_drive_last_gear = 0;
-
-    if (coleco_drivingModeEnabled()) {
-        if (!s_drive_trace_active) {
-            drive_trace_open();
-            drive_trace("MODE_ON", int(ib_analog_x1));
-            s_drive_trace_active = true;
-            s_drive_last_sample = unsigned(tStatesCount);
-            s_drive_last_gear = unsigned(ib_driving_gear);
-        }
-
-        if (s_drive_last_gear != unsigned(ib_driving_gear)) {
-            drive_trace("GEAR", int(ib_analog_x1));
-            s_drive_last_gear = unsigned(ib_driving_gear);
-        }
-
-        if (s_drive_irq_asserted && z80_irq_acknowledged) {
-            drive_trace("IRQ_ACK", int(ib_analog_x1));
-            z80_set_irq_line(0, CLEAR_LINE);
-            z80_irq_acknowledged = 0;
-            s_drive_irq_asserted = false;
-        } else if (s_drive_irq_asserted
-                   && (tStatesCount - s_drive_irq_started) > 256u) {
-            // The physical controller produces a pulse, not an IRQ that can
-            // remain stuck throughout a DI/game-over section.  If the CPU did
-            // not accept it promptly, let this wheel transition expire.
-            drive_trace("TIMEOUT", int(ib_analog_x1));
-            z80_set_irq_line(0, CLEAR_LINE);
-            coleco_driveWheelReleaseEvent();
-            s_drive_irq_asserted = false;
-        }
-
-        const unsigned long long now = tStatesCount;
-
-        unsigned long long elapsed = now - s_last_drive_tstates;
-        s_last_drive_tstates = now;
-        if (elapsed > 50000u) elapsed = 50000u;
-
-        const int analogX = int(ib_analog_x1);
-        const int magnitude = qAbs(analogX);
-        if (magnitude > 4000) {
-            // A held keyboard key represents a steadily rotating wheel.
-            // Arkanoid needs a quicker spinner in Paddle Mode, while Dukes
-            // remains at the proven safe rate in Driving Controller Mode.
-            const long long kStepThreshold = 32767LL
-                    * (ib_paddle_mode ? 30000LL : 60000LL);
-
-            // Never accumulate a backlog while the previous pulse is still
-            // pending. Otherwise one delayed BIOS read is followed by a burst
-            // of back-to-back IRQs that eventually starves the game loop.
-            if (!s_drive_irq_asserted && !coleco_driveWheelEventPending()) {
-                s_drive_accumulator += static_cast<long long>(magnitude)
-                                     * static_cast<long long>(elapsed);
-            }
-            if (s_drive_accumulator >= kStepThreshold
-                    && !s_drive_irq_asserted
-                    && !coleco_driveWheelEventPending()) {
-                s_drive_accumulator = 0;
-                // The BIOS converts D5 into a signed spinner delta.  Dukes
-                // interprets a positive keyboard axis with the opposite D5
-                // polarity, so map D/right to the low-direction state and
-                // Q/A-left to the high-direction state.
-                coleco_driveWheelStep(analogX > 0 ? -1 : 1);
-                z80_irq_acknowledged = 0;
-                z80_set_irq_line(0, ASSERT_LINE);
-                s_drive_irq_asserted = true;
-                s_drive_irq_started = now;
-                drive_trace("IRQ_SET", analogX);
-            }
-        } else {
-            s_drive_accumulator = 0;
-        }
-
-        if (unsigned(tStatesCount) - s_drive_last_sample >= 500000u) {
-            drive_trace("SAMPLE", analogX);
-            s_drive_last_sample = unsigned(tStatesCount);
-        }
-        return;
-    }
-
-    if (s_drive_trace_active) {
-        drive_trace("MODE_OFF", int(ib_analog_x1));
-        if (s_drive_trace_file) {
-            std::fclose(s_drive_trace_file);
-            s_drive_trace_file = nullptr;
-        }
-        s_drive_trace_active = false;
-    }
-    if (s_drive_irq_asserted) {
-        z80_set_irq_line(0, CLEAR_LINE);
-        s_drive_irq_asserted = false;
-    }
-    z80_irq_acknowledged = 0;
-    coleco_driveWheelReleaseEvent();
-    s_drive_accumulator = 0;
-    s_last_drive_tstates = tStatesCount;
-
     const int PULSE_THRESHOLD = 512;
     const int ANALOG_DEAD_ZONE = 8000;
 
@@ -2577,6 +2300,8 @@ int coleco_do_scanline(void)
      *   - NIET direct clearen na z80_checknmi()
      *   - CLEAR pas wanneer de VDP IRQ-level wegvalt
      */
+    static int nmi_active = 0;
+
     if (!emulator->stop && !emulator->singlestep)
     {
         // Verwerk pending NMI aan het begin van de scanline.
@@ -2597,7 +2322,7 @@ int coleco_do_scanline(void)
 
             DEBUG_BRIDGE.setCurrentOpcodeStartPC(Z80.pc.w.l);
 
-            if (coleco_vdp_has_f18a())
+            if (coleco_get_vdp_type() == COLECO_VDP_F18A)
             {
                 if (m_cpm_enabled && m_tdos_enabled)
                 {
@@ -2653,20 +2378,18 @@ int coleco_do_scanline(void)
     {
         if (vdp_irq_level)
         {
-            // Use the real Z80 NMI line as the edge state.  A VDP status
-            // read clears that line immediately.  Keeping a second local
-            // flag can miss the next VBlank when the status read happens
-            // close to the frame boundary, leaving the game waiting forever.
-            if (Z80.nmi_state == CLEAR_LINE)
+            if (!nmi_active)
             {
                 z80_set_irq_line(INPUT_LINE_NMI, ASSERT_LINE);
+                nmi_active = 1;
             }
         }
         else
         {
-            if (Z80.nmi_state != CLEAR_LINE)
+            if (nmi_active)
             {
                 z80_set_irq_line(INPUT_LINE_NMI, CLEAR_LINE);
+                nmi_active = 0;
             }
         }
     }
@@ -2804,7 +2527,7 @@ int coleco_cpu_execute_one_step() {
         return 0; // 0 cycles uitgevoerd
     }
 
-     if (coleco_vdp_has_f18a()) {
+     if (coleco_get_vdp_type() == COLECO_VDP_F18A) {
           if (m_cpm_enabled && m_tdos_enabled)
                    f18a_term80_tdos_before_opcode();
          else

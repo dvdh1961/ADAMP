@@ -94,9 +94,6 @@ static unsigned char  g_palette_first_byte = 0;
 static unsigned char  g_palette_byte_latch = 0;
 
 static unsigned char g_status = 0;
-static unsigned char g_status1 = 0;
-static unsigned char g_status2 = 0;
-static unsigned char g_status3 = 0;
 static unsigned char g_read_buffer = 0;
 
 /*
@@ -171,9 +168,7 @@ static void f18a_gpu_prepare_mapped_memory(int blanking_override)
                     ? (unsigned char)(blanking_override != 0)
                     : ((g_loop_counter >= active_lines) ? 1u : 0u);
     g_vram[0xB000u] = g_status;
-    g_vram[0xB001u] = g_status1;
-    g_vram[0xB002u] = g_status2;
-    g_vram[0xB003u] = g_status3;
+    g_vram[0xB002u] |= 0x80u;
 }
 
 static void f18a_gpu_commit_mapped_memory(void)
@@ -189,37 +184,8 @@ static void f18a_gpu_commit_mapped_memory(void)
             g_palette_dirty = 1u;
         }
     }
-    /* VR56 bit 0 is the hardware-visible GPU run flag.  A GPU program can
-       stop itself by clearing it through the mapped register window. */
-    if ((g_reg[56] & 0x01u) == 0u)
-        g_gpu.running = 0u;
-
-    if (g_gpu.running) {
-        g_reg[56] |= 0x01u;
-        g_status2 |= 0x80u;
-    } else {
-        g_reg[56] &= (unsigned char)~0x01u;
-        g_status2 &= (unsigned char)~0x80u;
-    }
-    g_vram[0xB002u] = g_status2;
-}
-
-static void f18a_gpu_run(unsigned int budget, const char *phase,
-                         int blanking_override);
-
-static void f18a_gpu_start_at_current_address(const char *phase)
-{
-    const unsigned short address = (unsigned short)(
-        ((unsigned int)g_reg[54] << 8) | g_reg[55]);
-
-    /* The TMS9900 fetches words and the real F18A rejects odd entry points. */
-    if ((address & 1u) != 0u)
-        return;
-
-    f18a_gpu_start(&g_gpu, address);
-    g_reg[56] |= 0x01u;
-    g_status2 |= 0x80u;
-    f18a_gpu_run(1024u, phase, -1);
+    if (!g_gpu.running)
+        g_vram[0xB002u] &= (unsigned char)~0x80u;
 }
 
 static void f18a_gpu_run(unsigned int budget, const char *phase,
@@ -498,16 +464,6 @@ static inline uint32_t f18a_color(unsigned int idx)
     return 0xFF000000u | (r * 17u << 16) | (g * 17u << 8) | (b * 17u);
 }
 
-static inline uint32_t f18a_backdrop_color(void)
-{
-    const unsigned int idx = g_reg[7] & 0x0Fu;
-
-    /* Color index 0 is transparent in the TMS-compatible tile modes.  When
-       the backdrop itself is also zero there is no lower layer, so the real
-       F18A outputs black rather than programmable palette entry 0. */
-    return idx ? f18a_color(idx) : 0xFF000000u;
-}
-
 static inline unsigned char f18a_vram_read(unsigned int addr)
 {
     return g_vram[addr & F18A_VRAM_MASK];
@@ -668,7 +624,7 @@ static void f18a_render_graphics1(void)
     const unsigned int name_base    = ((unsigned int)(g_reg[2] & 0x0Fu) << 10) & F18A_VRAM_MASK;
     const unsigned int color_base   = ((unsigned int)g_reg[3] << 6) & F18A_VRAM_MASK;
     const unsigned int pattern_base = ((unsigned int)(g_reg[4] & 0x07u) << 11) & F18A_VRAM_MASK;
-    const uint32_t border = f18a_backdrop_color();
+    const uint32_t border = f18a_color(g_reg[7] & 0x0Fu);
 
     uint32_t line[VB_WIDTH];
     unsigned char tile_priority[VB_WIDTH];
@@ -755,10 +711,13 @@ static void f18a_render_graphics1(void)
             const unsigned char pat = f18a_vram_read(pattern_base + ((unsigned int)chr << 3) + (unsigned int)row);
             const unsigned char col = f18a_vram_read(color_base + (unsigned int)(chr >> 3));
 
-            const unsigned int fg = (col >> 4) & 0x0Fu;
-            const unsigned int bg = col & 0x0Fu;
-            const uint32_t fg_argb = fg ? f18a_color(fg) : border;
-            const uint32_t bg_argb = bg ? f18a_color(bg) : border;
+            unsigned int fg = (col >> 4) & 0x0Fu;
+            unsigned int bg = col & 0x0Fu;
+            if (fg == 0) fg = g_reg[7] & 0x0Fu;
+            if (bg == 0) bg = g_reg[7] & 0x0Fu;
+
+            const uint32_t fg_argb = f18a_color(fg);
+            const uint32_t bg_argb = f18a_color(bg);
             line[x] = (pat & (0x80u >> bit)) ? fg_argb : bg_argb;
         }
 
@@ -789,7 +748,7 @@ static void f18a_render_graphics2(void)
     const unsigned int pattern_base0 =
         ((unsigned int)(g_reg[4] & 0x3Cu) << 11) & F18A_VRAM_MASK;
 
-    const uint32_t border = f18a_backdrop_color();
+    const uint32_t border = f18a_color(g_reg[7] & 0x0Fu);
 
     uint32_t line[VB_WIDTH];
 
@@ -881,10 +840,13 @@ static void f18a_render_graphics2(void)
             const unsigned char pat = f18a_vram_read(pattern_base + char_offset);
             const unsigned char col = f18a_vram_read(color_base + char_offset);
 
-            const unsigned int fg = (col >> 4) & 0x0Fu;
-            const unsigned int bg = col & 0x0Fu;
-            const uint32_t fg_argb = fg ? f18a_color(fg) : border;
-            const uint32_t bg_argb = bg ? f18a_color(bg) : border;
+            unsigned int fg = (col >> 4) & 0x0Fu;
+            unsigned int bg = col & 0x0Fu;
+            if (fg == 0) fg = g_reg[7] & 0x0Fu;
+            if (bg == 0) bg = g_reg[7] & 0x0Fu;
+
+            const uint32_t fg_argb = f18a_color(fg);
+            const uint32_t bg_argb = f18a_color(bg);
             const int px = tile_x << 3;
 
             for (int bit = 0; bit < 8; ++bit)
@@ -927,7 +889,7 @@ static void f18a_render_text(void)
     if (fg == 0) fg = 15;
 
     const uint32_t fg_argb = f18a_color(fg);
-    const uint32_t bg_argb = bg ? f18a_color(bg) : f18a_backdrop_color();
+    const uint32_t bg_argb = f18a_color(bg);
 
     uint32_t line[VB_WIDTH];
 
@@ -999,8 +961,8 @@ static void f18a_render_text80(void)
                 bg = attr_bg ? attr_bg : main_bg;
             }
 
-            const uint32_t fg_argb = fg ? f18a_color(fg) : f18a_backdrop_color();
-            const uint32_t bg_argb = bg ? f18a_color(bg) : f18a_backdrop_color();
+            const uint32_t fg_argb = f18a_color(fg);
+            const uint32_t bg_argb = f18a_color(bg);
             const unsigned int x0 = column * 6u;
 
             for (unsigned int bit = 0; bit < 6u; ++bit)
@@ -1019,7 +981,7 @@ static void f18a_render_multicolor(void)
 {
     const unsigned int name_base    = ((unsigned int)(g_reg[2] & 0x0Fu) << 10) & F18A_VRAM_MASK;
     const unsigned int pattern_base = ((unsigned int)(g_reg[4] & 0x07u) << 11) & F18A_VRAM_MASK;
-    const uint32_t border = f18a_backdrop_color();
+    const uint32_t border = f18a_color(g_reg[7] & 0x0Fu);
 
     uint32_t line[VB_WIDTH];
 
@@ -1037,10 +999,8 @@ static void f18a_render_multicolor(void)
             const unsigned char chr = f18a_vram_read(name_addr);
             const unsigned char col = f18a_vram_read(pattern_base + ((unsigned int)chr << 3) + (unsigned int)(subrow * 4));
 
-            const unsigned int left_idx = (col >> 4) & 0x0Fu;
-            const unsigned int right_idx = col & 0x0Fu;
-            const uint32_t left  = left_idx ? f18a_color(left_idx) : border;
-            const uint32_t right = right_idx ? f18a_color(right_idx) : border;
+            const uint32_t left  = f18a_color((col >> 4) & 0x0Fu);
+            const uint32_t right = f18a_color(col & 0x0Fu);
             const int px = tile_x << 3;
 
             for (int bit = 0; bit < 4; ++bit)
@@ -1339,7 +1299,7 @@ static void f18a_render_frame(void)
     /* Display disabled: show backdrop color. */
     if ((g_reg[1] & F18A_REG1_DISPLAY) == 0)
     {
-        f18a_present_solid(f18a_backdrop_color());
+        f18a_present_solid(f18a_color(g_reg[7] & 0x0Fu));
         return;
     }
 
@@ -1430,20 +1390,13 @@ void f18a_set_cpm40_shift_left(int enabled)
 
 void f18a_reset(void)
 {
-    /*
-     * Tijdelijke F18A-diagnostiek uitgeschakeld.
-     * Opnieuw activeren indien een trace en VRAM-dump nodig zijn.
-     *
     if (g_trace_file)
         fclose(g_trace_file);
     g_trace_file = fopen(g_trace_path, "w");
-    */
     g_trace_ecm_frames = 0;
     g_trace_gpu_snapshots = 0;
-    /*
     if (g_trace_file)
         fprintf(g_trace_file, "ADAM+ F18A diagnostic trace\n");
-    */
 
     memset(g_vram, 0x00, sizeof(g_vram));
     memset(g_reg,  0x00, sizeof(g_reg));
@@ -1456,9 +1409,6 @@ void f18a_reset(void)
 #endif
 
     g_status = 0;
-    g_status1 = 0xE0u;
-    g_status2 = 0;
-    g_status3 = 0;
     g_read_buffer = 0;
     g_palette_mode = 0;
     g_palette_auto = 0;
@@ -1508,19 +1458,6 @@ unsigned char f18a_loop(void)
 {
     f18a_log_once_loop();
 
-    g_status3 = (unsigned char)((g_loop_counter < 256u)
-                              ? g_loop_counter : 255u);
-    g_status1 &= (unsigned char)~0x03u;
-    if (g_status3 != 0u && g_reg[19] == g_status3) {
-        g_status1 |= 0x01u;
-        g_status |= F18A_STATUS_VBLANK;
-    }
-    g_vram[0xB003u] = g_status3;
-
-    /* VR50 bit 6 requests a GPU restart at the beginning of each scanline. */
-    if ((g_reg[50] & 0x40u) && !g_gpu.running)
-        f18a_gpu_start_at_current_address("scanline-trigger");
-
     /* The F18A GPU runs alongside the host CPU, not only at its start write. */
     if (g_gpu.running) {
         const unsigned int active_lines = (g_reg[49] & 0x40u) ? 240u : 192u;
@@ -1560,11 +1497,6 @@ unsigned char f18a_loop(void)
         f18a_render_frame();
 
         g_status |= F18A_STATUS_VBLANK;
-        g_status1 |= 0x02u;
-
-        /* VR50 bit 5 requests a GPU restart at end-of-frame. */
-        if ((g_reg[50] & 0x20u) && !g_gpu.running)
-            f18a_gpu_start_at_current_address("frame-trigger");
 
         if (g_reg[1] & F18A_REG1_INT_ENABLE)
             return 1;
@@ -1684,7 +1616,9 @@ unsigned char f18a_writectrl(unsigned char value)
                 }
                 else if (g_erm_unlocked && effective_reg == 55u)
                 {
-                    f18a_gpu_start_at_current_address("start");
+                    f18a_gpu_start(&g_gpu,
+                        (unsigned short)(((unsigned int)g_reg[54] << 8) | g_reg[55]));
+                    f18a_gpu_run(1024u, "start", -1);
                 }
 #if F18A_DEBUG_REG_WRITES
                 f18a_log_register_write(effective_reg, g_first_ctrl_byte);
@@ -1722,17 +1656,8 @@ unsigned char f18a_readctrl(void)
     }
     else if (g_status_select == 1u)
     {
-        /* MK1 identity bits plus the live line/interrupt condition flags. */
-        result = g_status1;
-        g_status1 &= (unsigned char)~0x01u;
-    }
-    else if (g_status_select == 2u)
-    {
-        result = g_status2;
-    }
-    else if (g_status_select == 3u)
-    {
-        result = g_status3;
+        /* F18A MK1 identity bits.  Low condition bits are zero for now. */
+        result = 0xE0u;
     }
     else if (g_status_select == 14u)
     {

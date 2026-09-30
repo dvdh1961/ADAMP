@@ -16,6 +16,7 @@ extern "C" {
  */
 
 void f18a_reset(void);
+void f18a_set_trace_path(const char *path);
 
 void f18a_set_enabled(int enabled);
 int  f18a_is_enabled(void);
@@ -33,7 +34,7 @@ unsigned char f18a_readctrl(void);
 
 unsigned char f18a_get_register(unsigned char reg);
 
-/* State access helpers */
+/* Optional debug/helpers for later steps */
 unsigned char f18a_peek_vram(unsigned int address);
 void          f18a_poke_vram(unsigned int address, unsigned char value);
 unsigned int  f18a_get_vram_address(void);

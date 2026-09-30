@@ -288,6 +288,8 @@ void MovePCB(word NewAddr,byte MaxDCB);
 void ReportDevice(byte Dev,word MsgSize,byte IsBlock);
 byte GetKBD();
 void UpdateKBD(byte Dev,int V);
+void ResetKBDPendingRead(void);
+void AdamNetKbdDiagnosticMemoryRead(word Address);
 void UpdatePRN(byte Dev,int V);
 void AdamFlushCache(void);
 void AdamFlushCache_CPM(void);

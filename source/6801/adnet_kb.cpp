@@ -45,6 +45,63 @@ volatile uint8_t g_key_buffer[KEY_BUFFER_SIZE] = {0};
 volatile uint8_t g_key_buffer_head = 0;
 volatile uint8_t g_key_buffer_tail = 0;
 
+/* Ordinary host keyboard input used to live in the single LastKey byte.  A
+ * second key arriving while EOS/FujiNet was still processing the first one
+ * silently overwrote it.  Keep ASCII input in its own FIFO; LastKey remains a
+ * compatibility mirror of the oldest queued byte for code outside this file.
+ */
+static constexpr uint8_t ASCII_KEY_BUFFER_SIZE = 32;
+static uint8_t g_ascii_key_buffer[ASCII_KEY_BUFFER_SIZE] = {0};
+static uint8_t g_ascii_key_buffer_head = 0;
+static uint8_t g_ascii_key_buffer_tail = 0;
+
+static bool ascii_key_available(void)
+{
+    return g_ascii_key_buffer_head != g_ascii_key_buffer_tail;
+}
+
+static void update_last_key_mirror(void)
+{
+    LastKey = ascii_key_available()
+        ? g_ascii_key_buffer[g_ascii_key_buffer_tail] : 0;
+}
+
+static bool queue_ascii_key(uint8_t key)
+{
+    const uint8_t next = uint8_t(
+        (g_ascii_key_buffer_head + 1) % ASCII_KEY_BUFFER_SIZE);
+    if (next == g_ascii_key_buffer_tail)
+        return false;
+    g_ascii_key_buffer[g_ascii_key_buffer_head] = key;
+    g_ascii_key_buffer_head = next;
+    update_last_key_mirror();
+    return true;
+}
+
+static uint8_t dequeue_ascii_key(void)
+{
+    if (!ascii_key_available())
+        return 0;
+    const uint8_t key = g_ascii_key_buffer[g_ascii_key_buffer_tail];
+    g_ascii_key_buffer_tail = uint8_t(
+        (g_ascii_key_buffer_tail + 1) % ASCII_KEY_BUFFER_SIZE);
+    update_last_key_mirror();
+    return key;
+}
+
+/*
+ * Some EOS programs issue one keyboard READ and keep polling that same DCB
+ * until a key arrives.  The original handler completed an empty READ at once,
+ * which works for software that repeatedly submits READ commands but leaves
+ * a blocking client such as the FujiNet loader waiting forever.
+ */
+static bool g_pending_keyboard_read = false;
+static byte g_pending_keyboard_dev = 0;
+static word g_pending_keyboard_buffer = 0;
+static word g_pending_keyboard_length = 0;
+
+static bool complete_pending_keyboard_read(void);
+
 // Status van het AdamNet keyboard device
 enum AdamKeyboardStatus {
     KBD_IDLE = 0x00,       // Wacht op commando
@@ -166,6 +223,11 @@ void adamnet_queue_key(uint8_t key_code)
         // 3. ZET DE I/O VLAG (Voor poort 0xE0 polling)
         // AN_STAT_DIF (0x01) betekent: "Er zit data in de Host Adapter voor de CPU"
        // PCBTable[0] |= 0x01;
+
+        /* If EOS already has a blocking READ open, deliver this key directly
+         * through that DCB instead of requiring a second READ command.
+         */
+        complete_pending_keyboard_read();
     }
 }
 
@@ -201,20 +263,26 @@ int adamnet_is_key_available(void)
 void PutKBD(unsigned int Key)
 {
 if (Key & 0x80) {
-    // release: 0xC1 voor 'A' → basis = 0x41
-    byte baseKey = (byte)(Key & 0x7F);
-    if (baseKey == LastKey) LastKey = 0x00;
+    /* Releases must not erase a press which EOS has not consumed yet. */
+    return;
 } else {
-    // press: 0x41 voor 'A'
-    LastKey = (byte)Key;
+    if (!queue_ascii_key(byte(Key))) {
+        qWarning() << "[KBD] ASCII FIFO full; key dropped="
+                   << Qt::hex << byte(Key);
+        return;
+    }
 }
 
-// De KBDStatus moet worden bijgewerkt, maar de queue wordt hier niet gevuld.
+// De KBDStatus moet worden bijgewerkt zodra de ASCII FIFO data bevat.
 KBDStatus = (byte)(RSP_STATUS | 0x0C);
+
+/* A key press can complete a READ that was started before the key existed. */
+if (!(Key & 0x80))
+    complete_pending_keyboard_read();
 }
 //--------------------------------------------------------------------------------------
 /** GetKBD() *************************************************/
-/** Haal éérst LastKey, anders uit AdamNet ringbuffer.      **/
+/** Haal éérst AdamNet-scancodes, daarna host-ASCII FIFO.  **/
 /*************************************************************/
 byte GetKBD()
 {
@@ -234,7 +302,7 @@ byte GetKBD()
     {
         unsigned char checkByte = 0;
 
-        if (coleco_get_vdp_type() == COLECO_VDP_F18A) {
+        if (coleco_vdp_has_f18a()) {
             // F18A gebruikt eigen VRAM-buffer
             checkByte = f18a_peek_vram(0x3747);
         } else {
@@ -259,11 +327,8 @@ byte GetKBD()
        // qDebug() << "SCANCODE:" << Qt::hex << sc;
         return sc;
     }
-    if (LastKey != 0) {
-        //qDebug() << "ASCII:" << Qt::hex << LastKey;
-    }
-
-    if (LastKey==0x1B) // Escape gedrukt
+    const byte asciiKey = dequeue_ascii_key();
+    if (asciiKey==0x1B) // Escape gedrukt
         {
         g_prn_in_wp = true; // Printer in wordprocessor
 
@@ -274,11 +339,66 @@ byte GetKBD()
 
             g_prn_line_counter = 0;
         }
-    // 2. Als die leeg is, check de ASCII LastKey (voor '9', 'A', etc.)
-    byte Result = LastKey;
-    LastKey = 0x00;
-    return(Result);
+    // 2. Als die leeg is, haal de oudste gewone ASCII-toets uit de FIFO.
+    return asciiKey;
 
+}
+
+//--------------------------------------------------------------------------------------
+/* Complete a previously blocked keyboard READ when at least one key exists. */
+static bool complete_pending_keyboard_read(void)
+{
+    if (!g_pending_keyboard_read)
+        return false;
+    if (!adamnet_is_key_available() && !ascii_key_available())
+        return false;
+
+    word address = g_pending_keyboard_buffer;
+    int transferred = 0;
+    const int requested = g_pending_keyboard_length;
+    byte key = 0;
+
+    while (transferred < requested && (key = GetKBD()) != 0) {
+        RAM_Memory[address] = key;
+        address = (address + 1) & 0xFFFF;
+        ++transferred;
+    }
+
+    const byte device = g_pending_keyboard_dev;
+    g_pending_keyboard_read = false;
+    g_pending_keyboard_length = 0;
+    KBDStatus = byte(RSP_STATUS | (transferred < requested ? 0x0C : 0x00));
+    SetDCB(device, DCB_CMD_STAT, KBDStatus);
+
+    /* Notify EOS through ADAMnet port E0 that the asynchronous READ changed
+     * from BUSY to complete. adamnet_read_io() acknowledges and clears bit 0.
+     * Restrict this notification to the pending-READ path so established
+     * Writer/BASIC keyboard polling remains unchanged.
+     */
+    PCBTable[0] |= AN_STAT_DIF;
+
+    qDebug() << "[KBD] pending READ completed; DCB=" << device
+             << "key=" << Qt::hex << int(key)
+             << "bytes=" << Qt::dec << transferred
+             << "data-in-full=1";
+    return true;
+}
+
+void AdamNetKbdDiagnosticMemoryRead(word Address)
+{
+    /* Kept as a no-op ABI hook; the temporary R86.5 trace is retired. */
+    (void)Address;
+}
+
+void ResetKBDPendingRead(void)
+{
+    g_pending_keyboard_read = false;
+    g_pending_keyboard_dev = 0;
+    g_pending_keyboard_buffer = 0;
+    g_pending_keyboard_length = 0;
+    g_ascii_key_buffer_head = 0;
+    g_ascii_key_buffer_tail = 0;
+    LastKey = 0;
 }
 //--------------------------------------------------------------------------------------
 /** UpdateKBD() **********************************************/
@@ -290,13 +410,21 @@ void UpdateKBD(byte Dev,int V)
     switch(V)
     {
     case -1:
+        if (g_pending_keyboard_read && g_pending_keyboard_dev == Dev) {
+            if (!complete_pending_keyboard_read())
+                SetDCB(Dev, DCB_CMD_STAT, 0x00);
+            break;
+        }
         SetDCB(Dev,DCB_CMD_STAT,KBDStatus);
         break;
     case CMD_STATUS:
     case CMD_SOFT_RESET:
     {
+        if (V == CMD_SOFT_RESET)
+            ResetKBDPendingRead();
+
         // Is er een key?
-        const int ready = adamnet_is_key_available() || (LastKey != 0);
+        const int ready = adamnet_is_key_available() || ascii_key_available();
         KBDStatus = (byte)(RSP_STATUS | (ready ? 0x0C : 0x00));
 
         // qDebug() << "[KBD_STATUS] Rdy:" << ready
@@ -318,11 +446,31 @@ void UpdateKBD(byte Dev,int V)
         SetDCB(Dev,DCB_CMD_STAT,0x00);
         A = GetDCBBase(Dev);
         N = GetDCBLen(Dev);
+
+        /* EOS permits a character device READ with a zero requested length.
+         * For the keyboard this means "wait for one character"; the device's
+         * reported maximum message size is one byte.  Treating zero as an
+         * immediate empty completion leaves the FujiNet loader waiting on a
+         * buffer that can never receive its key.
+         */
+        if (N <= 0)
+            N = 1;
+
+        if (!adamnet_is_key_available() && !ascii_key_available()) {
+            g_pending_keyboard_read = true;
+            g_pending_keyboard_dev = Dev;
+            g_pending_keyboard_buffer = A;
+            g_pending_keyboard_length = word(N);
+            KBDStatus = 0x00;
+            break;
+        }
+
         for(J=0 ; (J<N) && (V=GetKBD()) ; ++J, A=(A+1)&0xFFFF)
         {
             RAM_Memory[A] = V;
         }
         KBDStatus = RSP_STATUS+(J<N? 0x0C:0x00);
+        SetDCB(Dev, DCB_CMD_STAT, KBDStatus);
         break;
     }
 }

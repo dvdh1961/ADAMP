@@ -253,6 +253,9 @@ extern int z80_ICount;
 extern int z80_exec;
 extern int z80_cycle_count;
 extern int z80_requested_cycles;
+/* Set to 1 whenever the CPU has actually accepted a maskable IRQ. */
+extern volatile int z80_irq_acknowledged;
+extern volatile unsigned long long z80_nmi_accepted_count;
 extern int z80_checknmi(void);
 extern int z80_do_opcode(void);
 

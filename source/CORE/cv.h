@@ -26,7 +26,7 @@
 #include "6801/fdidisk.h"
 
 #define MAX_CART_SIZE   512            // 512K of cart memory
-#define MAX_RAM_SIZE    128
+#define MAX_RAM_SIZE    192            // 64K intrinsic ADAM RAM + 128K expansion RAM
 #define MAX_EEPROM_SIZE 32          // 32K of EEProm memory
 #define MAX_BIOS_SIZE   64
 #define MAXSTATESIZE    (MAX_CART_SIZE+MAX_RAM_SIZE+MAX_EEPROM_SIZE)
@@ -56,7 +56,7 @@ extern BYTE cv_display[TVW_*TVH_];          // Coleco display buffer (max screen
 extern int cv_pal32[16*4];                                  // Coleco display palette in 32 bits RGB
 
 extern BYTE ROM_Memory[MAX_CART_SIZE * 1024];          // ROM Carts up to 512K
-extern BYTE RAM_Memory[MAX_RAM_SIZE * 1024];            // RAM up to 128K (for the ADAM... )
+extern BYTE RAM_Memory[MAX_RAM_SIZE * 1024];            // 64K intrinsic + 128K ADAM expansion RAM
 extern BYTE BIOS_Memory[MAX_BIOS_SIZE * 1024];           // 64K To hold our BIOS and related OS memory
 extern BYTE SRAM_Memory[MAX_EEPROM_SIZE*1024];  // SRAM up to 32K for the few carts which use it
 extern BYTE VDP_Memory[0x10000];                                          // VDP video memory (64K for 80C support)
@@ -174,8 +174,21 @@ extern void RenderCalcPalette(BYTE *cv_palette_out, int nbcolors);
 #ifndef COLECO_VDP_F18A
 #define COLECO_VDP_F18A  1
 #endif
+#ifndef COLECO_VDP_PICO9918
+#define COLECO_VDP_PICO9918  2
+#endif
+
+#ifndef COLECO_VDP_ENGINE_LEGACY
+#define COLECO_VDP_ENGINE_LEGACY    0
+#endif
+#ifndef COLECO_VDP_ENGINE_PICO9918
+#define COLECO_VDP_ENGINE_PICO9918  1
+#endif
 
 void coleco_set_vdp_type(int vdpType);
 int  coleco_get_vdp_type(void);
+void coleco_set_vdp_engine(int engine);
+int  coleco_get_vdp_engine(void);
+int  coleco_vdp_has_f18a(void);
 
 #endif

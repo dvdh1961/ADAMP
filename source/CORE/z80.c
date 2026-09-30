@@ -3276,6 +3276,10 @@ void take_interrupt(void)
 {
   int irq_vector;
 
+  /* Let peripherals release a level-triggered IRQ only after the Z80 has
+     really accepted it. */
+  z80_irq_acknowledged = 1;
+
   /* Check if processor was halted */
   LEAVE_HALT;
 
@@ -3456,6 +3460,8 @@ void z80_reset(void)
     HALT = 0;
 
     Z80.after_ei = 0;
+    z80_irq_acknowledged = 0;
+    z80_nmi_accepted_count = 0;
 
     WZ=PCD;
 
@@ -3482,9 +3488,13 @@ int z80_checknmi(void) {
         WZ=PCD;
         z80_ICount = 11;
         Z80.nmi_pending = 0;
+        ++z80_nmi_accepted_count;
     }
     return z80_ICount;
 }
+
+volatile int z80_irq_acknowledged = 0;
+volatile unsigned long long z80_nmi_accepted_count = 0;
 
 int z80_do_opcode(void) {
     z80_ICount=0;
@@ -3619,4 +3629,3 @@ int z80_get_elapsed_cycles(void)
 
   return z80_cycle_count;
 }
-

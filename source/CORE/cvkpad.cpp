@@ -22,6 +22,9 @@
 
 static ColecoStrobe s_strobe = ColecoStrobe::Joystick;
 static volatile ColecoControllerState s_pad[2]{};
+static volatile bool s_drivingMode = false;
+static volatile bool s_wheelEventActive = false;
+static volatile bool s_wheelRight = false;
 // Keypad diode-encoder naar 4-bit code (actief-laag op bus).
 // Tabel komt rechtstreeks uit de veld-notities / service docs.
 // index: 0..9, 10='*', 11='#'  | waarde: 0..15 nibble die LAAG wordt bij IN
@@ -72,6 +75,30 @@ void coleco_setController(int idx, const ColecoControllerState& s) {
     }
 }
 
+void coleco_setDrivingMode(bool enabled) {
+    s_drivingMode = enabled;
+    s_wheelEventActive = false;
+    s_wheelRight = false;
+}
+
+bool coleco_drivingModeEnabled() {
+    return s_drivingMode;
+}
+
+void coleco_driveWheelStep(int direction) {
+    if (!s_drivingMode || direction == 0) return;
+    s_wheelRight = direction > 0;
+    s_wheelEventActive = true;
+}
+
+void coleco_driveWheelReleaseEvent() {
+    s_wheelEventActive = false;
+}
+
+bool coleco_driveWheelEventPending() {
+    return s_wheelEventActive;
+}
+
 static uint8_t read_controller_bits(int idx) {
     const auto& c = s_pad[idx];
     // 7 lijnen actief-laag, bit7 ongebruikt blijft 1
@@ -84,6 +111,7 @@ static uint8_t read_controller_bits(int idx) {
         if (c.right) v &= ~(1u << 1);
         if (c.down)  v &= ~(1u << 2);
         if (c.left)  v &= ~(1u << 3);
+
     } else {
         // KEYPAD-stand: bit6 = Right Fire, bits0..3 = keypad-nibble (actief-laag)
         if (c.fireR) v &= ~(1u << 6);
@@ -94,13 +122,32 @@ static uint8_t read_controller_bits(int idx) {
             v = (v & 0xF0) | (~nibble & 0x0F);
         }
     }
+
+    if (s_drivingMode && idx == 0) {
+        // Expansion Module #2 wheel lines are independent of the keypad /
+        // joystick strobe.  BIOS UPDATE_SPINNER ($116A) reads port $FC
+        // directly from the maskable IRQ handler and does not first issue an
+        // OUT to select joystick mode.  Therefore D4 (active-low event) and
+        // D5 (direction) must be present in either strobe state.
+        if (s_wheelEventActive) v &= uint8_t(~0x10u);
+        else                    v |= 0x10u;
+        if (s_wheelRight)       v |= 0x20u;
+        else                    v &= uint8_t(~0x20u);
+    }
+
     // bit7=1, lijnen actief-laag in 0..3 en 6
     return v;
 }
 
 uint8_t coleco_io_read(uint8_t port) {
     // smalle decode
-    if (port == 0xFC || port == 0xBF || port == 0xBE) return read_controller_bits(0);
+    if (port == 0xFC) {
+        const uint8_t value = read_controller_bits(0);
+        if (s_drivingMode && s_wheelEventActive)
+            coleco_driveWheelReleaseEvent();
+        return value;
+    }
+    if (port == 0xBF || port == 0xBE) return read_controller_bits(0);
     if (port == 0xFF) return read_controller_bits(1);
 
     // brede decode: 0xE0..0xE3 → A1 (bit1) selecteert pad

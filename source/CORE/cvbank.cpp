@@ -555,7 +555,6 @@ BYTE coleco_loadcart(char *filename)
     }
 }
 
-
 static bool opcodeGamesEnabledFromSettings(void)
 {
     const QString iniPath = QDir(QCoreApplication::applicationDirPath()).filePath("settings.ini");
