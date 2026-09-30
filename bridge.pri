@@ -5,7 +5,8 @@ SOURCES += \
     $$PWD/bridge/video_bridge.c \
     $$PWD/bridge/input_bridge.c \
     $$PWD/bridge/psg_bridge.cpp \
-    $$PWD/bridge/disasm_bridge.cpp
+    $$PWD/bridge/disasm_bridge.cpp \
+    $$PWD/bridge/vdp_bridge.c
 
 
 HEADERS += \
@@ -13,4 +14,5 @@ HEADERS += \
     $$PWD/bridge/psg_bridge.h \
     $$PWD/bridge/video_bridge.h \
     $$PWD/bridge/input_bridge.h \
-    $$PWD/bridge/disasm_bridge.h
+    $$PWD/bridge/disasm_bridge.h \
+    $$PWD/bridge/vdp_bridge.h

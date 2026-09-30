@@ -1,0 +1,207 @@
+ADAM+ EMULATOR - MCU2 INTEGRATION TODO
+======================================
+
+Completed in R86 (EOS Disk 1 read-only stage)
+----------------------------------------------
+[x] Preserve the existing software ADAMnet device handlers.
+[x] Add a separate Disk 1 backend selector to the Hardware window.
+[x] Keep "Software image" as the default backend.
+[x] Add a Windows HID probe for VID 258A, PID 0036, usage page FF00.
+[x] Validate MCU2 PING, firmware version, protocol version, and CH559 target.
+[x] Automatically return the selector to software when the probe fails.
+[x] Add native Linux hidraw detection and communication without an external
+    HID library.
+[x] Load hid.dll dynamically for compatibility with Qt/MinGW installations
+    that do not provide a compatible HID import library.
+[x] Declare the dynamically loaded HID function pointer signatures locally so
+    older MinGW hidsdi.h headers do not need to declare the function symbols.
+[x] Route EOS Disk 1 STATUS, RESET, and READ through an asynchronous worker.
+[x] Copy a validated 1,024-byte physical disk block into Z80 RAM.
+[x] Reject FORMAT locally with DCB status E2. Disk WRITE was enabled in R89
+    after the separate MCU2 2.14.1 media-safety test succeeded.
+[x] Latch backend changes only during an ADAM/PCB reset.
+[x] Discard stale asynchronous completions after reset.
+[x] R86.1: keep an empty EOS keyboard READ pending until the Windows keyboard
+    supplies a key, then complete the original DCB and cancel it safely on reset.
+[x] R86.2: interpret a zero-length keyboard READ as one character, matching
+    the keyboard's reported one-byte maximum message size.
+[x] R86.2: use continuously increasing MCU2 HID sequence numbers to reject
+    delayed reports without reusing the same identifiers every transaction.
+[x] R86.3: raise the existing ADAMnet Data-In Full flag when a pending
+    keyboard READ completes, allowing EOS port E0 polling to observe it.
+[x] R86.4: preserve the ADAMnet DOE status bit while reporting and
+    acknowledging Data-In Full to EOS.
+[x] R86.5: add a read-only diagnostic window after keyboard DCB completion
+    to capture Z80 PC/HALT state and DCB-status/buffer reads.
+[x] R86.6: include Z80 registers and active-memory instruction bytes in the
+    keyboard completion diagnostic, without adding read side effects.
+[x] R87.0: route FujiNet address 15 STATUS through the existing serialized
+    MCU2 DCB transport; keep SEND and RECEIVE disabled for isolated testing.
+[x] R87.0.1: cache the validated FujiNet STATUS capability bytes until reset,
+    preventing EOS status polling from flooding USB and the application log.
+[x] R87.1: translate FujiNet EOS WRITE/READ into MCU2 MASTER_SEND and
+    MASTER_RECEIVE on Windows and Linux, using the shared asynchronous queue.
+[x] R87.2: retrieve validated FujiNet responses up to 1,024 bytes through the
+    firmware 2.11.0 receive cache and command 0x1F chunk transport.
+[x] R87.2: verify the cached block length and XOR checksum before writing it
+    into the EOS buffer; retain the original inline path for <=48 bytes.
+[x] R87.3: poll a pending FujiNet RECEIVE for up to 40 bounded attempts after
+    timeout, NACK, or BUS_BUSY without retransmitting the device command.
+[x] R87.4: upload SEND blocks up to 1,024 bytes to firmware 2.12.0 in bounded
+    HID chunks and commit them as one ADAMnet MN_SEND packet.
+[x] R87.5 diagnostic: after FujiNet SET_SSID, issue read-only GET_SSID and
+    compare all 97 stored NetConfig bytes without logging credential content.
+[x] R87.6: retire the temporary R86.5 CPU/memory trace and suppress repeated
+    keyboard READ/pending logs while retaining one completion line per key.
+[x] R87.7: retry transient SEND failures only in MN_READY stage 4; never retry
+    after the packet reached stage 5, preventing duplicate directory reads.
+[x] R87.8: retry only idempotent Disk READ DCBs after transient timeout, busy,
+    or NACK while FujiNet prepares a newly mounted image for its first block.
+[x] R87.9: keep one serialized MCU2 HID/hidraw connection open across DCB,
+    SEND, and RECEIVE operations; reconnect after transport failure and log
+    total gateway time per DCB.
+[x] R88.0: use firmware 2.13 continuous cached-disk IN streaming, validate
+    every packet offset and final XOR, and retain the 2.12 chunk fallback.
+[x] R88.1: silence only rendered audio frames while the physical FujiNet
+    controller at address 15 is pending; keep PSG phase, disk-game audio, and
+    all software-device audio intact.
+[x] R88.2: extend the guard to physical Disk 1 transactions because the
+    FujiNet host/disk-slot menu continuously reads both addresses 15 and 4.
+[x] R88.2: retain four silent audio frames after completion so sub-frame
+    STATUS requests cannot leak short repeated PSG fragments between commands.
+[x] R88.3 diagnostic: mechanical disk/tape effects were excluded by disabling
+    them in the existing UI. Replace the ineffective per-transaction guard
+    with continuous PSG silence in hardware mode to isolate the sound source.
+[x] R88.4: the isolation test confirmed PSG as the source. Silence rendered
+    PSG output during physical transfers and for 500 ms after the most recent
+    MCU2 activity, while continuing to advance the emulated PSG internally.
+[x] R88.5: add a persistent Hardware-window switch that keeps PSG muted in the
+    FujiNet hardware menu. The user can disable it after boot to restore game
+    audio without changing or disconnecting the MCU2 backend. Applying only
+    this switch is live and does not reset ADAM or eject the running game.
+[x] R88.6: when the menu-mute switch changes from enabled to disabled, reset
+    only the SN76489/AY8910 audio chips once. This clears the tone retained in
+    the PSG registers while leaving the running game and MCU2 state untouched.
+[x] R88.7: do not mix the optional SGM AY8910 into ADAM audio. The bridge now
+    renders AY samples only while SGM is genuinely enabled; ADAM hardware mode
+    uses its correct SN76489 audio path without stale AY register output.
+[x] R88.7.1: retain the original two-argument PsgBridge API and read the core
+    SGM flag inside the bridge. This avoids stale/include-order header failures
+    in existing Windows and Linux shadow-build directories.
+[x] R88.8 diagnostic: aggregate SN76489 writes by Z80 PC and byte, emitting
+    one compact top-eight histogram per second in MCU2 mode. Include the live
+    menu-mute state so the tone source can be identified without log flooding.
+[x] R88.8.1: resolve writes through the EOS E60D output helper to the caller's
+    return address stored at SP+2, so the trace identifies the routine that
+    requested each PSG byte rather than the shared OUT instruction at E615.
+[x] R88.9: caller diagnostics identified a stale EOS sound envelope. When the
+    hardware-menu mute is disabled, reproduce BIOS routine E3AF's sound-only
+    initialization: point FE70/72/74/76 to empty entry E3E6, clear FE78, then
+    reset the PSG chips. Future game sound commands remain fully functional.
+[x] R88.10: invalidate each active EOS ten-byte sound descriptor before
+    clearing FE70/72/74/76. This prevents the scheduler reached through FE6E
+    from immediately restoring FujiNet descriptor 86F0 on the next frame.
+[x] R88.11: access EOS channel pointers and active descriptors through the
+    Z80 CPU memory map. Logical address 86F0 can reside in a bank other than
+    the flat RAM_Memory[86F0] location while ADAM bank switching is active.
+[x] R88.12: diagnostics proved the FujiNet program resubmits the same EOS
+    envelope every frame. In MCU2 mode, replace only B7/BA volume writes from
+    EOS caller E462 with channel-1 mute BF. Direct game PSG writes and all
+    unrelated EOS sound commands remain unchanged.
+[x] R88.13: production cleanup after hardware validation. Remove the temporary
+    PSG menu-mute checkbox, rendered-audio guards, EOS queue/descriptor reset,
+    saved mute setting, and per-second PSG diagnostics. Retain only the proven
+    E462 B7/BA FujiNet filter and its single startup confirmation message.
+[x] R88.13.1: remove the final updateAvailability() reference to the retired
+    mute checkbox so the cleaned Hardware window builds on Windows and Linux.
+[x] R88.14: allow the 258-byte FujiNet F7 network-open packet up to 180
+    MN_READY attempts. All normal SENDs retain 40 attempts, and retry remains
+    restricted to stage 4 so no accepted or partially sent command is repeated.
+[x] R88.15: treat a successful zero-byte RECEIVE from FujiNet address 15 as an
+    asynchronous response that is not ready yet. Poll it with the existing
+    bounded RECEIVE retry; if all replies remain empty, report a DCB error
+    instead of exposing stale directory-buffer contents to CONFIG.
+[x] R88.16: route character-device SEND and RECEIVE buffers through the Z80
+    CPU memory accessors. This preserves the active ADAM bank mapping for the
+    complete 258-byte F7 path/filter packet, three-byte F6 request, and returned
+    directory records instead of accessing only the flat RAM backing array.
+[x] R88.17: add non-invasive character-device diagnostics: complete short SEND
+    payloads (including all three F6 bytes), safe 64-byte F7 prefix, and the
+    mapped Z80 buffer address/requested length for SEND and RECEIVE. Protocol,
+    retry timing, and the proven disk DCB path are unchanged.
+[x] R88.18: after an accepted FujiNet F6 READ_DIR_ENTRY only, allow the pending
+    RECEIVE up to 180 attempts (18 seconds). Every other character response
+    remains at 40 attempts, and the disk DCB path is unchanged.
+[x] R88.19: tests on apps.irata.online and an empty SD directory proved that a
+    valid zero-length F6 response means no directory record, not pending I/O.
+    Accept it immediately, clear the mapped EOS buffer, and complete normally.
+[x] R88.20: protect the live PCB/DCB table while copying a physical Disk 1
+    block into ADAM RAM, matching the existing software-drive DMA behaviour.
+    Add sector, buffer, length, FNV-1a and edge-byte diagnostics for every
+    1024-byte physical read.
+[x] R88.21: diagnostic branch; FEC0/SNA was initially mistaken for a CP/M-only
+    handshake. Filemanager 3.0 proved that assumption false; do not use it.
+[x] R88.22: fix PCB relocation ordering for EOS. Preserve response 83 at the
+    old PCB command address before MovePCB changes PCBAddr, while also leaving
+    the relocated PCB in completed state. Remove the R88.21 CP/M heuristic.
+[x] R89.0: enable physical Disk 1 WRITE after MCU2 firmware 2.14.1 passed the
+    destructive write/readback/restore test. Snapshot exactly 1,024 bytes via
+    the active Z80 memory map, upload them with SEND_BEGIN/SEND_CHUNK, then
+    execute the WRITE DCB once. Never retry WRITE and never fall back to a
+    software image during the transaction; FORMAT remains rejected.
+[x] R89.1: replace the single-byte host ASCII LastKey input slot with a
+    31-character FIFO. Preserve LastKey as a compatibility mirror, retain
+    queued presses across key-release events, and complete an already-pending
+    EOS keyboard READ from the FIFO so FujiNet activity cannot overwrite the
+    first of two closely timed keystrokes.
+[x] R89.2: update the Hardware-window Disk 1 backend label from the obsolete
+    "MCU2 hardware (read-only)" text to "MCU2 hardware (read/write)".
+[x] R89.3: treat the physical MCU2 Disk 1 backend as inserted ADAM boot media.
+    The ADAM reset button now follows the same single reset path as a mounted
+    software disk instead of performing a second media-less initialization,
+    and a configured local startup image can no longer override physical D1.
+[x] R90.0: expand the explicitly selected MCU2 backend to physical ADAM disk
+    drives D5-D8 and tape drives D1-D4. Disk D5-D8 retain the firmware 2.14.1
+    DCB path; tape READ/WRITE uses the generic address/device-number block
+    exchange and therefore remains hardware-validation work.
+[x] R90.0: preserve every software-media route. EOS and T-DOS keep their
+    original disk/tape handlers, while CP/M keeps its historical software
+    devices D5/D6 and D1/D2 and still times out D7/D8 and D3/D4. The expanded
+    set is reachable only after MCU2 is explicitly selected and ADAM reset.
+[ ] Obtain a reliable FujiNet media-type/boot-mode signal before selecting
+    EOS, CP/M, T-DOS, or Coleco ROM automatically. Do not infer this from one
+    disk block or silently alter the software-media boot flags.
+
+Hardware validation for R86
+---------------------------
+[ ] Build the application on Windows with Qt 6.
+[ ] Connect the CH559 containing MCU2 firmware 2.11.0.
+[ ] Open Hardware -> ADAMnet (Experimental).
+[ ] Press "Test MCU2 connection".
+[ ] Verify the displayed firmware and protocol version.
+[ ] Disconnect MCU2 and verify that the test fails without affecting emulation.
+[ ] Restart the application and confirm that software mode remains the default
+    unless the MCU2 choice was explicitly saved.
+[ ] Select MCU2 hardware, reset ADAM, and boot EOS from physical Disk 1.
+[ ] Confirm that the DIAG_EXT LED reacts during physical reads.
+[ ] Disconnect MCU2 during a read and confirm that the DCB reports an error
+    without freezing the emulator.
+
+Next stage after the R86 hardware test succeeds
+-----------------------------------------------
+[ ] Add visible runtime diagnostics and transfer counters.
+[ ] Test repeated reads and reset recovery during a complete EOS session.
+
+Later stages
+------------
+[x] Route physical Disk D5-D8 behind the single MCU2 backend choice.
+[ ] Validate CP/M routing separately.
+[ ] Validate T-DOS routing separately.
+[ ] Validate physical Tape D1-D4 block selection and READ/WRITE separately.
+[ ] Add physical keyboard and printer devices individually.
+[x] Add Disk 1 write support after separate firmware and media-safety tests.
+
+Safety rule
+-----------
+Never fall back from MCU2 hardware to a software image in the middle of an
+active DCB.  Report a DCB error and let the user change backend after reset.

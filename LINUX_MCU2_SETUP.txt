@@ -1,0 +1,24 @@
+ADAM+ MCU2 LINUX SETUP
+======================
+
+The emulator communicates directly with /dev/hidraw* and does not require
+hidapi or libusb.
+
+Install the supplied access rule once:
+
+  sudo cp 99-adamp-mcu2.rules /etc/udev/rules.d/
+  sudo udevadm control --reload-rules
+  sudo udevadm trigger
+
+Then unplug and reconnect the CH559 MCU2.  Log out and back in if the desktop
+session does not immediately receive access.  Do not run the emulator as root.
+
+Verification:
+
+  1. Start ADAM+ and select the ADAM machine.
+  2. Open Hardware -> ADAMnet (Experimental).
+  3. Press "Test MCU2 connection".
+  4. The dialog should report firmware 2.10.0 and protocol 1.
+
+The software ADAMnet backend remains available when MCU2 is absent or access
+is denied.

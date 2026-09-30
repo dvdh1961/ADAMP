@@ -4,6 +4,7 @@
 # C++ bronnen voor de Qt-interface
 SOURCES += \
            $$PWD/scrcpp/aim_dialog.cpp \
+           $$PWD/scrcpp/ataridebuggerwindow.cpp \
            $$PWD/scrcpp/commandprocessor.cpp \
            $$PWD/scrcpp/customfiledialog.cpp \
            $$PWD/scrcpp/customiconprovider.cpp \
@@ -22,6 +23,7 @@ SOURCES += \
            $$PWD/scrcpp/maingui.cpp \
            $$PWD/scrcpp/maindebug.cpp \
            $$PWD/scrcpp/memoryeditdialog.cpp \
+           $$PWD/scrcpp/mcu2_gateway.cpp \
            $$PWD/scrcpp/ntablewindow.cpp \
            $$PWD/scrcpp/patternwindow.cpp \
            $$PWD/scrcpp/printwindow.cpp \
@@ -31,6 +33,7 @@ SOURCES += \
            $$PWD/scrcpp/settingswindow.cpp \
            $$PWD/scrcpp/simplejoystick.cpp \
            $$PWD/scrcpp/soundeditorplayer.cpp \
+           $$PWD/scrcpp/modreferenceplayer.cpp \
            $$PWD/scrcpp/soundmanager.cpp \
            $$PWD/scrcpp/soundpreviewbridge.cpp \
            $$PWD/scrcpp/spritewindow.cpp
@@ -38,6 +41,7 @@ SOURCES += \
 # Headers voor de Qt-interface
 HEADERS += \
            $$PWD/scrcpp/aim_dialog.h \
+           $$PWD/scrcpp/ataridebuggerwindow.h \
            $$PWD/scrcpp/commandprocessor.h \
            $$PWD/scrcpp/customfiledialog.h \
            $$PWD/scrcpp/customiconprovider.h \
@@ -53,6 +57,7 @@ HEADERS += \
            $$PWD/scrcpp/inputwidget.h \
            $$PWD/scrcpp/logwindow.h \
            $$PWD/scrcpp/memoryeditdialog.h \
+           $$PWD/scrcpp/mcu2_gateway.h \
            $$PWD/scrcpp/ntablewindow.h \
            $$PWD/scrcpp/patternwindow.h \
            $$PWD/scrcpp/printwindow.h \
@@ -62,6 +67,7 @@ HEADERS += \
            $$PWD/scrcpp/settingswindow.h \
            $$PWD/scrcpp/simplejoystick.h \
            $$PWD/scrcpp/soundeditorplayer.h \
+           $$PWD/scrcpp/modreferenceplayer.h \
            $$PWD/scrcpp/soundmanager.h \
            $$PWD/scrcpp/soundpreviewbridge.h \
            $$PWD/scrcpp/spritewindow.h

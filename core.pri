@@ -1,10 +1,13 @@
 # Dit bestand bevat alle C-bronbestanden van de core.
 
 SOURCES += \
+    $$PWD/source/ATARI2600/a2600_core.cpp \
     $$PWD/source/6801/adnet_core.cpp \
     $$PWD/source/6801/adnet_ddp.cpp \
     $$PWD/source/6801/adnet_dsk.cpp \
     $$PWD/source/6801/adnet_kb.cpp \
+    $$PWD/source/6801/adnet_mcu2.cpp \
+    $$PWD/source/6801/adnet_mcu2_fujinet.cpp \
     $$PWD/source/6801/adnet_prn.cpp \
     $$PWD/source/6801/fdidisk.c \
     $$PWD/source/CORE/c24xx.c \
@@ -14,6 +17,7 @@ SOURCES += \
     $$PWD/source/CORE/cvstate.cpp \
     $$PWD/source/CORE/z80.c \
     $$PWD/source/GRAPH/f18a.c \
+    $$PWD/source/GRAPH/f18a_gpu.c \
     $$PWD/source/GRAPH/f18a_term80.c \
     $$PWD/source/GRAPH/f18a_term80_cpm.cpp \
     $$PWD/source/GRAPH/f18a_term80_tdos.cpp \
@@ -22,7 +26,10 @@ SOURCES += \
     $$PWD/source/SOUND/snd_sn76489.c
 
 HEADERS += \
+    $$PWD/source/ATARI2600/a2600_core.h \
     $$PWD/source/6801/adnet_core.h \
+    $$PWD/source/6801/adnet_mcu2.h \
+    $$PWD/source/6801/adnet_mcu2_fujinet.h \
     $$PWD/source/6801/fdidisk.h \
     $$PWD/source/BIOS/bios_adam.h \
     $$PWD/source/BIOS/bios_coleco.h \
@@ -34,6 +41,7 @@ HEADERS += \
     $$PWD/source/CORE/emu.h \
     $$PWD/source/CORE/z80.h \
     $$PWD/source/GRAPH/f18a.h \
+    $$PWD/source/GRAPH/f18a_gpu.h \
     $$PWD/source/GRAPH/f18a_term80.h \
     $$PWD/source/GRAPH/f18a_term80_cpm.h \
     $$PWD/source/GRAPH/f18a_term80_tdos.h \
