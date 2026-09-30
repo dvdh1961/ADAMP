@@ -53,22 +53,6 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 ![Stars](https://img.shields.io/github/stars/dvdh1961/ADAMP)
 ![Issues](https://img.shields.io/github/issues/dvdh1961/ADAMP)
 
-## 💔 From the heart,
-
-Sometimes I find myself wondering whether it still makes sense to continue working on this project. 
-I put a lot of passion into it, and I genuinely believed it would bring value to the community.
-That said, I can’t ignore the concern I feel about the limited positive feedback I’ve been receiving. 
-It seems that many people struggle with the fact that I use LLMs. For me, they are simply a tool—to help 
-express myself more clearly in English and to move forward more efficiently.
-What’s often overlooked is that building an emulator requires far more than just relying on an LLM. 
-That alone won’t get you anywhere. 
-I’ve invested months of work into this, and in reality, the project itself has been years in the making.
-
-Apologies for the more personal and less upbeat message, but I felt it was something I needed to share.
-
-— Danny
-
-
 ## 🎮 HARDWARE
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_HARDWARE.gif)
@@ -80,12 +64,18 @@ From the moment we have a fully working hardware system, everything will be publ
 
 ## 🚀 Versions
 
-Version 1.4.08.26 x86_64 Windows & Linux (SOON AVAILABLE)
+Version 2.0.09.26 x86_64 Windows & Linux
 
-![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/Atari_ext_logo.png)
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_MAJOR_UPGRADE.png)
 
-- It’s finally here! We’ve successfully added the Atari 2600 extension to our ADAM+ emulator
-  even with a debugger!
+Major Upgrade V2.0
+- Lots of changes under the hood.
+- It’s finally here! We’ve successfully added the Atari 2600 extension to our ADAM+ emulator, complete with a small debugger!
+- Major Sound Editor update.
+- Improved compatibility.
+- PICO9918 integration (thanks to VISREALM).
+- Real hardware connectivity through our custom-built interface, supporting FujiNet, disk drives, and original keyboards and controllers.
+- Graphical improvements
 
 ---
 
