@@ -399,7 +399,7 @@ Thanks to everyone who shared their knowledge and inspiration — without them, 
 
 ADAM+ is free but you can donate to support its development
 
-[![PayPal](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://www.paypal.com/donate?business=dannyvdh@pandora.be)
+[![PayPal](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://www.paypal.com/donate?business=dannyvdh@pandora.be](https://www.paypal.com/donate/?business=FYXR9NYS4PPPJ&no_recurring=0&currency_code=EUR))
 
 ## License
 
