@@ -399,7 +399,7 @@ Thanks to everyone who shared their knowledge and inspiration — without them, 
 
 ADAM+ is free but you can donate to support its development
 
-[![PayPal](https://img.shields.io/badge/Donate-PayPal-blue.svg)]((https://destream.net/live/Climax61/donate)](https://destream.net/live/Climax61/donate))
+![DeStream]((https://destream.net/live/Climax61/donate)](https://destream.net/live/Climax61/donate))
 
 ## License
 
