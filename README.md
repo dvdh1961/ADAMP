@@ -53,6 +53,8 @@ with our ADAM+ emulator serving as the core processing unit." <br>
 ![Stars](https://img.shields.io/github/stars/dvdh1961/ADAMP)
 ![Issues](https://img.shields.io/github/issues/dvdh1961/ADAMP)
 
+[![Support me on Patreon](https://img.shields.io/badge/Support%20me%20on-Patreon-FF424D?style=for-the-badge&logo=patreon&logoColor=white)](https://www.patreon.com/cw/DannyVdH)
+
 ## 🎮 HARDWARE
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_HARDWARE.gif)
