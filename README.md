@@ -44,6 +44,17 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ## 🚀 Versions
 
+Version 2.1.10.26 x86_64 Windows & Linux (Will be released)
+
+![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_BUILD2_1.png)
+
+Upgrade V2.1
+- Lots of changes under the hood.
+- CP/M 3.0 (by Nino Brunori) compatible, with built-in harddisk and real-time clock support.
+- Integrated FujiNet (by Thomas Cherryhomes) , no hardware needed anymore.
+
+---
+
 Version 2.0.09.26 x86_64 Windows & Linux
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_MAJOR_UPGRADE.png)
