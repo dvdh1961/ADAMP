@@ -363,6 +363,25 @@ private:
     int m_joystickIndex = 0;
     bool m_is_joystick_open = false;
 
+    // Direct X/Y input conversion. Use the ranges reported by Windows
+    // instead of treating the first sample as the centre. The latter made
+    // a vertical analog axis unusable when the application was started
+    // while the stick/paddle was not perfectly centred.
+    DWORD m_xMin = 0;
+    DWORD m_xMax = 65535;
+    DWORD m_yMin = 0;
+    DWORD m_yMax = 65535;
+
+    static int normalizeAxis(DWORD raw, DWORD minimum, DWORD maximum)
+    {
+        if (maximum <= minimum) return 0;
+        const qint64 span = qint64(maximum) - qint64(minimum);
+        qint64 value = (qint64(raw) - qint64(minimum)) * 65535 / span - 32768;
+        return qBound(-32768, int(value), 32767);
+    }
+
+    bool m_hasPov = false;
+
     void openWindowsJoystick(int joystickIndex);
     void closeWindows();
     void readWindowsJoystick();
@@ -372,6 +391,9 @@ void SimpleJoystickWindows::openWindowsJoystick(int joystickIndex)
 {
     m_is_joystick_open = false;
     m_joystickIndex = joystickIndex;
+    m_xMin = m_yMin = 0;
+    m_xMax = m_yMax = 65535;
+    m_hasPov = false;
 
     for (int i = 0; i < 16; ++i) {
         JOYINFOEX joyInfo;
@@ -381,7 +403,16 @@ void SimpleJoystickWindows::openWindowsJoystick(int joystickIndex)
         if (joyGetPosEx(JOYSTICKID1 + i, &joyInfo) == JOYERR_NOERROR) {
             m_joystickIndex = i;
             m_is_joystick_open = true;
-            qDebug() << "[JOY] Joystick: found at ID" << i;
+            JOYCAPS caps{};
+            if (joyGetDevCaps(JOYSTICKID1 + i, &caps, sizeof(caps)) == JOYERR_NOERROR) {
+                m_xMin = caps.wXmin; m_xMax = caps.wXmax;
+                m_yMin = caps.wYmin; m_yMax = caps.wYmax;
+                m_hasPov = (caps.wCaps & JOYCAPS_HASPOV) != 0;
+            }
+            qDebug() << "[JOY FIX 2 - MSX XY] Joystick ID" << i
+                     << "type" << m_joystickType
+                     << "X range" << m_xMin << m_xMax
+                     << "Y range" << m_yMin << m_yMax;
             break;
         }
     }
@@ -425,57 +456,57 @@ void SimpleJoystickWindows::readWindowsJoystick()
         return;
     }
 
-    const int IDEAL_CENTER = 32768;
-    const int MAX_SAFE_VALUE = 32767;
+    const int x = normalizeAxis(joyInfo.dwXpos, m_xMin, m_xMax);
+    const int y = normalizeAxis(joyInfo.dwYpos, m_yMin, m_yMax);
+    const int TH = 16000;
+    const DWORD buttons = joyInfo.dwButtons;
+    bool up = y < -TH, down = y > TH;
+    bool left = x < -TH, right = x > TH;
 
-    // 1. ANALOGE X-AS (SPINNER)
-    RawJoystickInput analogXInput;
-    analogXInput.axisID = 0; // X-as
+    // General uses the same X/Y-only direction source as the working MSX
+    // reader. Extra button/POV reports must not latch a false direction.
+    if (m_joystickType != 0) {
+    // Some pads expose directions as buttons 11..14 rather than axes.
+    up |= (buttons & (1u << 11)) != 0;
+    down |= (buttons & (1u << 12)) != 0;
+    left |= (buttons & (1u << 13)) != 0;
+    right |= (buttons & (1u << 14)) != 0;
 
-    // Bereken de waarde (Left = +32768, Right = -32767)
-    int calculatedValue = -((int)joyInfo.dwXpos - IDEAL_CENTER);
-
-    // NIEUW: Klem de waarde om te garanderen dat 32768 niet wordt verzonden.
-    if (calculatedValue > MAX_SAFE_VALUE) {
-        calculatedValue = MAX_SAFE_VALUE;
-    } else if (calculatedValue < -MAX_SAFE_VALUE) {
-        calculatedValue = -MAX_SAFE_VALUE;
+    // Only trust POV when the device advertises it. Unsupported POV can
+    // report zero, which looks exactly like a permanently held Up button.
+    if (m_hasPov && LOWORD(joyInfo.dwPOV) != JOY_POVCENTERED) {
+        const DWORD pov = joyInfo.dwPOV;
+        up |= pov == 0 || pov == 4500 || pov == 31500;
+        down |= pov == 13500 || pov == 18000 || pov == 22500;
+        left |= pov == 22500 || pov == 27000 || pov == 31500;
+        right |= pov == 4500 || pov == 9000 || pov == 13500;
     }
 
-    analogXInput.axisValue = calculatedValue;
-    mapAndEmitInput(analogXInput);
-
-    // 2. KNOPPEN
-    int b = joyInfo.dwButtons;
-    for (int i = 0; i < 16; ++i) {
-        bool pressed = (b & (1 << i));
-        RawJoystickInput buttonInput;
-        buttonInput.buttonID = i;
-        buttonInput.buttonPressed = pressed;
-        mapAndEmitInput(buttonInput);
     }
 
-    // 3. POV HAT
-    RawJoystickInput hatInput;
-    hatInput.axisID = -1;
-    hatInput.buttonID = -1;
-
-    if (joyInfo.dwPOV == 65535) {
-        hatInput.hatDirection = RawJoystickInput::Neutral;
-        mapAndEmitInput(hatInput);
-    } else {
-        if      (joyInfo.dwPOV == 0)     hatInput.hatDirection = RawJoystickInput::Up;
-        else if (joyInfo.dwPOV == 4500)  hatInput.hatDirection = RawJoystickInput::UpRight;
-        else if (joyInfo.dwPOV == 9000)  hatInput.hatDirection = RawJoystickInput::Right;
-        else if (joyInfo.dwPOV == 13500) hatInput.hatDirection = RawJoystickInput::DownRight;
-        else if (joyInfo.dwPOV == 18000) hatInput.hatDirection = RawJoystickInput::Down;
-        else if (joyInfo.dwPOV == 22500) hatInput.hatDirection = RawJoystickInput::DownLeft;
-        else if (joyInfo.dwPOV == 27000) hatInput.hatDirection = RawJoystickInput::Left;
-        else if (joyInfo.dwPOV == 31500) hatInput.hatDirection = RawJoystickInput::UpLeft;
-        else                             hatInput.hatDirection = RawJoystickInput::Neutral; // safety
-
-        mapAndEmitInput(hatInput);
+    // Publish one complete direction state per poll; button/hat updates
+    // must not erase the axis state or produce spurious release events.
+    if (up != m_lastUp || down != m_lastDown || left != m_lastLeft || right != m_lastRight) {
+        m_callback->dispatchDirection(up, down, left, right);
+        m_lastUp = up; m_lastDown = down;
+        m_lastLeft = left; m_lastRight = right;
     }
+    // Preserve ADAM's existing spinner polarity independently of digital X.
+    m_callback->dispatchAnalogX(qBound(-32767, -x, 32767));
+
+    bool fireL = (buttons & 1u) != 0;
+    bool fireR = (buttons & 2u) != 0;
+    bool select = (buttons & (1u << 6)) != 0;
+    bool start = (buttons & (1u << 7)) != 0;
+    if (m_joystickType != 2) {
+        select |= (buttons & (1u << 8)) != 0;
+        start |= (buttons & (1u << 9)) != 0;
+    }
+    if (fireL != m_lastFireL) { m_callback->dispatchFireLeft(fireL); m_lastFireL = fireL; }
+    if (fireR != m_lastFireR) { m_callback->dispatchFireRight(fireR); m_lastFireR = fireR; }
+    if (start != m_lastStart) { m_callback->dispatchStart(start); m_lastStart = start; }
+    if (select != m_lastSelect) { m_callback->dispatchSelect(select); m_lastSelect = select; }
+
 }
 
 #endif // Q_OS_WIN

@@ -89,7 +89,9 @@ public:
         const QString& tape2Name,
         const QString& disc1Name,
         const QString& disc2Name,
-        const QString& disc3Name
+        const QString& disc3Name,
+        const QString& hardDiskName = QString(),
+        bool hardDiskAutoBoot = false
         );
 
 signals:
@@ -150,6 +152,10 @@ private:
     QLabel* m_lblEmuD5 = nullptr; // D5 (Disc 1)
     QLabel* m_lblEmuD6 = nullptr; // D6 (Disc 2)
     QLabel* m_lblEmuD7 = nullptr; // D7 (Disc 3)
+    QLabel* m_lblFujiNetPC = nullptr;
+    QLabel* m_lblRowFujiNetPC = nullptr;
+    QLabel* m_lblEmuHD = nullptr;
+    QLabel* m_lblRowHD = nullptr;
     QLabel* m_lblEmuVCS = nullptr; // Atari 2600 cartridge
 
     QLabel* m_lblRowCC = nullptr;

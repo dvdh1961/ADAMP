@@ -9260,11 +9260,11 @@ void CvBasicEditorWindow::setupDefaultPaths()
     const QDir appDir(QCoreApplication::applicationDirPath());
 
 #if defined(Q_OS_WIN)
-    m_cvbasicExePath = QDir::cleanPath(appDir.filePath("tools/cvbasic/cvbasic.exe"));
-    m_gasm80ExePath  = QDir::cleanPath(appDir.filePath("tools/cvbasic/gasm80.exe"));
+    m_cvbasicExePath = QDir::cleanPath(appDir.filePath("3rdparty/cvbasic/cvbasic.exe"));
+    m_gasm80ExePath  = QDir::cleanPath(appDir.filePath("3rdparty/cvbasic/gasm80.exe"));
 #else
-    m_cvbasicExePath = QDir::cleanPath(appDir.filePath("tools/cvbasic/cvbasic"));
-    m_gasm80ExePath  = QDir::cleanPath(appDir.filePath("tools/cvbasic/gasm80"));
+    m_cvbasicExePath = QDir::cleanPath(appDir.filePath("3rdparty/cvbasic/cvbasic"));
+    m_gasm80ExePath  = QDir::cleanPath(appDir.filePath("3rdparty/cvbasic/gasm80"));
 #endif
 
     m_buildDirPath   = QDir::cleanPath(appDir.filePath("media/cvbasic/build"));
@@ -9722,8 +9722,8 @@ void CvBasicEditorWindow::setupUi()
         "Keep MODE/CLS/main loop normally in the Main tab, and use other tabs for DATA/procedures.\n"
         "\n"
         "Tools expected next to the emulator executable:\n"
-        "tools/cvbasic/cvbasic.exe\n"
-        "tools/cvbasic/gasm80.exe\n"
+        "3rdparty/cvbasic/cvbasic.exe\n"
+        "3rdparty/cvbasic/gasm80.exe\n"
     );
 
     m_tabs->addTab(m_codeTabs, tr("Untitled.adpcvb"));

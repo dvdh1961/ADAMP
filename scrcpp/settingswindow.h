@@ -18,6 +18,7 @@ public:
     QString atariRomPath() const;
     QString diskPath() const;
     QString tapePath() const;
+    QString hardDiskPath() const;
     QString statePath() const;
     QString breakpointPath() const;
     QString screenshotPath() const;
@@ -43,6 +44,7 @@ public:
     void setAtariRomPath(const QString &path);
     void setDiskPath(const QString &path);
     void setTapePath(const QString &path);
+    void setHardDiskPath(const QString &path);
     void setStatePath(const QString &path);
     void setBreakpointPath(const QString &path);
     void setScreenshotPath(const QString &path);
@@ -68,6 +70,7 @@ private slots:
     void onBrowseAtariRomPath();
     void onBrowseDiskPath();
     void onBrowseTapePath();
+    void onBrowseHardDiskPath();
     void onBrowseStatePath();
     void onBrowseBreakpointPath();
     void onBrowseScreenshotPath();
@@ -105,6 +108,8 @@ private slots:
 
 private:
     // Edits
+    QLineEdit *m_hardDiskPathEdit = nullptr;
+    QPushButton *m_hardDiskPathBtn = nullptr;
     QLineEdit *m_romPathEdit, *m_atariRomPathEdit, *m_diskPathEdit, *m_tapePathEdit, *m_statePathEdit;
     QLineEdit *m_breakpointPathEdit, *m_screenshotPathEdit, *m_symbolPathEdit;
     QLineEdit *m_adamBezelPathEdit, *m_cvBezelPathEdit;

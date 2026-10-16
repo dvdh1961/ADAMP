@@ -55,6 +55,7 @@ QString appDefaultPath(const QString& relativePath)
 QString defaultRomPath()        { return appDefaultPath("media/roms"); }
 QString defaultAtariRomPath()   { return appDefaultPath("media/aroms"); }
 QString defaultDiskPath()       { return appDefaultPath("media/disks"); }
+QString defaultHardDiskPath()   { return appDefaultPath("media/harddisks"); }
 QString defaultTapePath()       { return appDefaultPath("media/tapes"); }
 QString defaultStatePath()      { return appDefaultPath("media/states"); }
 QString defaultBreakpointPath() { return appDefaultPath("media/breakpoints"); }
@@ -65,18 +66,18 @@ QString defaultBezelPath()      { return appDefaultPath("media/bezels"); }
 QString defaultCvBasicExePath()
 {
 #if defined(Q_OS_WIN)
-    return appDefaultPath("tools/cvbasic/cvbasic.exe");
+    return appDefaultPath("3rdparty/cvbasic/cvbasic.exe");
 #else
-    return appDefaultPath("tools/cvbasic/cvbasic_linux");
+    return appDefaultPath("3rdparty/cvbasic/cvbasic_linux");
 #endif
 }
 
 QString defaultGasm80ExePath()
 {
 #if defined(Q_OS_WIN)
-    return appDefaultPath("tools/cvbasic/gasm80.exe");
+    return appDefaultPath("3rdparty/cvbasic/gasm80.exe");
 #else
-    return appDefaultPath("tools/cvbasic/gasm80_linux");
+    return appDefaultPath("3rdparty/cvbasic/gasm80_linux");
 #endif
 }
 
@@ -248,6 +249,7 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     addRowNoAction(mediaLayout, 1, tr("ATARI ROM Path:"), m_atariRomPathEdit, m_atariRomPathBtn);
     addRowNoAction(mediaLayout, 2, tr("Disk Path:"), m_diskPathEdit, m_diskPathBtn);
     addRowNoAction(mediaLayout, 3, tr("Tape Path:"), m_tapePathEdit, m_tapePathBtn);
+    addRowNoAction(mediaLayout, 4, tr("HD Path:"), m_hardDiskPathEdit, m_hardDiskPathBtn);
     addTabBottomIcon(mediaLayout, "MEDIA");
     tabs->addTab(mediaTab, tr("MEDIA"));
 
@@ -345,6 +347,7 @@ SettingsWindow::SettingsWindow(QWidget *parent)
     connect(m_romPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseRomPath);
     connect(m_atariRomPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseAtariRomPath);
     connect(m_diskPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseDiskPath);
+    connect(m_hardDiskPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseHardDiskPath);
     connect(m_tapePathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseTapePath);
     connect(m_statePathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseStatePath);
     connect(m_breakpointPathBtn, &QPushButton::clicked, this, &SettingsWindow::onBrowseBreakpointPath);
@@ -398,6 +401,7 @@ SettingsWindow::SettingsWindow(QWidget *parent)
 QString SettingsWindow::romPath() const         { return pathFromEdit(m_romPathEdit); }
 QString SettingsWindow::atariRomPath() const    { return pathFromEdit(m_atariRomPathEdit); }
 QString SettingsWindow::diskPath() const        { return pathFromEdit(m_diskPathEdit); }
+QString SettingsWindow::hardDiskPath() const { return pathFromEdit(m_hardDiskPathEdit); }
 QString SettingsWindow::tapePath() const        { return pathFromEdit(m_tapePathEdit); }
 QString SettingsWindow::statePath() const       { return pathFromEdit(m_statePathEdit); }
 QString SettingsWindow::breakpointPath() const  { return pathFromEdit(m_breakpointPathEdit); }
@@ -426,6 +430,7 @@ int SettingsWindow::adamBootMode() const
 void SettingsWindow::setRomPath(const QString &path)          { setPathText(m_romPathEdit, path); }
 void SettingsWindow::setAtariRomPath(const QString &path)     { setPathText(m_atariRomPathEdit, path); }
 void SettingsWindow::setDiskPath(const QString &path)         { setPathText(m_diskPathEdit, path); }
+void SettingsWindow::setHardDiskPath(const QString &path) { setPathText(m_hardDiskPathEdit,path); }
 void SettingsWindow::setTapePath(const QString &path)         { setPathText(m_tapePathEdit, path); }
 void SettingsWindow::setStatePath(const QString &path)        { setPathText(m_statePathEdit, path); }
 void SettingsWindow::setBreakpointPath(const QString &path)   { setPathText(m_breakpointPathEdit, path); }
@@ -481,6 +486,7 @@ void SettingsWindow::onResetAllPathsToDefault()
     setPathText(m_romPathEdit, defaultRomPath());
     setPathText(m_atariRomPathEdit, defaultAtariRomPath());
     setPathText(m_diskPathEdit, defaultDiskPath());
+    setPathText(m_hardDiskPathEdit, defaultHardDiskPath());
     setPathText(m_tapePathEdit, defaultTapePath());
     setPathText(m_statePathEdit, defaultStatePath());
     setPathText(m_breakpointPathEdit, defaultBreakpointPath());
@@ -722,4 +728,10 @@ void SettingsWindow::onDefaultSoundSourcePath()
 void SettingsWindow::onDefaultSoundBuildPath()
 {
     setPathText(m_soundBuildPathEdit, defaultSoundBuildPath());
+}
+
+void SettingsWindow::onBrowseHardDiskPath()
+{
+    const QString dir=QFileDialog::getExistingDirectory(this,tr("Select Hard Disk Directory"),pathFromEdit(m_hardDiskPathEdit));
+    if(!dir.isEmpty())setPathText(m_hardDiskPathEdit,dir);
 }

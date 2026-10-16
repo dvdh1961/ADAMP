@@ -5,6 +5,7 @@
 #include <QColor>
 #include "logwindow.h"
 #include <QFontDatabase>
+#include <QDir>
 
 extern "C" void z80_set_logger(void (*cb)(const char*));
 
@@ -17,7 +18,7 @@ static void z80ToQtLogger(const char* msg)
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
-
+    QDir::setCurrent(QCoreApplication::applicationDirPath());
 
     // Laad het font uit de resources
     int fontId = QFontDatabase::addApplicationFont(":/fonts/fonts/luculent.ttf");

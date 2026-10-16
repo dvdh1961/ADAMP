@@ -1,3 +1,4 @@
+#include "6801/adam_fujinet_pc.h"
 #include "colecocontroller.h"
 #include "printwindow.h"
 #include <QThread>
@@ -8,6 +9,7 @@
 #include <QAudioFormat>
 #include <QTimer>
 #include <QFile>
+#include <QSaveFile>
 #include <QDir>
 #include <QPainter>
 #include <QFont>
@@ -360,9 +362,16 @@ void ColecoController::startEmulation()
 
     m_audioDevice = m_audioSink->start();
     if (!m_audioDevice) {
-        qWarning() << "!!! FATAL: Kon QAudioSink niet starten!";
-        emit emulationStopped();
-        return;
+        qWarning() << "[CTRL][AUDIO] Audio unavailable; using timed emulation.";
+    }
+
+    // Restore H only after core, BIOS, SGM and audio setup have completed.
+    if (!m_startupHardDiskPath.isEmpty()) {
+        const QString image = m_startupHardDiskPath;
+        m_startupHardDiskPath.clear();
+        loadHardDisk(image);
+        if (m_autoBootHardDisk && adam_hd_is_mounted())
+            bootHardDisk();
     }
 
     // 3. De Hoofd-Loop
@@ -378,8 +387,53 @@ void ColecoController::startEmulation()
     m_fpsFrameCount = 0;
     m_fpsCalcTimer.start();
 
+    // Audio is normally the frame clock. A disconnected/stalled device must
+    // never stop the CPU. Timed fallback also allows recovery after OS sleep.
+    QElapsedTimer audioRetryTimer;
+    QElapsedTimer frameTimer;
+    audioRetryTimer.start();
+    frameTimer.start();
+    bool audioFallback = !m_audioDevice;
+
+    auto recoverAudio = [&]() {
+        const qreal volume = m_audioSink->volume();
+        m_audioDevice = nullptr; // start/reset invalidate the old QIODevice.
+        m_audioSink->reset();
+        delete m_audioSink;
+        m_audioSink = new QAudioSink(format, this);
+        m_audioSink->setBufferSize(bufferSizeBytes);
+        m_audioSink->setVolume(volume);
+        m_audioDevice = m_audioSink->start();
+        audioRetryTimer.restart();
+        audioFallback = !m_audioDevice;
+        m_fpsCalcTimer.restart();
+        m_fpsFrameCount = 0;
+        qWarning() << "[CTRL][AUDIO] Reopening output; available:" << bool(m_audioDevice);
+    };
+
+    auto writeFrameAudio = [&]() {
+        if (!audioFallback && m_audioDevice) {
+            const qint64 written = m_audioDevice->write(
+                reinterpret_cast<const char*>(m_stereoBuf), m_AudioChunkBytes);
+            if (written != m_AudioChunkBytes) {
+                audioFallback = true;
+                audioRetryTimer.restart();
+            }
+        }
+    };
+
     while (m_running)
     {
+        if (m_hdBootWatchdog > 0) {
+            const unsigned bdos = RAM_Memory[6] | (unsigned(RAM_Memory[7]) << 8);
+            if (RAM_Memory[0] == 0xc3 && RAM_Memory[4] == 7 && RAM_Memory[5] == 0xc3 && bdos >= 0x8000 && bdos < 0xd100)
+                m_hdBootWatchdog = 0;
+            else if (--m_hdBootWatchdog == 0) {
+                m_cpm_enabled = m_cpm_selected = m_tdos_enabled = false;
+                coleco_reset_and_restart_bios();
+                emit hardDiskError(tr("H: did not finish booting. ADAM has been restarted normally."));
+            }
+        }
         if (m_waitForCBiosFrames)
             m_frameCCounter++;
         if (m_waitForCBiosFrames && m_frameCCounter >= 10) {
@@ -402,6 +456,14 @@ void ColecoController::startEmulation()
         /* Match the proven software-media boot, but only after FujiNet has
          * acknowledged D9. Resetting while the D9 DCB is still live would
          * invalidate that transfer. */
+        auto pcFujiRom=fujinet_pc_take_rom();
+        if(!pcFujiRom.empty()) emit fujiNetPCRomReady(QByteArray(reinterpret_cast<const char*>(pcFujiRom.data()),int(pcFujiRom.size())));
+        const int pcFujiProfile=fujinet_pc_take_boot_profile();
+        if(pcFujiProfile==1 || pcFujiProfile==2) {
+            prepareHardwareBootProfile(pcFujiProfile);
+            bootCpmDisk();
+            tstate_accumulator=0.0;
+        }
         const int completedFujiProfile = mcu2_take_completed_fuji_boot_profile();
         if (completedFujiProfile == 1 || completedFujiProfile == 2) {
             qDebug() << "[CTRL][BOOT] completed FujiNet D9 -> exact software"
@@ -426,13 +488,46 @@ void ColecoController::startEmulation()
             continue;
         }
 
-        // === C: DE KLOK / THROTTLE ===
-        while (m_audioSink->bytesFree() < m_AudioChunkBytes) {
-            QThread::msleep(5);
-            QCoreApplication::processEvents();
-            if (!m_running || m_paused) break;
+        // === C: Bounded audio throttle and recovery ===
+        if (audioFallback && audioRetryTimer.elapsed() >= 2000)
+            recoverAudio();
+
+        if (!audioFallback) {
+            QElapsedTimer audioWait;
+            audioWait.start();
+            while (m_running && !m_paused) {
+                if (m_audioSink->state() == QAudio::StoppedState ||
+                    m_audioSink->state() == QAudio::SuspendedState ||
+                    !m_audioDevice || audioWait.elapsed() >= 250) {
+                    // reset(), rather than stop(), discards stale buffered sound.
+                    recoverAudio();
+                    // Give the reopened backend time to settle, without waiting
+                    // on it again in this frame. Retry later if it stays stalled.
+                    audioFallback = true;
+                    break;
+                }
+                if (m_audioSink->bytesFree() >= m_AudioChunkBytes)
+                    break;
+                QThread::msleep(5);
+                QCoreApplication::processEvents();
+            }
         }
-        if (!m_running || m_paused) continue;
+        if (!m_running || m_paused) {
+            frameTimer.restart();
+            continue;
+        }
+
+        if (audioFallback) {
+            const qint64 frameDurationNs = 1000000000LL / (m_isNTSC ? 60 : 50);
+            while (m_running && !m_paused &&
+                   frameTimer.nsecsElapsed() < frameDurationNs) {
+                QThread::msleep(1);
+                QCoreApplication::processEvents();
+            }
+            if (!m_running || m_paused) continue;
+        }
+        // Rebase every frame: never catch up the entire time spent asleep.
+        frameTimer.restart();
 
 
         // === D: Emuleer 1 frame ===
@@ -452,10 +547,7 @@ void ColecoController::startEmulation()
                 *d++ = sample;
             }
 
-            m_audioDevice->write(
-                reinterpret_cast<const char*>(m_stereoBuf),
-                m_AudioChunkBytes
-                );
+            writeFrameAudio();
 
             QImage frame(
                 reinterpret_cast<const uchar*>(m_atari2600.frameBuffer()),
@@ -551,10 +643,7 @@ void ColecoController::startEmulation()
         }
 
         // === F: SCHRIJF NAAR AUDIOKAART ===
-        m_audioDevice->write(
-            reinterpret_cast<const char*>(m_stereoBuf),
-            m_AudioChunkBytes
-            );
+        writeFrameAudio();
 
         // === G: Stuur videoframe uit ===
         if (video_get_dirty()) {
@@ -978,6 +1067,7 @@ void ColecoController::ejectColecoCartridge()
 
 void ColecoController::resetMachine() // SOFT
 {
+    m_hdBootWatchdog=0;
     if (AlreadyReset) return;
     AlreadyReset = true;
 
@@ -990,6 +1080,7 @@ void ColecoController::resetMachine() // SOFT
 
 void ColecoController::resethMachine() // HARD
 {
+    m_hdBootWatchdog=0;
     // Hard reset button / user reset: execute prepared boot plan.
     if (AlreadyReset) return;
     AlreadyReset = true;
@@ -1183,9 +1274,98 @@ QImage ColecoController::frameFromBridge()
     return img;
 }
 
+
+void ColecoController::configureHardDiskStartup(const QString& path, bool autoBoot)
+{
+    m_startupHardDiskPath = path;
+    m_autoBootHardDisk = autoBoot;
+}
+
+void ColecoController::setAutoBootHardDisk(bool enabled)
+{
+    m_autoBootHardDisk = enabled;
+}
+
+void ColecoController::loadHardDisk(const QString& path)
+{
+    const QByteArray encoded=QFile::encodeName(path);
+    if(!adam_hd_open(encoded.constData())) {emit hardDiskError(QString::fromUtf8(adam_hd_error()));return;}
+    m_currentHardDiskPath=QFileInfo(path).absoluteFilePath();
+    if(m_coreInitialized && emulator && emulator->currentMachineType==MACHINEADAM)ReportDevice(0x0b,0x0400,1);
+    const QString label=QString::fromLatin1(adam_hd_label());
+    const QString description=tr("%1 | %2 | %3 MB")
+        .arg(QFileInfo(path).fileName(),label.isEmpty()?tr("No volume label"):label)
+        .arg(adam_hd_blocks()/1024.0,0,'f',1);
+    emit hardDiskStatusChanged(m_currentHardDiskPath,description);
+}
+
+void ColecoController::createHardDisk(const QString& path,const QString& sourceDisk)
+{
+    const QByteArray encoded=QFile::encodeName(path),source=QFile::encodeName(sourceDisk);
+    if(!adam_hd_create(encoded.constData(),source.constData())) {emit hardDiskError(QString::fromUtf8(adam_hd_error()));return;}
+    loadHardDisk(path);
+}
+
+
+void ColecoController::saveHardDisk(const QString& path)
+{
+    if(!adam_hd_flush()) {emit hardDiskError(tr("Cannot save H:; no image is loaded or flushing failed."));return;}
+    const QString target=QFileInfo(path).absoluteFilePath();
+    if(QFileInfo(target).canonicalFilePath()==QFileInfo(m_currentHardDiskPath).canonicalFilePath()) {
+        loadHardDisk(m_currentHardDiskPath);return;
+    }
+    QFile source(m_currentHardDiskPath);QSaveFile output(target);
+    if(!source.open(QIODevice::ReadOnly)||!output.open(QIODevice::WriteOnly)) {emit hardDiskError(tr("Cannot save hard disk image."));return;}
+    while(!source.atEnd()) {
+        const QByteArray block=source.read(64*1024);
+        if(block.isEmpty() || output.write(block)!=block.size()) {output.cancelWriting();emit hardDiskError(tr("Hard disk copy failed."));return;}
+    }
+    source.close();
+    if(!output.commit()) {emit hardDiskError(tr("Hard disk copy could not be committed."));return;}
+    loadHardDisk(target);
+}
+
+void ColecoController::ejectHardDisk()
+{
+    m_hdBootWatchdog=0;
+    const bool ok=adam_hd_close();m_currentHardDiskPath.clear();
+    emit hardDiskStatusChanged(QString(),QString());
+    if(!ok)emit hardDiskError(tr("Could not flush all hard disk changes to the image."));
+}
+
+void ColecoController::bootHardDisk()
+{
+    if(!adam_hd_is_bootable()) {emit hardDiskError(tr("H: has no valid CP/M boot system. Create an image from a CP/M 3 .dsk first."));return;}
+    unsigned char boot[1024];
+    if(!adam_hd_read_boot(boot)) {emit hardDiskError(tr("Cannot read the H: boot block."));return;}
+    setAtari2600Mode(false);
+    // Enter ADAM directly without the floppy/FujiNet boot menu. The image
+    // survives core initialisation and is never substituted for disk D5.
+    coleco_set_machine_type(1);
+    emulator->SGM=0;
+    g_adamCartridgeMode=false;
+    m_cpm_enabled=true;m_tdos_enabled=false;
+    if(!m_coreInitialized) {coleco_initialise();m_coreInitialized=true;}
+    coleco_reset();
+    coleco_port60=1;coleco_setadammemory(false);
+    ResetPCB_CPM();
+    RAM_Memory[0xfd70]=0xc0;RAM_Memory[0xfd71]=0xfe;
+    RAM_Memory[0xfd6f]=0x0b;
+    ReportDevice(0x0b,0x0400,1);
+    std::memcpy(RAM_Memory+0xc800,boot,sizeof(boot));
+    Z80.pc.w.l=0xc800;Z80.sp.w.l=0x0100;Z80.bc.b.h=0x0b;
+    Z80.iff1=Z80.iff2=0;
+    m_paused=false;m_hdBootWatchdog=900;
+    emit emuPausedChanged(false);
+    emit sgmStatusChanged(false);
+    emit machineTypeChanged(Machine_Adam);
+    emit hardDiskBootStarted();
+    qDebug()<<"[HD] Booting H: from"<<m_currentHardDiskPath;
+}
+
 void ColecoController::loadDisk(int drive, const QString& path)
 {
-    if (drive >= MAX_DISKS) return;
+    if (drive < 0 || drive >= MAX_DISKS) return;
     // ✅ Als dezelfde disk al ingestoken is: NIET ejecten/opslaan/herladen
     if (!m_currentDiskPath[drive].isEmpty() &&
         QDir::cleanPath(m_currentDiskPath[drive]) == QDir::cleanPath(path))
@@ -1196,6 +1376,8 @@ void ColecoController::loadDisk(int drive, const QString& path)
 
     // Anders pas ejecten
     ejectDisk(drive);
+    // Keep a disk mounted if saving it failed.
+    if (!m_currentDiskPath[drive].isEmpty()) return;
 
     QByteArray cPath = QFile::encodeName(path);
     qDebug() << "[CTRL] ========================================";
@@ -1250,13 +1432,18 @@ void ColecoController::loadDisk(int drive, const QString& path)
 
 void ColecoController::ejectDisk(int drive)
 {
-    if (drive >= MAX_DISKS) return;
+    if (drive < 0 || drive >= MAX_DISKS) return;
     // Save state and eject C-kern
     if (!m_currentDiskPath[drive].isEmpty()) {
         QByteArray cOldPath = QFile::encodeName(m_currentDiskPath[drive]);
         qDebug() << "[CTRL] Saving and Ejecting Disk" << drive << ":" << m_currentDiskPath[drive];
         int result = coleco_save_disk(drive, cOldPath.constData());
         qDebug() << "DISK SAVE RESULT:" << result;
+        if (result != FDI_SAVE_OK) {
+            qWarning() << "[CTRL] Disk save failed; keeping disk mounted:"
+                       << m_currentDiskPath[drive];
+            return;
+        }
         coleco_eject_disk(drive);
         m_currentDiskPath[drive].clear(); // Clear status
     }
@@ -1382,6 +1569,10 @@ void ColecoController::loadState(const QString& filePath)
 
 void ColecoController::resetAdam(bool forceAdamCoreBeforeMenu)
 {
+    if (m_autoBootHardDisk && adam_hd_is_mounted() && adam_hd_is_bootable()) {
+        bootHardDisk();
+        return;
+    }
     qDebug() << "[CTRL] resetAdam(); force-ADAM-before-menu="
              << forceAdamCoreBeforeMenu;
     if (forceAdamCoreBeforeMenu) {
@@ -1462,6 +1653,7 @@ void ColecoController::doHardReset()
 
 void ColecoController::setMachineType(ColecoController::MachineType machineType)
 {
+    m_hdBootWatchdog=0;
     const bool wasAdam = (emulator->currentMachineType == MACHINEADAM);
     const bool toAdam  = (machineType == Machine_Adam);
 
@@ -1729,4 +1921,16 @@ void ColecoController::coldStartAdam()
     AlreadyReset = false;
 
     emit machineTypeChanged(Machine_Adam);
+}
+
+void ColecoController::bootFujiNetPC(int profile)
+{
+    // Explicit FujiNet boot bypasses the H: auto-boot preference.
+    setAtari2600Mode(false);
+    g_adamCartridgeMode=false;
+    prepareHardwareBootProfile(profile);
+    m_hdBootWatchdog=0;
+    setMachineType(Machine_Adam);
+    m_paused=false;
+    emit emuPausedChanged(false);
 }

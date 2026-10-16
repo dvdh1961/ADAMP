@@ -51,6 +51,7 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QFile>
+#include <QSaveFile>
 #include <QDir>
 #include <QSettings>
 #include <QDialog>
@@ -588,6 +589,20 @@ static void updateRomLabelForStatusBar(QStatusBar* bar, QLabel* sepLabel4, QLabe
 
 
 
+// Keep paths inside the application folder portable across installations.
+// Paths outside the package retain their absolute location.
+static QString portableSettingsPath(const QString& path)
+{
+    if (path.isEmpty()) return QString();
+    const QDir appDir(QCoreApplication::applicationDirPath());
+    const QString absolute = QDir::cleanPath(appDir.absoluteFilePath(path));
+    const QString relative = appDir.relativeFilePath(absolute);
+    if (!QDir::isAbsolutePath(relative) && relative != ".." &&
+        !relative.startsWith("../"))
+        return relative;
+    return absolute;
+}
+
 static QString appDefaultPath(const QString& relativePath)
 {
     return QDir::cleanPath(QDir(QCoreApplication::applicationDirPath()).filePath(relativePath));
@@ -613,18 +628,18 @@ static QString defaultSoundBuildPathForPlatform()   { return appDefaultPath("med
 static QString defaultCvBasicExePathForPlatform()
 {
 #if defined(Q_OS_WIN)
-    return appDefaultPath("tools/cvbasic/cvbasic.exe");
+    return appDefaultPath("3rdparty/cvbasic/cvbasic.exe");
 #else
-    return appDefaultPath("tools/cvbasic/cvbasic_linux");
+    return appDefaultPath("3rdparty/cvbasic/cvbasic_linux");
 #endif
 }
 
 static QString defaultGasm80ExePathForPlatform()
 {
 #if defined(Q_OS_WIN)
-    return appDefaultPath("tools/cvbasic/gasm80.exe");
+    return appDefaultPath("3rdparty/cvbasic/gasm80.exe");
 #else
-    return appDefaultPath("tools/cvbasic/gasm80_linux");
+    return appDefaultPath("3rdparty/cvbasic/gasm80_linux");
 #endif
 }
 
@@ -647,7 +662,7 @@ void MainWindow::forceStatusBarMediaFlag(QLabel* label)
     // Alles behalve "-" telt als "geladen"
     const bool loaded = !text.endsWith('-');
 
-    label->setText(QString("%1 %2").arg(prefix, loaded ? "X" : "-"));
+    label->setText(QString("%1%2").arg(prefix, loaded ? "X" : "-"));
 
     // Kleur (status-LED stijl)
     label->setStyleSheet(loaded
@@ -660,7 +675,7 @@ void MainWindow::forceStatusBarMediaFlags()
 {
     auto setMediaLabel = [](QLabel* label, const QString& prefix, bool loaded) {
         if (!label) return;
-        label->setText(QString("%1 %2").arg(prefix, loaded ? "X" : "-"));
+        label->setText(QString("%1%2").arg(prefix, loaded ? "X" : "-"));
         label->setStyleSheet(loaded ? "color: #00C853;" : "color: #9E9E9E;");
     };
 
@@ -673,6 +688,7 @@ void MainWindow::forceStatusBarMediaFlags()
     setMediaLabel(m_diskLabelB, "D6:", !m_loadedDiskNames[1].trimmed().isEmpty());
     setMediaLabel(m_diskLabelC, "D7:", !m_loadedDiskNames[2].trimmed().isEmpty());
     setMediaLabel(m_diskLabelD, "D8:", !m_loadedDiskNames[3].trimmed().isEmpty());
+    setMediaLabel(m_hardDiskLabel, "HD:", m_hardDiskLoaded);
 }
 
 void MainWindow::setStatusBar()
@@ -718,7 +734,7 @@ void MainWindow::setStatusBar()
     // ---- Media labels (geen filenames meer: enkel X of -) ----
     auto mkMedia = [&](const char* obj, const char* prefix, QLabel*& sep, QLabel*& lab) {
         sep = mkSep();
-        lab = mkLabel(QString("%1 -").arg(prefix), obj, 35); // start = "-"
+        lab = mkLabel(QString("%1-").arg(prefix), obj, 28); // start = "-"
     };
 
     mkMedia("tapeLabel", "D1:", m_sepLabelMedia2a, m_tapeLabelA);
@@ -730,6 +746,7 @@ void MainWindow::setStatusBar()
     mkMedia("diskLabel", "D6:", m_sepLabelMedia1b, m_diskLabelB);
     mkMedia("diskLabel", "D7:", m_sepLabelMedia1c, m_diskLabelC);
     mkMedia("diskLabel", "D8:", m_sepLabelMedia1d, m_diskLabelD);
+    mkMedia("hardDiskLabel", "HD:", m_hardDiskSeparator, m_hardDiskLabel);
 
     // Start verborgen (zoals je had)
     QLabel* hideAtStart[] = {
@@ -740,7 +757,8 @@ void MainWindow::setStatusBar()
         m_sepLabelMedia1a, m_diskLabelA,
         m_sepLabelMedia1b, m_diskLabelB,
         m_sepLabelMedia1c, m_diskLabelC,
-        m_sepLabelMedia1d, m_diskLabelD
+        m_sepLabelMedia1d, m_diskLabelD,
+        m_hardDiskSeparator, m_hardDiskLabel
     };
     for (QLabel* w : hideAtStart) if (w) w->hide();
 
@@ -767,6 +785,7 @@ void MainWindow::setStatusBar()
         m_sepLabelMedia1b, m_diskLabelB,
         m_sepLabelMedia1c, m_diskLabelC,
         m_sepLabelMedia1d, m_diskLabelD,
+        m_hardDiskSeparator, m_hardDiskLabel,
 
         m_sepLabel1, m_stdLabel,
         m_sepLabel2, m_fpsLabel,
@@ -789,6 +808,7 @@ void MainWindow::setStatusBar()
         m_sepLabelMedia1b, m_diskLabelB,
         m_sepLabelMedia1c, m_diskLabelC,
         m_sepLabelMedia1d, m_diskLabelD,
+        m_hardDiskSeparator, m_hardDiskLabel,
         m_sepLabel1, m_stdLabel,
         m_sepLabel2, m_fpsLabel,
         m_sepLabel3, m_runLabel,
@@ -1199,6 +1219,38 @@ void MainWindow::setupUI()
     m_diskMenuD->addAction(m_ejectDiskActionD);
     fileMenu->addMenu(m_diskMenuD);
 
+    m_hardDiskMenu = fileMenu->addMenu(tr("HARDDISK H:"));
+    m_hardDiskMenu->addAction(tr("Load..."), this, &MainWindow::onLoadHardDisk);
+    m_hardDiskMenu->addAction(tr("Create image..."), this, &MainWindow::onCreateHardDisk);
+    m_saveHardDiskAction=m_hardDiskMenu->addAction(tr("Save"));
+    connect(m_saveHardDiskAction,&QAction::triggered,this,[this]() {
+        QMetaObject::invokeMethod(m_colecoController,"saveHardDisk",Qt::QueuedConnection,Q_ARG(QString,m_hardDiskPath));
+    });
+    m_saveHardDiskAsAction=m_hardDiskMenu->addAction(tr("Save As..."),this,&MainWindow::onSaveHardDiskAs);
+    m_ejectHardDiskAction = m_hardDiskMenu->addAction(tr("Eject/Save"));
+    connect(m_ejectHardDiskAction, &QAction::triggered, this, [this]() {
+        QMetaObject::invokeMethod(m_colecoController,"ejectHardDisk",Qt::QueuedConnection);
+    });
+    m_hardDiskMenu->addSeparator();
+    m_bootHardDiskAction = m_hardDiskMenu->addAction(tr("Boot from H: now"));
+    connect(m_bootHardDiskAction,&QAction::triggered,this,[this]() {
+        QMetaObject::invokeMethod(m_colecoController,"bootHardDisk",Qt::QueuedConnection);
+    });
+    m_autoBootHardDiskAction = m_hardDiskMenu->addAction(tr("Auto boot from H:"));
+    m_autoBootHardDiskAction->setCheckable(true);
+    m_autoBootHardDiskAction->setChecked(m_autoBootHardDisk);
+    connect(m_autoBootHardDiskAction,&QAction::toggled,this,[this](bool checked) {
+        m_autoBootHardDisk=checked;
+        QMetaObject::invokeMethod(m_colecoController,"setAutoBootHardDisk",Qt::QueuedConnection,Q_ARG(bool,checked));
+        saveSettings();updateHardwareWindowMediaDisplay();
+    });
+    m_saveHardDiskAction->setEnabled(false);
+    m_saveHardDiskAsAction->setEnabled(false);
+    m_ejectHardDiskAction->setEnabled(false);
+    m_bootHardDiskAction->setEnabled(false);
+
+    setupFujiNetPCMenu(fileMenu);
+
     // Initial state disabled
     m_diskMenuA->setEnabled(false);
     m_diskMenuB->setEnabled(false);
@@ -1265,6 +1317,46 @@ void MainWindow::setupUI()
 
     // --- TOOLS MENU ---
     m_toolsMenu = menuBar()->addMenu(tr("Tools"));
+    // The recording ROM freezes and publishes a completed ENCD buffer.
+    auto *exportEnchantedDemo = m_toolsMenu->addAction(tr("Export Enchanted gameplay demo…"));
+    connect(exportEnchantedDemo, &QAction::triggered, this, [this]() {
+        // Only completed immutable captures are accepted; no cross-thread writes.
+        QByteArray capture;
+        for (int address = 0x2000; address <= 0x7FF0; ++address) {
+            const auto *p = RAM_Memory + address;
+            if (p[0] != 69 || p[1] != 78 || p[2] != 67 || p[3] != 68 || p[4] != 1 || p[7] != 1)
+                continue;
+            const int length = int(p[5]) | (int(p[6]) << 8);
+            if (length < 2 || length > 4080 || (length & 1) || address + 16 + length > 0x8000)
+                continue;
+            bool valid = true;
+            int frames = 0;
+            for (int i = 0; i < length; i += 2) {
+                if (p[16 + i] > 63 || p[17 + i] == 0) { valid = false; break; }
+                frames += p[17 + i];
+            }
+            if (!valid || frames > 3600) continue;
+            capture = QByteArray(reinterpret_cast<const char *>(p), 16 + length);
+            break;
+        }
+        if (capture.isEmpty()) {
+            QMessageBox::information(this, tr("Enchanted gameplay demo"),
+                tr("No completed recording found. Compile and run the designer's recording project first. Play until DEMO RECORDED appears, then export before resetting."));
+            return;
+        }
+        const QString path = QFileDialog::getSaveFileName(this, tr("Export Enchanted gameplay demo"),
+            QStringLiteral("Enchanted.encdemo"), tr("Enchanted demo (*.encdemo)"));
+        if (path.isEmpty()) return;
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly) || file.write(capture) != capture.size() || !file.commit()) {
+            QMessageBox::warning(this, tr("Enchanted gameplay demo"), tr("Could not save the recording: %1").arg(file.errorString()));
+            return;
+        }
+        QMessageBox::information(this, tr("Enchanted gameplay demo"),
+            tr("Recording saved. Import this file in Enchanted Game Designer, then export the normal game."));
+    });
+    m_toolsMenu->addSeparator();
+
     m_actShowNameTable = new QAction(tr("Name Table Viewer"), this);
     connect(m_actShowNameTable, &QAction::triggered, this, &MainWindow::onShowNameTable);
     m_toolsMenu->addAction(m_actShowNameTable);
@@ -1893,6 +1985,7 @@ void MainWindow::onOpenSettings()
         { &SettingsWindow::setRomPath,         &SettingsWindow::romPath,         &m_romPath,         "roms" },
         { &SettingsWindow::setAtariRomPath,    &SettingsWindow::atariRomPath,    &m_atariRomPath,    "aroms" },
         { &SettingsWindow::setDiskPath,        &SettingsWindow::diskPath,        &m_diskPath,        "disks" },
+        { &SettingsWindow::setHardDiskPath, &SettingsWindow::hardDiskPath, &m_hdImageDirectory, "harddisks" },
         { &SettingsWindow::setTapePath,        &SettingsWindow::tapePath,        &m_tapePath,        "tapes" },
         { &SettingsWindow::setStatePath,       &SettingsWindow::statePath,       &m_statePath,       "states" },
         { &SettingsWindow::setBreakpointPath,  &SettingsWindow::breakpointPath,  &m_breakpointPath,  "breakpoints" },
@@ -1956,6 +2049,10 @@ void MainWindow::loadSettings()
     const bool firstRun = !QFileInfo::exists(iniPath);
 
     QSettings settings(iniPath, QSettings::IniFormat);
+    m_hardDiskPath=settings.value("hardDisk/imagePath").toString();
+    if (!m_hardDiskPath.isEmpty())
+        m_hardDiskPath = QDir::cleanPath(appDir.absoluteFilePath(m_hardDiskPath));
+    m_autoBootHardDisk=settings.value("hardDisk/autoBoot",false).toBool();
 
     auto makeAbsolutePath = [&](QString value, const QString& defaultAbsolutePath) -> QString {
         value = value.trimmed();
@@ -1997,6 +2094,8 @@ void MainWindow::loadSettings()
     m_romPath         = resolvePath("romPath",         defaultRomPathForPlatform());
     m_atariRomPath    = resolvePath("aromPath",        defaultAtariRomPathForPlatform());
     m_diskPath        = resolvePath("diskPath",        defaultDiskPathForPlatform());
+    m_hdImageDirectory = resolvePath("hdPath", appDefaultPath("media/harddisks"));
+    QDir().mkpath(m_hdImageDirectory);
     m_tapePath        = resolvePath("tapePath",        defaultTapePathForPlatform());
     m_statePath       = resolvePath("statePath",       defaultStatePathForPlatform());
     m_breakpointPath  = resolvePath("breakpointPath",  defaultBreakpointPathForPlatform());
@@ -2063,10 +2162,10 @@ void MainWindow::loadSettings()
     m_ctrlCartridge = settings.value("rhard/rCartridge", false).toBool();
 
     // --- BIOS ---
-    m_colecoBiosPath  = settings.value("bios/coleco", "").toString();
-    m_eosBiosPath     = settings.value("bios/eos",    "").toString();
-    m_writerBiosPath  = settings.value("bios/writer", "").toString();
-    m_adamStartupPath = settings.value("adam/startup", "").toString();
+    m_colecoBiosPath = resolvePath("bios/coleco", QString());
+    m_eosBiosPath = resolvePath("bios/eos", QString());
+    m_writerBiosPath = resolvePath("bios/writer", QString());
+    m_adamStartupPath = resolvePath("adam/startup", QString());
     // CVBasic Suite paths: MainWindow/settings.ini blijft de enige bron,
     // maar bij eerste installatie worden die keys meteen met correcte defaults gevuld.
     m_cvbasicSourcePath = resolvePath("cvbasic/lastOpenDir", defaultCvBasicSourcePathForPlatform());
@@ -2115,7 +2214,7 @@ void MainWindow::loadSettings()
         qDebug() << "[SETTINGS] First run: writing default media/tools paths to" << iniPath;
 
         const QStringList defaultDirs = {
-            m_romPath, m_atariRomPath, m_diskPath, m_tapePath, m_statePath,
+            m_romPath, m_atariRomPath, m_diskPath, m_hdImageDirectory, m_tapePath, m_statePath,
             m_breakpointPath, m_screenshotsPath, m_symbolsPath,
             m_adamBezelPath, m_cvBezelPath,
             m_cvbasicSourcePath, m_cvbasicBuildPath,
@@ -2128,30 +2227,31 @@ void MainWindow::loadSettings()
                 QDir().mkpath(dirPath);
         }
 
-        settings.setValue("romPath",        m_romPath);
-        settings.setValue("aromPath",       m_atariRomPath);
-        settings.setValue("diskPath",       m_diskPath);
-        settings.setValue("tapePath",       m_tapePath);
-        settings.setValue("statePath",      m_statePath);
-        settings.setValue("breakpointPath", m_breakpointPath);
-        settings.setValue("screenshotPath", m_screenshotsPath);
-        settings.setValue("symbolsPath",    m_symbolsPath);
-        settings.setValue("adambezelpath",  m_adamBezelPath);
-        settings.setValue("cvbezelpath",    m_cvBezelPath);
+        settings.setValue("romPath",        portableSettingsPath(m_romPath));
+        settings.setValue("aromPath",       portableSettingsPath(m_atariRomPath));
+        settings.setValue("diskPath",       portableSettingsPath(m_diskPath));
+        settings.setValue("hdPath",portableSettingsPath(m_hdImageDirectory));
+        settings.setValue("tapePath",       portableSettingsPath(m_tapePath));
+        settings.setValue("statePath",      portableSettingsPath(m_statePath));
+        settings.setValue("breakpointPath", portableSettingsPath(m_breakpointPath));
+        settings.setValue("screenshotPath", portableSettingsPath(m_screenshotsPath));
+        settings.setValue("symbolsPath",    portableSettingsPath(m_symbolsPath));
+        settings.setValue("adambezelpath",  portableSettingsPath(m_adamBezelPath));
+        settings.setValue("cvbezelpath",    portableSettingsPath(m_cvBezelPath));
 
-        settings.setValue("cvbasic/lastOpenDir", m_cvbasicSourcePath);
-        settings.setValue("cvbasic/buildDir",    m_cvbasicBuildPath);
+        settings.setValue("cvbasic/lastOpenDir", portableSettingsPath(m_cvbasicSourcePath));
+        settings.setValue("cvbasic/buildDir",    portableSettingsPath(m_cvbasicBuildPath));
 #if defined(Q_OS_WIN)
-        settings.setValue("cvbasic/cvbasicExe",  m_cvbasicExePath);
-        settings.setValue("cvbasic/gasm80Exe",   m_gasm80ExePath);
+        settings.setValue("cvbasic/cvbasicExe",  portableSettingsPath(m_cvbasicExePath));
+        settings.setValue("cvbasic/gasm80Exe",   portableSettingsPath(m_gasm80ExePath));
 #else
-        settings.setValue("cvbasic/cvbasicLinuxExe", m_cvbasicExePath);
-        settings.setValue("cvbasic/gasm80LinuxExe",  m_gasm80ExePath);
+        settings.setValue("cvbasic/cvbasicLinuxExe", portableSettingsPath(m_cvbasicExePath));
+        settings.setValue("cvbasic/gasm80LinuxExe",  portableSettingsPath(m_gasm80ExePath));
 #endif
-        settings.setValue("cvbasic/spriteSourceDir", m_spriteSourcePath);
-        settings.setValue("cvbasic/spriteBuildDir",  m_spriteBuildPath);
-        settings.setValue("cvbasic/soundSourceDir",  m_soundSourcePath);
-        settings.setValue("cvbasic/soundBuildDir",   m_soundBuildPath);
+        settings.setValue("cvbasic/spriteSourceDir", portableSettingsPath(m_spriteSourcePath));
+        settings.setValue("cvbasic/spriteBuildDir",  portableSettingsPath(m_spriteBuildPath));
+        settings.setValue("cvbasic/soundSourceDir",  portableSettingsPath(m_soundSourcePath));
+        settings.setValue("cvbasic/soundBuildDir",   portableSettingsPath(m_soundBuildPath));
         settings.setValue("adam/bootMode", m_adamBootMode);
         settings.sync();
     }
@@ -2178,14 +2278,17 @@ void MainWindow::saveSettings()
     };
 
     // Paths / media
-    put("romPath",        m_romPath);
-    put("aromPath",       m_atariRomPath);
-    put("diskPath",       m_diskPath);
-    put("tapePath",       m_tapePath);
-    put("statePath",      m_statePath);
-    put("breakpointPath", m_breakpointPath);
-    put("screenshotPath", m_screenshotsPath);
-    put("symbolsPath",    m_symbolsPath);
+    put("hardDisk/imagePath",portableSettingsPath(m_hardDiskPath));
+    put("hardDisk/autoBoot",m_autoBootHardDisk);
+    put("romPath",        portableSettingsPath(m_romPath));
+    put("aromPath",       portableSettingsPath(m_atariRomPath));
+    put("diskPath",       portableSettingsPath(m_diskPath));
+    put("hdPath",portableSettingsPath(m_hdImageDirectory));
+    put("tapePath",       portableSettingsPath(m_tapePath));
+    put("statePath",      portableSettingsPath(m_statePath));
+    put("breakpointPath", portableSettingsPath(m_breakpointPath));
+    put("screenshotPath", portableSettingsPath(m_screenshotsPath));
+    put("symbolsPath",    portableSettingsPath(m_symbolsPath));
 
     // Machine / UI
     put("machine/type",   m_machineType);
@@ -2197,8 +2300,8 @@ void MainWindow::saveSettings()
     put("video/palette",  m_paletteIndex);
     put("video/vdp",      m_vdpType);
     put("video/f18a80SelfTest", m_f18a80SelfTest);
-    put("adambezelpath",  m_adamBezelPath);
-    put("cvbezelpath",    m_cvBezelPath);
+    put("adambezelpath",  portableSettingsPath(m_adamBezelPath));
+    put("cvbezelpath",    portableSettingsPath(m_cvBezelPath));
 
     // Hardware
     put("hardware/sgm",   m_sgmEnabled);
@@ -2225,23 +2328,23 @@ void MainWindow::saveSettings()
     put("video/useBezels",       m_useBezels);
 
     // BIOS
-    put("bios/coleco", m_colecoBiosPath);
-    put("bios/eos",    m_eosBiosPath);
-    put("bios/writer", m_writerBiosPath);
-    put("adam/startup", m_adamStartupPath);
-    put("cvbasic/lastOpenDir", m_cvbasicSourcePath);
-    put("cvbasic/buildDir",    m_cvbasicBuildPath);
+    put("bios/coleco", portableSettingsPath(m_colecoBiosPath));
+    put("bios/eos",    portableSettingsPath(m_eosBiosPath));
+    put("bios/writer", portableSettingsPath(m_writerBiosPath));
+    put("adam/startup", portableSettingsPath(m_adamStartupPath));
+    put("cvbasic/lastOpenDir", portableSettingsPath(m_cvbasicSourcePath));
+    put("cvbasic/buildDir",    portableSettingsPath(m_cvbasicBuildPath));
 #if defined(Q_OS_WIN)
-    put("cvbasic/cvbasicExe",  m_cvbasicExePath);
-    put("cvbasic/gasm80Exe",   m_gasm80ExePath);
+    put("cvbasic/cvbasicExe",  portableSettingsPath(m_cvbasicExePath));
+    put("cvbasic/gasm80Exe",   portableSettingsPath(m_gasm80ExePath));
 #else
-    put("cvbasic/cvbasicLinuxExe", m_cvbasicExePath);
-    put("cvbasic/gasm80LinuxExe",  m_gasm80ExePath);
+    put("cvbasic/cvbasicLinuxExe", portableSettingsPath(m_cvbasicExePath));
+    put("cvbasic/gasm80LinuxExe",  portableSettingsPath(m_gasm80ExePath));
 #endif
-    put("cvbasic/spriteSourceDir", m_spriteSourcePath);
-    put("cvbasic/spriteBuildDir",  m_spriteBuildPath);
-    put("cvbasic/soundSourceDir",  m_soundSourcePath);
-    put("cvbasic/soundBuildDir",   m_soundBuildPath);
+    put("cvbasic/spriteSourceDir", portableSettingsPath(m_spriteSourcePath));
+    put("cvbasic/spriteBuildDir",  portableSettingsPath(m_spriteBuildPath));
+    put("cvbasic/soundSourceDir",  portableSettingsPath(m_soundSourcePath));
+    put("cvbasic/soundBuildDir",   portableSettingsPath(m_soundBuildPath));
     put("adam/bootMode", m_adamBootMode);
 
     // Window (zet dit vóór sync)
@@ -2379,7 +2482,9 @@ void MainWindow::onOpenHardware()
         m_loadedTapeNames[1],     // D2
         m_loadedDiskNames[0],     // D5
         m_loadedDiskNames[1],     // D6
-        m_loadedDiskNames[2]      // D7 (Alleen de eerste 3 disks worden in de tabel getoond)
+        m_loadedDiskNames[2],     // D7 (Alleen de eerste 3 disks worden in de tabel getoond)
+        m_hardDiskDescription,
+        m_autoBootHardDisk
         );
 
     if (dlg.exec() == QDialog::Accepted) {
@@ -2428,7 +2533,9 @@ void MainWindow::updateHardwareWindowMediaDisplay()
             m_loadedTapeNames[1],      // D2
             m_loadedDiskNames[0],      // D5
             m_loadedDiskNames[1],      // D6
-            m_loadedDiskNames[2]       // D7 (Disks[2])
+            m_loadedDiskNames[2],      // D7 (Disks[2])
+            m_hardDiskDescription,
+            m_autoBootHardDisk
             );
     }
 }
@@ -2761,6 +2868,7 @@ void MainWindow::setupEmulatorThread()
             Qt::QueuedConnection);
 
     m_colecoController->moveToThread(m_emulatorThread);
+    connect(m_colecoController,&ColecoController::fujiNetPCRomReady,this,&MainWindow::loadFujiNetPCRom,Qt::QueuedConnection);
 
     connect(m_colecoController, &ColecoController::biosCFramesDone,
             this, &MainWindow::onBiosCFramesDone,
@@ -2806,7 +2914,9 @@ void MainWindow::setupEmulatorThread()
     }
 
     connect(m_emulatorThread, &QThread::started, m_colecoController, [this]() {
+        m_colecoController->configureHardDiskStartup(m_hardDiskPath, m_autoBootHardDisk);
         m_colecoController->setAtari2600Mode(m_machineType == MACHINE_ATARI2600);
+        m_colecoController->setSGMEnabled(m_sgmEnabled);
         m_colecoController->startWithBios(m_colecoBiosPath, m_eosBiosPath, m_writerBiosPath);
     });
 
@@ -2822,11 +2932,25 @@ void MainWindow::setupEmulatorThread()
 
     coleco_set_machine_type(m_machineType == MACHINE_ADAM ? MACHINE_ADAM : MACHINE_COLECO);
 
-    m_emulatorThread->start();
+    connect(m_colecoController,&ColecoController::hardDiskBootStarted,this,[this]() {
+        m_machineType=MACHINE_ADAM;emutype=true;m_sgmEnabled=false;
+        m_adamGameMode=false;adamnet_set_game_mode(false);
+        if(m_sysLabel)m_sysLabel->setText("ADAM");
+        if(m_sgmLabel)m_sgmLabel->hide();
+        if(m_sepLabelSGM)m_sepLabelSGM->hide();
+        if(m_toolsMenu)m_toolsMenu->menuAction()->setVisible(true);
+        if(m_atariInputsMenu)m_atariInputsMenu->menuAction()->setVisible(false);
+        if(m_inputWidget) {m_inputWidget->setMachineType(MACHINE_ADAM);m_inputWidget->setAdamGameMode(false);}
+        updateMediaMenuState();updateMediaStatusLabels();forceStatusBarMediaFlags();
+        updateHardwareWindowMediaDisplay();saveSettings();
+    },Qt::QueuedConnection);
+    connect(m_colecoController,&ColecoController::hardDiskStatusChanged,
+            this,&MainWindow::onHardDiskStatusChanged,Qt::QueuedConnection);
+    connect(m_colecoController,&ColecoController::hardDiskError,this,[this](const QString& message) {
+        QMessageBox::warning(this,tr("Hard disk H:"),message);
+    },Qt::QueuedConnection);
 
-    QMetaObject::invokeMethod(m_colecoController, "setSGMEnabled",
-                              Qt::QueuedConnection,
-                              Q_ARG(bool, m_sgmEnabled));
+    m_emulatorThread->start();
 
     connect(
         m_colecoController, &ColecoController::frameReady,
@@ -3267,6 +3391,54 @@ void MainWindow::onEjectAdamRom()
     updateMediaMenuState();
     updateMediaStatusLabels();
     updateHardwareWindowMediaDisplay();
+}
+
+
+void MainWindow::onLoadHardDisk()
+{
+    const QString path=CustomFileDialog::getOpenFileName(this,tr("Load hard disk H:"),
+        m_hdImageDirectory,tr("ADAM Hard Disk (*.hdd *.img);;All Files (*)"),nullptr,CustomFileDialog::PathHardDisk);
+    if(path.isEmpty())return;
+    QMetaObject::invokeMethod(m_colecoController,"loadHardDisk",Qt::QueuedConnection,Q_ARG(QString,path));
+}
+
+void MainWindow::onCreateHardDisk()
+{
+    const QStringList choices={tr("Bootable: copy a CP/M 3 disk"),tr("Empty formatted hard disk")};
+    bool ok=false;
+    const QString choice=QInputDialog::getItem(this,tr("Create 20 MB hard disk"),
+        tr("Contents of the new H: image:"),choices,0,false,&ok);
+    if(!ok)return;
+    QString source;
+    if(choice==choices[0]) {
+        source=CustomFileDialog::getOpenFileName(this,tr("CP/M 3 source disk"),m_diskPath,tr("ADAM CP/M Disk (*.dsk)"),nullptr,CustomFileDialog::PathDisk);
+        if(source.isEmpty())return;
+    }
+    QString path=CustomFileDialog::getSaveFileName(this,tr("Create hard disk H:"),
+        m_hdImageDirectory,tr("ADAM Hard Disk (*.hdd)"),nullptr,CustomFileDialog::PathHardDisk);
+    if(!path.isEmpty() && QFileInfo(path).suffix().isEmpty())path+=".hdd";
+    if(path.isEmpty())return;
+    QMetaObject::invokeMethod(m_colecoController,"createHardDisk",Qt::QueuedConnection,
+        Q_ARG(QString,path),Q_ARG(QString,source));
+}
+
+
+void MainWindow::onSaveHardDiskAs()
+{
+    QString path=CustomFileDialog::getSaveFileName(this,tr("Save hard disk image as"),
+        m_hdImageDirectory,tr("ADAM Hard Disk (*.hdd *.img)"),nullptr,CustomFileDialog::PathHardDisk);
+    if(!path.isEmpty() && QFileInfo(path).suffix().isEmpty())path+=".hdd";
+    if(path.isEmpty())return;
+    QMetaObject::invokeMethod(m_colecoController,"saveHardDisk",Qt::QueuedConnection,Q_ARG(QString,path));
+}
+
+void MainWindow::onHardDiskStatusChanged(const QString& path,const QString& description)
+{
+    m_hardDiskLoaded=!path.isEmpty();m_hardDiskPath=path;m_hardDiskDescription=description;
+    if(m_hardDiskLabel)m_hardDiskLabel->setToolTip(description);
+    if(m_hardDiskMenu)m_hardDiskMenu->setIcon(m_hardDiskLoaded?style()->standardIcon(QStyle::SP_DialogApplyButton):QIcon());
+    updateMediaMenuState();updateMediaStatusLabels();forceStatusBarMediaFlags();
+    updateHardwareWindowMediaDisplay();saveSettings();
 }
 
 void MainWindow::onLoadDisk(int drive)
@@ -3717,7 +3889,8 @@ void MainWindow::updateMediaStatusLabels()
         m_diskLabelA, m_sepLabelMedia1a,
         m_diskLabelB, m_sepLabelMedia1b,
         m_diskLabelC, m_sepLabelMedia1c,
-        m_diskLabelD, m_sepLabelMedia1d
+        m_diskLabelD, m_sepLabelMedia1d,
+        m_hardDiskLabel, m_hardDiskSeparator
     };
 
     for (QLabel* w : tapeWidgets)
@@ -3745,6 +3918,12 @@ void MainWindow::updateMediaMenuState()
     auto setActionEnabledIf = [](QAction* a, bool en) {
         if (a) a->setEnabled(en);
     };
+
+    if(m_fujiNetPCMenu)m_fujiNetPCMenu->menuAction()->setVisible(isAdam);
+    if(m_saveHardDiskAction)m_saveHardDiskAction->setEnabled(m_hardDiskLoaded);
+    if(m_saveHardDiskAsAction)m_saveHardDiskAsAction->setEnabled(m_hardDiskLoaded);
+    if(m_ejectHardDiskAction)m_ejectHardDiskAction->setEnabled(m_hardDiskLoaded);
+    if(m_bootHardDiskAction)m_bootHardDiskAction->setEnabled(m_hardDiskLoaded);
 
     // ROM menus: Coleco vs ADAM
     setActionEnabledIf(m_openAdamRomAction,   isAdam);
@@ -4439,6 +4618,14 @@ void MainWindow::onResetAdamBtnClicked()
     if (!m_resetAdamBtn)
         return;
 
+    if (m_autoBootHardDisk && m_hardDiskLoaded) {
+        // Let the worker validate H and fall back to normal ADAM reset.
+        // Do not remount/boot a startup floppy after the H boot request.
+        QMetaObject::invokeMethod(m_colecoController, "resetAdam",
+                                  Qt::QueuedConnection, Q_ARG(bool, false));
+        return;
+    }
+
     if (m_ctrlAdamNet)
         mcu2_arm_fuji_reset_boot_probe();
 
@@ -5060,6 +5247,9 @@ void MainWindow::onReleaseAll()
 
 void MainWindow::releaseAllMedia(bool preservePhysicalFujiD5)
 {
+    if (m_hardDiskLoaded)
+        QMetaObject::invokeMethod(m_colecoController, "ejectHardDisk", Qt::QueuedConnection);
+
     // Atari 2600 Cartridge
     onEjectAtari2600Rom();
 

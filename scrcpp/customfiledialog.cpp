@@ -318,6 +318,7 @@ bool CustomFileDialog::isFileAccepted(const QString &fileName) {
     QString suffix = QFileInfo(fileName).suffix().toLower();
     if (m_pathType == PathRom) return (suffix == "col" || suffix == "bin" || suffix == "rom");
     if (m_pathType == PathAtariRom) return (suffix == "a26" || suffix == "bin" || suffix == "rom");
+    if (m_pathType == PathHardDisk) return (suffix == "hdd" || suffix == "img");
     if (m_pathType == PathDisk) return (suffix == "dsk");
     if (m_pathType == PathTape) return (suffix == "dpp");
     return true;
@@ -379,6 +380,7 @@ QString CustomFileDialog::keyFromPathType(PathType type, AcceptMode mode) const 
     case PathRom: base = "Rom"; break; case PathAtariRom: base = "AtariRom"; break;
     case PathDisk: base = "Disk"; break; case PathTape: base = "Tape"; break;
     case PathState: base = "State"; break; case PathScreenshot: base = "Screenshot"; break; case PathSymbol: base = "Symbol"; break;
+    case PathHardDisk: base = "HardDisk"; break;
     case PathInjected: base = "Injected"; break;
     default: base = (mode == AcceptOpen) ? "DefaultOpen" : "DefaultSave"; break;
     }

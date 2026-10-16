@@ -1,3 +1,5 @@
+#include "6801/adam_fujinet_pc.h"
+#include <QTimer>
 #include "hardwarewindow.h"
 #include "printwindow.h"
 #include "mcu2_gateway.h"
@@ -329,8 +331,17 @@ void HardwareWindow::buildUi()
     m_lblEmuD6 = createEmuLabel("No disc");
     addTableRow(6, "DISK D6", m_lblEmuD6, m_lblRowD6);
 
+    m_lblEmuHD = createEmuLabel("No hard disk");
+    addTableRow(7, "HD H:", m_lblEmuHD, m_lblRowHD);
+
     m_lblEmuVCS = createEmuLabel("No atari cartridge");
-    addTableRow(7, "VCS", m_lblEmuVCS, m_lblRowVCS);
+    addTableRow(8, "VCS", m_lblEmuVCS, m_lblRowVCS);
+    m_lblFujiNetPC=createEmuLabel("Off");
+    addTableRow(9, "FUJINET PC", m_lblFujiNetPC, m_lblRowFujiNetPC);
+    auto fujiTimer=new QTimer(this);
+    connect(fujiTimer,&QTimer::timeout,this,[this] {
+        if(m_lblFujiNetPC) m_lblFujiNetPC->setText(QString::fromStdString(AdamFujiNetPC::state()));
+    });fujiTimer->start(500);
 
     // Emu Layout (combineert image, widgets en grid)
     auto *layEmu = new QVBoxLayout;
@@ -659,6 +670,8 @@ void HardwareWindow::updateMediaVisibility(MachineType activeMachine)
     showRow(m_lblRowD2, m_lblEmuD2, adamActive);
     showRow(m_lblRowD5, m_lblEmuD5, adamActive);
     showRow(m_lblRowD6, m_lblEmuD6, adamActive);
+    showRow(m_lblRowHD, m_lblEmuHD, adamActive);
+    showRow(m_lblRowFujiNetPC, m_lblFujiNetPC, adamActive);
     showRow(m_lblRowVCS, m_lblEmuVCS, atariActive);
 }
 
@@ -709,7 +722,9 @@ void HardwareWindow::setLoadedMediaDisplayNames(
     const QString& tape2Name,
     const QString& disc1Name,
     const QString& disc2Name,
-    const QString& disc3Name)
+    const QString& disc3Name,
+    const QString& hardDiskName,
+    bool hardDiskAutoBoot)
 {
     // Functie om de juiste weergavetekst en kleur te bepalen
     auto setLabelStatus = [&](QLabel* label, const QString& name, const QString& defaultText) {
@@ -754,6 +769,8 @@ void HardwareWindow::setLoadedMediaDisplayNames(
     setLabelStatus(m_lblEmuD5, disc1Name, "No disc");
     setLabelStatus(m_lblEmuD6, disc2Name, "No disc");
     setLabelStatus(m_lblEmuD7, disc3Name, "No disc");
+    setLabelStatus(m_lblEmuHD, hardDiskName, "No hard disk");
+    if(m_lblEmuHD)m_lblEmuHD->setText(m_lblEmuHD->text()+QString(" | Auto boot: %1").arg(hardDiskAutoBoot?"On":"Off"));
 }
 
 void HardwareWindow::checkRealAdamP()

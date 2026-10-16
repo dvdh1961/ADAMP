@@ -49,6 +49,10 @@ public:
     bool m_switchingMachineType = false;
 
 private:
+    int m_hdBootWatchdog = 0;
+    bool m_autoBootHardDisk = false;
+    QString m_startupHardDiskPath;
+    QString m_currentHardDiskPath;
     std::atomic_bool m_running {false};
     int      m_realFrames = 0;
     QImage m_frameBuffer;
@@ -86,6 +90,14 @@ public slots:
     void gotoAddr(uint16_t newPC);
     bool isPaused() const { return m_paused; }
     void loadDisk(int drive, const QString& path);
+    void configureHardDiskStartup(const QString& path, bool autoBoot);
+    void setAutoBootHardDisk(bool enabled);
+    void loadHardDisk(const QString& path);
+    void createHardDisk(const QString& path, const QString& sourceDisk);
+    void ejectHardDisk();
+    void saveHardDisk(const QString& path);
+    void bootHardDisk();
+    void bootFujiNetPC(int profile = 0);
     void loadTape(int drive, const QString& path);
     void ejectDisk(int drive);
     void ejectTape(int drive);
@@ -135,6 +147,9 @@ signals:
     void sgmStatusChanged(bool enabled);
     void col80StateChanged(bool enabled);
     void diskStatusChanged(int drive, const QString& fileName);
+    void hardDiskStatusChanged(const QString& path, const QString& description);
+    void hardDiskError(const QString& message);
+    void hardDiskBootStarted();
     void tapeStatusChanged(int drive, const QString& fileName);
     void machineTypeChanged(MachineType newType);
     void cartridgeStatusChanged(const QString& colecoName, const QString& adamName);
@@ -143,6 +158,7 @@ signals:
     void biosCFramesDone();
     void biosAFramesDone();
     void requestPlayDiskSound();
+    void fujiNetPCRomReady(const QByteArray& rom);
     void requestPlayTapeSound();
     void atari2600CartridgeStatusChanged(const QString& fileName);
     void atariDebuggerStateChanged(const QVariantMap& state);

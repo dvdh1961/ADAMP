@@ -19766,8 +19766,8 @@ void CvBasicEditorWindow::setupUi()
         "Keep MODE/CLS/main loop normally in the Main tab, and use other tabs for DATA/procedures.\n"
         "\n"
         "Tools expected next to the emulator executable:\n"
-        "tools/cvbasic/cvbasic.exe\n"
-        "tools/cvbasic/gasm80.exe\n"
+        "3rdparty/cvbasic/cvbasic.exe\n"
+        "3rdparty/cvbasic/gasm80.exe\n"
     );
 #endif
 #if defined(Q_OS_LINUX)
@@ -19783,8 +19783,8 @@ void CvBasicEditorWindow::setupUi()
         "Keep MODE/CLS/main loop normally in the Main tab, and use other tabs for DATA/procedures.\n"
         "\n"
         "Tools expected next to the emulator executable:\n"
-        "tools/cvbasic/cvbasic_linux\n"
-        "tools/cvbasic/gasm80_linux\n"
+        "3rdparty/cvbasic/cvbasic_linux\n"
+        "3rdparty/cvbasic/gasm80_linux\n"
     );
 #endif
 
@@ -20496,7 +20496,7 @@ void CvBasicEditorWindow::loadSettings()
     QSettings s(QCoreApplication::applicationDirPath() + "/settings.ini", QSettings::IniFormat);
     s.beginGroup("cvbasic");
 
-    // Alleen settings.ini gebruiken. Geen tools/cvbasic fallback meer.
+    // Alleen settings.ini gebruiken. Geen 3rdparty/cvbasic fallback meer.
     // Linux kan eigen keys hebben. Als die ontbreken, nemen we enkel de
     // algemene keys uit settings.ini, niet een intern opgebouwd pad.
 #if defined(Q_OS_WIN)

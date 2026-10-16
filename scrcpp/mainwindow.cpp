@@ -136,7 +136,7 @@ MainWindow::MainWindow(QWidget *parent)
     // Version
     // Keep the Atari core revision visible so a stale shadow-build cannot be
     // mistaken for the newly compiled PAL renderer.
-    appVersion = QStringLiteral("2.0.09.26");
+    appVersion = QStringLiteral("2.1.10.26");
 
     setWindowTitle(QString("ADAM+ Emulator - v%1").arg(appVersion));
 
@@ -930,6 +930,7 @@ QString MainWindow::fetchFujiNetRomDirect(const QString &hostValue,
 
 MainWindow::~MainWindow()
 {
+    stopFujiNetPC();
     mcu2_set_fuji_direct_rom_fetch_handler(Mcu2FujiDirectRomFetch());
     mcu2_set_fuji_coleco_rom_ready_handler(Mcu2FujiColecoRomReady());
     mcu2_set_fuji_coleco_rom_progress_handler(Mcu2FujiColecoRomProgress());

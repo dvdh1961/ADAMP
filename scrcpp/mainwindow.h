@@ -10,12 +10,14 @@
 #include <QProgressDialog>
 #include <QSoundEffect>
 #include <QByteArray>
+#include "6801/adam_fujinet_pc.h"
 
 #include "simplejoystick.h"
 #include "hardwarewindow.h"
 #include "aim_dialog.h"
 #include "cvbasiceditorwindow.h"
 
+class QProcess;
 class ColecoController;
 class ScreenWidget;
 class InputWidget;
@@ -123,6 +125,16 @@ public slots:
 
 private slots:
     void onLoadDisk(int drive);
+    void onLoadHardDisk();
+    void setupFujiNetPCMenu(QMenu* fileMenu);
+    void startFujiNetPC();
+    void stopFujiNetPC();
+    void configureFujiNetPC();
+    void bootFujiNetPC();
+    void loadFujiNetPCRom(const QByteArray& rom);
+    void onCreateHardDisk();
+    void onSaveHardDiskAs();
+    void onHardDiskStatusChanged(const QString& path, const QString& description);
     void onLoadTape(int drive);
     void onEjectDisk(int drive);
     void onEjectTape(int drive);
@@ -329,6 +341,29 @@ private:
     QLabel *m_diskLabelB          = nullptr;
     QLabel *m_diskLabelC          = nullptr;
     QLabel *m_diskLabelD          = nullptr;
+    QLabel *m_hardDiskLabel = nullptr;
+    QLabel *m_hardDiskSeparator = nullptr;
+    QMenu *m_hardDiskMenu = nullptr;
+    QMenu *m_fujiNetPCMenu = nullptr;
+    QAction *m_fujiNetPCStart = nullptr;
+    QAction *m_fujiNetPCStop = nullptr;
+    QAction *m_fujiNetPCBoot = nullptr;
+    QAction *m_fujiNetPCState = nullptr;
+    QProcess *m_fujiNetPCProcess = nullptr;
+    bool m_fujiNetPCStopRequested = true;
+    bool m_fujiNetPCBootPending = false;
+    int m_fujiNetPCBootTicks = 0;
+    bool m_fujiNetPCBootProbePending = false;
+    std::future<AdamFujiNetPC::Reply> m_fujiNetPCBootProbe;
+    QAction *m_ejectHardDiskAction = nullptr;
+    QAction *m_saveHardDiskAction = nullptr;
+    QAction *m_saveHardDiskAsAction = nullptr;
+    QAction *m_bootHardDiskAction = nullptr;
+    QAction *m_autoBootHardDiskAction = nullptr;
+    bool m_autoBootHardDisk = false;
+    bool m_hardDiskLoaded = false;
+    QString m_hardDiskPath;
+    QString m_hardDiskDescription;
     QLabel *m_tapeLabelA          = nullptr;
     QLabel *m_tapeLabelB          = nullptr;
     QLabel *m_tapeLabelC          = nullptr;
@@ -435,6 +470,7 @@ private:
     QString m_romPath;
     QString m_atariRomPath;
     QString m_diskPath;
+    QString m_hdImageDirectory;
     QString m_tapePath;
     QString m_statePath;
     QString m_breakpointPath;
