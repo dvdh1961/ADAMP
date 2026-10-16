@@ -1,0 +1,14 @@
+FujiNet-PC ADAM binaries (Windows x64 / Linux x86_64 Ubuntu 22.04 baseline)
+Upstream: https://github.com/FujiNetWIFI/fujinet-firmware
+Release: https://github.com/FujiNetWIFI/fujinet-firmware/releases/tag/nightly_fn_pc_v1.6.2-dev
+License: GPL-3.0 (LICENSE_FujiNet_GPL3.txt)
+The bundled executable identifies itself as v1.6-eaa520061, 2026-10-03.
+Corresponding source: https://github.com/FujiNetWIFI/fujinet-firmware/tree/eaa520061
+Keep all bundled DLLs, data/, SD/ and fnconfig.ini with the executable.
+
+fujinet-pc-ADAM_v1.6.2-dev_ubuntu-22.04-amd64.tar.gz
+URL: https://github.com/FujiNetWIFI/fujinet-firmware/releases/download/nightly_fn_pc_v1.6.2-dev/fujinet-pc-ADAM_v1.6.2-dev_ubuntu-22.04-amd64.tar.gz
+SHA256: 5927c972f4a173573dc98217eac667278af1ff37c08b5e63d5f960099c00bbb7
+fujinet-pc-ADAM_v1.6.2-dev_windows-x64.zip
+URL: https://github.com/FujiNetWIFI/fujinet-firmware/releases/download/nightly_fn_pc_v1.6.2-dev/fujinet-pc-ADAM_v1.6.2-dev_windows-x64.zip
+SHA256: 9cf52cbe44e983b9c0c82f3d16ec51eabdfbc22f18d94b32f9bc08c018db1e0d
