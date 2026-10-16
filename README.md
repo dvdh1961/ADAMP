@@ -38,14 +38,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 [![Support me on Patreon](https://img.shields.io/badge/Support%20me%20on-Patreon-FF424D?style=for-the-badge&logo=patreon&logoColor=white)](https://www.patreon.com/cw/DannyVdH)
 
-## 🎮 HARDWARE
-
-![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_HARDWARE.gif)
-
-The hardware PCBs are finished, and hardware testing can begin.
-Programming of our MCUs and integration of our emulator are now underway.
-From the moment we have a fully working hardware system, everything will be published on our GitHub.
-
+---
 
 ## 🚀 Versions
 
