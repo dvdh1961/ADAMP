@@ -27,10 +27,10 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ## 💾 Downloads
 
-[![release](https://img.shields.io/badge/Latest%20release-windows8+_64_EXE-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/2.0.09.26/WINDOWS_ADAMP_2.0.09.26.exe)
-[![release](https://img.shields.io/badge/Latest%20release-windows8+_64_ZIP-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/2.0.09.26/WINDOWS_ADAMP_2.0.09.26.zip)
-[![release](https://img.shields.io/badge/Latest%20release-linux64_ZIP-blue.svg)](https://github.com/dvdh1961/ADAMP/releases/download/2.0.09.26/LINUX_ADAMP_2.0.09.26.zip)
-![Current Release](https://img.shields.io/badge/Version-V2.0.09.26-yellow)
+[![release](https://img.shields.io/badge/Latest%20release-windows8+_64_EXE-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/2.1.10.26/WINDOWS_ADAMP_2.1.10.26.exe)
+[![release](https://img.shields.io/badge/Latest%20release-windows8+_64_ZIP-green.svg)](https://github.com/dvdh1961/ADAMP/releases/download/2.1.10.26/WINDOWS_ADAMP_2.1.10.26.zip)
+[![release](https://img.shields.io/badge/Latest%20release-linux64_ZIP-blue.svg)](https://github.com/dvdh1961/ADAMP/releases/download/2.1.10.26/LINUX_ADAMP_2.1.10.26.zip)
+![Current Release](https://img.shields.io/badge/Version-V2.1.10.26-yellow)
 ![Downloads](https://img.shields.io/badge/dynamic/json?url=https://raw.githubusercontent.com/dvdh1961/ADAMP/main/stats/downloads.json&label=Downloads&query=display_total&color=orange)
 
 [![release](https://img.shields.io/badge/Quick%20review-ADAM+%20Emulator-magenta.svg)](https://youtu.be/vobLE2F9Cc0)
@@ -44,7 +44,7 @@ It serves as a central platform for integrating a wide range of hardware-related
 
 ## 🚀 Versions
 
-Version 2.1.10.26 x86_64 Windows & Linux (Will be released)
+Version 2.1.10.26 x86_64 Windows & Linux
 
 ![Logo](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_BUILD2_1.png)
 
