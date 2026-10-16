@@ -331,4 +331,23 @@ unsigned char adamnet_read_io(int Address);
 }
 #endif
 
+// Linear hard disk H:, AdamNet device 0B. Only call from emulation thread.
+#ifdef __cplusplus
+extern "C" {
+#endif
+int adam_hd_open(const char* path);
+int adam_hd_create(const char* path, const char* sourceDisk);
+int adam_hd_close(void);
+int adam_hd_flush(void);
+int adam_hd_is_mounted(void);
+int adam_hd_is_bootable(void);
+const char* adam_hd_error(void);
+const char* adam_hd_label(void);
+unsigned int adam_hd_blocks(void);
+int adam_hd_read_boot(unsigned char* data);
+void UpdateHD(byte Dev, int V);
+#ifdef __cplusplus
+}
+#endif
+
 #endif // ADNET_CORE_H

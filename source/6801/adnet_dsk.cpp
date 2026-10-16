@@ -1,5 +1,6 @@
 #include "adnet_core.h"
 #include "CORE/cv.h"
+#include "adam_disk_image.h"
 
 #include <cstring>
 #include <QDebug>
@@ -14,6 +15,11 @@
  *   - EOS  : UpdateDSK_EOS()
  *   - CP/M : UpdateDSK_CPM() + lokale CP/M drive/cache core
  *   - T-DOS: UpdateDSK_TDOS() + format-emulatie
+ *
+ * READ copies each valid sector to RAM during command execution. DELAY_IO
+ * delays only the DCB status: an unpolled read-ahead must never write to an
+ * obsolete buffer when a later command polls the device (Broderbund boot).
+ * Invalid sectors therefore cannot copy stale HoldingBuf bytes either.
  *
  * De publieke functienamen blijven identiek, zodat adnet_eos.cpp,
  * adnet_cpm.cpp en adnet_tdos.cpp gewoon kunnen blijven routeren.
@@ -133,12 +139,6 @@ void UpdateDSK_EOS(byte N,byte Dev,int V)
         {
             io_busy--;
             SetDCB(Dev,DCB_CMD_STAT,0x00);
-
-            if (io_busy == 0 && last_command_read)
-            {
-                last_command_read=0;
-                AdamFlushCache();
-            }
         }
         else
         {
@@ -176,19 +176,7 @@ void UpdateDSK_EOS(byte N,byte Dev,int V)
         LEN = GetDCBLen(Dev);
         LEN = LEN<0x0400? LEN:0x0400;
         SEC = GetDCBSector(Dev);
-        /*
-         * Only flush bytes that were actually read by this command.
-         *
-         * In particular, EOS software probes blocks beyond the physical end
-         * of a 160K disk.  The old code left last_command_read/savedLEN from
-         * the preceding successful command intact.  When such a probe failed,
-         * the completion poll consequently copied 1K of stale HoldingBuf data
-         * to the new destination (often address 0000), corrupting the running
-         * program.
-         */
-        savedBUF = BUF;
-        savedLEN = 0;
-        last_command_read = false;
+
         /* For each 512-byte sector... */
         for(I=0, SEC<<=1 ; I<LEN ; ++SEC, I+=0x200)
         {
@@ -208,14 +196,12 @@ void UpdateDSK_EOS(byte N,byte Dev,int V)
             {
                 for(J=0;J<K;++J,++BUF)
                 {
-                    HoldingBuf[I+J] = Data[J];
+                    RAM_Memory[BUF] = Data[J];
                 }
-                savedLEN += K;
-                last_command_read = true;
+
             }
             else
             {
-                last_command_read = false;
                 for(J=0;J<K;++J,++BUF)
                 {
                     Data[J] = RAM_Memory[BUF];
@@ -232,7 +218,6 @@ void UpdateDSK_EOS(byte N,byte Dev,int V)
         break;
     }
 }
-
 
 // -----------------------------------------------------------------------------
 // CP/M disk handler
@@ -363,14 +348,12 @@ void UpdateDSK_CPM(byte N, byte Dev, int V)
         break;
     }
 
-
     default:
         SetDCB(Dev, DCB_CMD_STAT, RSP_ACK + 0x0B);
         break;
     }
 
 }
-
 
 // -----------------------------------------------------------------------------
 // T-DOS disk handler
@@ -401,12 +384,12 @@ void UpdateDSK_TDOS(byte N, byte Dev, int V)
 
             // BUSY to Z80
             SetDCB(Dev, DCB_CMD_STAT, 0x00);
-            io_busy = 320;
+            io_busy = AdamDiskImage::sectorCount(Disks[N]);
 
             auto future =QtConcurrent::run([N, Dev]() {
                 if (Disks[N].Data) {
-                    for (int track = 0; track < 40; track++) {
-
+                    const int groups = AdamDiskImage::sectorCount(Disks[N]) / 8;
+                    for (int track = 0; track < groups; track++) {
                         g_diskSoundActive.store(true, std::memory_order_relaxed);
 
                         for (int s = 0; s < 8; s++) {
@@ -417,7 +400,7 @@ void UpdateDSK_TDOS(byte N, byte Dev, int V)
 
                          QThread::msleep(250);
 
-                        io_busy = (40 - track) * 8;
+                        io_busy = (groups - track - 1) * 8;
                     }
                 }
 
@@ -437,12 +420,6 @@ void UpdateDSK_TDOS(byte N, byte Dev, int V)
             if (io_busy > 0) io_busy--;
 
                     SetDCB(Dev, DCB_CMD_STAT, 0x00); // wait to AdamNet
-                    if (io_busy == 0) {
-                        if (last_command_read) {
-                            last_command_read = 0;
-                            AdamFlushCache();
-                        }
-                    }
                 } else {
                     SetDCB(Dev, DCB_CMD_STAT, RSP_STATUS);
                 }
@@ -481,9 +458,6 @@ void UpdateDSK_TDOS(byte N, byte Dev, int V)
         if (LEN > 0x0400) LEN = 0x0400;
         SEC = GetDCBSector(Dev);
 
-        savedBUF = BUF;
-        savedLEN = LEN;
-
         {
             word tcurrentBUF = BUF;
             for (I = 0, SEC <<= 1; I < LEN; ++SEC, I += 0x200) {
@@ -498,10 +472,8 @@ void UpdateDSK_TDOS(byte N, byte Dev, int V)
                 K = (I + 0x200 > LEN) ? (LEN - I) : 0x200;
 
                 if (V == 4) {
-                    last_command_read = true;
-                    for (J = 0; J < K; ++J) HoldingBuf[I + J] = Data[J];
+                    for (J = 0; J < K; ++J) RAM_Memory[(word)(tcurrentBUF + J)] = Data[J];
                 } else {
-                    last_command_read = false;
                     for (J = 0; J < K; ++J) {
                         // word-cast prevent > 64KB RAM
                         Data[J] = RAM_Memory[(word)(tcurrentBUF + J)];

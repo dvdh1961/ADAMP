@@ -12,6 +12,11 @@
  *   - CP/M : UpdateTAP_CPM()
  *   - T-DOS: UpdateTAP_TDOS()
  *
+ * READ copies each valid sector to RAM during command execution. DELAY_IO
+ * delays only the DCB status: an unpolled read-ahead must never write to an
+ * obsolete buffer when a later command polls the device (Broderbund boot).
+ * Invalid sectors therefore cannot copy stale HoldingBuf bytes either.
+ *
  * De publieke functienamen blijven identiek.
  */
 
@@ -33,11 +38,7 @@ void UpdateTAP_EOS(byte N,byte Dev,int V)
             io_busy--;
             if (io_busy == 0)
             {
-                // Net klaar: flush (indien READ) en direct READY zetten
-                if (last_command_read) {
-                    last_command_read = 0;
-                    AdamFlushCache();
-                }
+                // Transfer already completed by READ; only the status delay ends here.
                 SetDCB(Dev, DCB_CMD_STAT, RSP_STATUS);
             }
             else
@@ -71,7 +72,6 @@ void UpdateTAP_EOS(byte N,byte Dev,int V)
 
     case CMD_WRITE:
     case CMD_READ:
-        qDebug() << "TAPE CMD_READ buffer filled";
         io_show_status = (V==CMD_READ) ? 1:2;
         // TODO if (io_show_status == 2) adam_unsaved_data = 1;
         /* Busy status by default */
@@ -84,8 +84,6 @@ void UpdateTAP_EOS(byte N,byte Dev,int V)
         LEN = GetDCBLen(Dev);
         LEN = LEN<0x0400? LEN:0x0400;
         SEC = GetDCBSector(Dev);
-        savedBUF = BUF;
-        savedLEN = LEN;
 
         /* For each 512-byte sector... */
         for(I=0, SEC<<=1 ; I<LEN ; ++SEC, I+=0x200)
@@ -104,15 +102,13 @@ void UpdateTAP_EOS(byte N,byte Dev,int V)
             K = I+0x200>LEN? LEN-I:0x200;
             if(V==CMD_READ)
             {
-                last_command_read = true;
                 for(J=0;J<K;++J,++BUF)
                 {
-                    HoldingBuf[I+J] = Data[J];
+                    RAM_Memory[BUF] = Data[J];
                 }
             }
             else
             {
-                last_command_read = false;
                 for(J=0;J<K;++J,++BUF) Data[J] = RAM(BUF);
             }
             /* If disk access failed, stop here */
@@ -128,7 +124,6 @@ void UpdateTAP_EOS(byte N,byte Dev,int V)
         break;
     }
 }
-
 
 // -----------------------------------------------------------------------------
 // CP/M tape/DDP handler
@@ -152,11 +147,7 @@ void UpdateTAP_CPM(byte N, byte Dev, int V)
                 if (io_busy == 0)
                 {
                     active_tape = 0xFF;  // Reset
-                    // Net klaar: flush (indien READ) en direct READY zetten
-                    if (last_command_read) {
-                        last_command_read = 0;
-                        AdamFlushCache();
-                    }
+                    // Transfer already completed by READ; only the status delay ends here.
                     SetDCB(Dev, DCB_CMD_STAT, RSP_STATUS);
                 }
                 else
@@ -200,8 +191,6 @@ void UpdateTAP_CPM(byte N, byte Dev, int V)
             LEN = GetDCBLen(Dev);
             LEN = LEN<0x0400? LEN:0x0400;
             SEC = GetDCBSector(Dev);
-            savedBUF = BUF;
-            savedLEN = LEN;
 
             /* For each 512-byte sector... */
             for(I=0, SEC<<=1 ; I<LEN ; ++SEC, I+=0x200)
@@ -220,15 +209,13 @@ void UpdateTAP_CPM(byte N, byte Dev, int V)
                 K = I+0x200>LEN? LEN-I:0x200;
                 if(V==CMD_READ)
                 {
-                    last_command_read = true;
                     for(J=0;J<K;++J,++BUF)
                     {
-                        HoldingBuf[I+J] = Data[J];
+                        RAM_Memory[BUF] = Data[J];
                     }
                 }
                 else
                 {
-                    last_command_read = false;
                     for(J=0;J<K;++J,++BUF) Data[J] = RAM(BUF);
                 }
                 /* If disk access failed, stop here */
@@ -244,9 +231,7 @@ void UpdateTAP_CPM(byte N, byte Dev, int V)
             break;
         }
 
-
 }
-
 
 // -----------------------------------------------------------------------------
 // T-DOS tape/DDP handler
@@ -266,11 +251,7 @@ void UpdateTAP_TDOS(byte N,byte Dev,int V)
             io_busy--;
             if (io_busy == 0)
             {
-                // Net klaar: flush (indien READ) en direct READY zetten
-                if (last_command_read) {
-                    last_command_read = 0;
-                    AdamFlushCache();
-                }
+                // Transfer already completed by READ; only the status delay ends here.
                 SetDCB(Dev, DCB_CMD_STAT, RSP_STATUS);
             }
             else
@@ -317,8 +298,6 @@ void UpdateTAP_TDOS(byte N,byte Dev,int V)
         LEN = GetDCBLen(Dev);
         LEN = LEN<0x0400? LEN:0x0400;
         SEC = GetDCBSector(Dev);
-        savedBUF = BUF;
-        savedLEN = LEN;
 
         /* For each 512-byte sector... */
         for(I=0, SEC<<=1 ; I<LEN ; ++SEC, I+=0x200)
@@ -337,15 +316,13 @@ void UpdateTAP_TDOS(byte N,byte Dev,int V)
             K = I+0x200>LEN? LEN-I:0x200;
             if(V==CMD_READ)
             {
-                last_command_read = true;
                 for(J=0;J<K;++J,++BUF)
                 {
-                    HoldingBuf[I+J] = Data[J];
+                    RAM_Memory[BUF] = Data[J];
                 }
             }
             else
             {
-                last_command_read = false;
                 for(J=0;J<K;++J,++BUF) Data[J] = RAM(BUF);
             }
             /* If disk access failed, stop here */

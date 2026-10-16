@@ -24,6 +24,7 @@
 
 #include "6801/adnet_core.h"
 #include "CORE/cv.h"
+#include "CORE/z80.h"
 #include "screenwidget.h"
 #include "printwindow.h"
 #include "GRAPH/f18a.h"
@@ -99,6 +100,64 @@ static bool g_pending_keyboard_read = false;
 static byte g_pending_keyboard_dev = 0;
 static word g_pending_keyboard_buffer = 0;
 static word g_pending_keyboard_length = 0;
+
+// A command reply belongs to its DCB, not to the next queued host key.
+// Keep completed replies stable until the guest submits a new command.
+static byte g_keyboard_reply[256] = {0};
+static bool g_keyboard_reply_valid[256] = {false};
+static unsigned g_keyboard_trace_lines = 0;
+static bool keyboard_trace_enabled(void)
+{
+    // Bound diagnostics so tight BIOS polling cannot flood the GUI logger.
+    if (g_keyboard_trace_lines >= 2000)
+        return false;
+    ++g_keyboard_trace_lines;
+    return true;
+}
+
+
+static void set_keyboard_reply(byte dev, byte reply)
+{
+    g_keyboard_reply[dev] = reply;
+    g_keyboard_reply_valid[dev] = true;
+    SetDCB(dev, DCB_CMD_STAT, reply);
+}
+
+// Diagnostic version 4: watch actual character deliveries, not idle polls.
+// Logging remains readable even after the bounded boot diagnostics expire.
+struct KeyboardDeliveryWatch {
+    bool active;
+    word address;
+    byte key;
+    unsigned sequence;
+};
+static KeyboardDeliveryWatch g_keyboard_watches[16] = {};
+static unsigned g_keyboard_delivery_sequence = 0;
+static unsigned g_keyboard_watch_count = 0;
+static byte g_keyboard_last_command[256] = {};
+
+static void watch_keyboard_delivery(byte dev, word address, byte key)
+{
+    for (auto &watch : g_keyboard_watches) {
+        if (watch.active && watch.address == address) {
+            qDebug() << "[KBD4] replaced before observed buffer read; seq="
+                     << watch.sequence << "address=" << Qt::hex << int(address)
+                     << "previous-key=" << int(watch.key) << "next-key=" << int(key);
+            watch.active = false;
+            --g_keyboard_watch_count;
+        }
+    }
+    const unsigned sequence = ++g_keyboard_delivery_sequence;
+    auto &watch = g_keyboard_watches[sequence % 16];
+    if (!watch.active)
+        ++g_keyboard_watch_count;
+    watch = {true, address, key, sequence};
+    qDebug() << "[KBD4] DELIVER seq=" << sequence
+             << "DCB=" << int(dev) << "address=" << Qt::hex << int(address)
+             << "key=" << int(key) << "PC=" << int(Z80.pc.w.l)
+             << "port60=" << int(coleco_port60) << "RAMPage=" << int(RAMPage)
+             << "requested=" << Qt::dec << int(GetDCBLen(dev));
+}
 
 static bool complete_pending_keyboard_read(void);
 
@@ -219,7 +278,8 @@ void adamnet_queue_key(uint8_t key_code)
         KBDStatus = (byte)(RSP_STATUS | 0x0C);
         // 2. STUUR NAAR DE Z80 RAM (Cruciaal voor games!)
         // Device 0 is het keyboard. Schrijf de status direct in de DCB.
-        SetDCB(1, DCB_CMD_STAT, KBDStatus);
+        if (!g_keyboard_reply_valid[1] && (!m_cpm_enabled || m_tdos_enabled))
+            SetDCB(1, DCB_CMD_STAT, KBDStatus);
         // 3. ZET DE I/O VLAG (Voor poort 0xE0 polling)
         // AN_STAT_DIF (0x01) betekent: "Er zit data in de Host Adapter voor de CPU"
        // PCBTable[0] |= 0x01;
@@ -227,7 +287,10 @@ void adamnet_queue_key(uint8_t key_code)
         /* If EOS already has a blocking READ open, deliver this key directly
          * through that DCB instead of requiring a second READ command.
          */
-        complete_pending_keyboard_read();
+        // CP/M may replace a speculative CONST READ before CONIN uses it.
+        // Do not consume a host key until the guest polls or issues a READ.
+        if (!m_cpm_enabled || m_tdos_enabled)
+            complete_pending_keyboard_read();
     }
 }
 
@@ -273,11 +336,17 @@ if (Key & 0x80) {
     }
 }
 
+qDebug() << "[KBD4] QUEUED key=" << Qt::hex << int(byte(Key))
+         << "pending=" << g_pending_keyboard_read
+         << "DCB=" << int(g_pending_keyboard_dev)
+         << "last-command=" << int(g_keyboard_last_command[g_pending_keyboard_dev]);
+
 // De KBDStatus moet worden bijgewerkt zodra de ASCII FIFO data bevat.
 KBDStatus = (byte)(RSP_STATUS | 0x0C);
 
-/* A key press can complete a READ that was started before the key existed. */
-if (!(Key & 0x80))
+/* EOS/TDOS complete blocking reads asynchronously. CP/M waits for the
+ * guest's DCB poll so an obsolete speculative READ cannot swallow the key. */
+if (!(Key & 0x80) && (!m_cpm_enabled || m_tdos_enabled))
     complete_pending_keyboard_read();
 }
 //--------------------------------------------------------------------------------------
@@ -328,6 +397,8 @@ byte GetKBD()
         return sc;
     }
     const byte asciiKey = dequeue_ascii_key();
+    if (asciiKey && keyboard_trace_enabled())
+        qDebug() << "[KBD] ASCII consumed=" << Qt::hex << int(asciiKey);
     if (asciiKey==0x1B) // Escape gedrukt
         {
         g_prn_in_wp = true; // Printer in wordprocessor
@@ -360,6 +431,7 @@ static bool complete_pending_keyboard_read(void)
 
     while (transferred < requested && (key = GetKBD()) != 0) {
         RAM_Memory[address] = key;
+        watch_keyboard_delivery(g_pending_keyboard_dev, address, key);
         address = (address + 1) & 0xFFFF;
         ++transferred;
     }
@@ -368,7 +440,7 @@ static bool complete_pending_keyboard_read(void)
     g_pending_keyboard_read = false;
     g_pending_keyboard_length = 0;
     KBDStatus = byte(RSP_STATUS | (transferred < requested ? 0x0C : 0x00));
-    SetDCB(device, DCB_CMD_STAT, KBDStatus);
+    set_keyboard_reply(device, KBDStatus);
 
     /* Notify EOS through ADAMnet port E0 that the asynchronous READ changed
      * from BUSY to complete. adamnet_read_io() acknowledges and clears bit 0.
@@ -386,8 +458,23 @@ static bool complete_pending_keyboard_read(void)
 
 void AdamNetKbdDiagnosticMemoryRead(word Address)
 {
-    /* Kept as a no-op ABI hook; the temporary R86.5 trace is retired. */
-    (void)Address;
+    if (!g_keyboard_watch_count || !m_cpm_enabled || m_tdos_enabled)
+        return;
+    for (auto &watch : g_keyboard_watches) {
+        if (!watch.active || watch.address != Address)
+            continue;
+        watch.active = false;
+        --g_keyboard_watch_count;
+        const byte *mapped = MemoryMap[Address >> 13] + (Address & 0x1FFF);
+        qDebug() << "[KBD4] BUFFER READ seq=" << watch.sequence
+                 << "address=" << Qt::hex << int(Address)
+                 << "expected=" << int(watch.key)
+                 << "base-value=" << int(RAM_Memory[Address])
+                 << "mapped-value=" << int(*mapped)
+                 << "base-bank=" << (mapped == RAM_Memory + Address)
+                 << "PC=" << int(Z80.pc.w.l)
+                 << "port60=" << int(coleco_port60) << "RAMPage=" << int(RAMPage);
+    }
 }
 
 void ResetKBDPendingRead(void)
@@ -399,6 +486,12 @@ void ResetKBDPendingRead(void)
     g_ascii_key_buffer_head = 0;
     g_ascii_key_buffer_tail = 0;
     LastKey = 0;
+    std::memset(g_keyboard_reply_valid, 0, sizeof(g_keyboard_reply_valid));
+    g_keyboard_trace_lines = 0;
+    g_keyboard_delivery_sequence = 0;
+    g_keyboard_watch_count = 0;
+    std::memset(g_keyboard_watches, 0, sizeof(g_keyboard_watches));
+    std::memset(g_keyboard_last_command, 0, sizeof(g_keyboard_last_command));
 }
 //--------------------------------------------------------------------------------------
 /** UpdateKBD() **********************************************/
@@ -406,6 +499,28 @@ void UpdateKBD(byte Dev,int V)
 {
     int J,N;
     word A;
+
+    if (V >= 0) {
+        g_keyboard_last_command[Dev] = byte(V);
+        g_keyboard_reply_valid[Dev] = false;
+        if ((V != CMD_STATUS || ascii_key_available() || adamnet_is_key_available())
+                && keyboard_trace_enabled())
+        qDebug() << "[KBD] poll-delivery=v4 command; DCB=" << int(Dev)
+                 << "cmd=" << Qt::hex << V
+                 << "buffer=" << int(GetDCBBase(Dev))
+                 << "requested=" << Qt::dec << int(GetDCBLen(Dev))
+                 << "ascii-ready=" << ascii_key_available()
+                 << "scancode-ready=" << adamnet_is_key_available();
+    }
+
+    // A new command on this DCB supersedes its previous blocking READ.
+    // STATUS must never leave an old buffer armed: the next host key would
+    // otherwise be consumed by that obsolete READ before the new READ sees it.
+    // Polling (-1) is not a new command and must keep the blocking READ alive.
+    if (V >= 0 && g_pending_keyboard_read && g_pending_keyboard_dev == Dev) {
+        g_pending_keyboard_read = false;
+        g_pending_keyboard_length = 0;
+    }
 
     switch(V)
     {
@@ -415,7 +530,10 @@ void UpdateKBD(byte Dev,int V)
                 SetDCB(Dev, DCB_CMD_STAT, 0x00);
             break;
         }
-        SetDCB(Dev,DCB_CMD_STAT,KBDStatus);
+        if (g_keyboard_reply_valid[Dev])
+            SetDCB(Dev, DCB_CMD_STAT, g_keyboard_reply[Dev]);
+        else
+            SetDCB(Dev, DCB_CMD_STAT, KBDStatus);
         break;
     case CMD_STATUS:
     case CMD_SOFT_RESET:
@@ -433,13 +551,14 @@ void UpdateKBD(byte Dev,int V)
 
         ReportDevice(Dev,0x0001,0);
 
-        // KBDStatus = status + "data available" indien ready
+        // STATUS is a live readiness query; only completed READ/WRITE replies
+        // are latched. Programs may keep polling this query for a new key.
         KBDStatus = (byte)(RSP_STATUS | (ready ? 0x0C : 0x00));
-        SetDCB(Dev,DCB_CMD_STAT, KBDStatus);
+        SetDCB(Dev, DCB_CMD_STAT, KBDStatus);
     }
     break;
     case CMD_WRITE:
-        SetDCB(Dev,DCB_CMD_STAT,RSP_ACK+0x0B);
+        set_keyboard_reply(Dev, RSP_ACK+0x0B);
         KBDStatus = RSP_STATUS;
         break;
     case CMD_READ:
@@ -468,9 +587,15 @@ void UpdateKBD(byte Dev,int V)
         for(J=0 ; (J<N) && (V=GetKBD()) ; ++J, A=(A+1)&0xFFFF)
         {
             RAM_Memory[A] = V;
+            watch_keyboard_delivery(Dev, A, byte(V));
         }
         KBDStatus = RSP_STATUS+(J<N? 0x0C:0x00);
-        SetDCB(Dev, DCB_CMD_STAT, KBDStatus);
+        set_keyboard_reply(Dev, KBDStatus);
+        if (keyboard_trace_enabled())
+        qDebug() << "[KBD] READ completed; DCB=" << int(Dev)
+                 << "buffer=" << Qt::hex << int(GetDCBBase(Dev))
+                 << "requested=" << Qt::dec << N << "bytes=" << J
+                 << "reply=" << Qt::hex << int(KBDStatus);
         break;
     }
 }

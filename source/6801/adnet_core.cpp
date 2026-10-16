@@ -23,11 +23,14 @@
 
 #include "6801/adnet_core.h"
 #include "6801/adnet_mcu2.h"
+#include "6801/adam_fujinet_pc.h"
 #include "6801/adnet_mcu2_fujinet.h"
 #include "CORE/cv.h"
+#include "CORE/z80.h"
 #include <cstdio>
 #include <cstdarg>
 #include <atomic>
+#include "6801/adam_disk_image.h"
 
 #define RAM(A)  (RAM_Memory[A])
 
@@ -59,21 +62,6 @@ byte io_show_status;
 byte KBDStatus, LastKey, DiskID;
 word savedBUF, savedLEN;
 
-void adamnet_eos_trace(const char* format, ...)
-{
-    static FILE* trace = nullptr;
-    if (!trace)
-        trace = std::fopen("ADAMP_EOS_TRACE.log", "w");
-    if (!trace)
-        return;
-
-    va_list args;
-    va_start(args, format);
-    std::vfprintf(trace, format, args);
-    va_end(args);
-    std::fputc('\n', trace);
-    std::fflush(trace);
-}
 
 // --- AdamNet Hooks (aangeroepen door coleco.cpp) ---
 //--------------------------------------------------------------------------------------
@@ -248,8 +236,6 @@ byte ChangeTape(byte N,const char *FileName)
 // Name="" was given. Returns 1 on success or 0 on failure.
 byte ChangeDisk(byte N,const char *FileName)
 {
-    byte *P;
-
     /* We only have MAX_DISKS drives */
     if(N>=MAX_DISKS) return(0);
 
@@ -257,15 +243,14 @@ byte ChangeDisk(byte N,const char *FileName)
     if(!FileName) { EjectFDI(&Disks[N]);return(1); }
 
     /* If FileName not empty, try loading disk image */
-    if(*FileName && LoadFDI(&Disks[N],FileName,FMT_ADMDSK))
+    if(*FileName && AdamDiskImage::load(Disks[N],FileName))
     {
         /* Done */
         return(1);
     }
 
-    /* If no existing file, create a new 160kB disk image */
-    P = FormatFDI(&Disks[N],FMT_ADMDSK);
-    return(!!P);
+    // Never silently replace an unreadable image with a blank disk.
+    return(0);
 }
 //--------------------------------------------------------------------------------------
 extern "C" unsigned char adamnet_read_io(int Address)
@@ -344,7 +329,6 @@ void WritePCB_EOS(word A,byte V)
     /* If writing a PCB command... */
     if(A==PCB_CMD_STAT)
     {
-        adamnet_eos_trace("PCB command=%02X pcb=%04X maxdcb=%u", V, PCBAddr, GetMaxDCB());
         switch(V)
         {
         case CMD_PCB_SYNC1: /* Sync Z80 */
@@ -385,7 +369,10 @@ void WritePCB_EOS(word A,byte V)
             ResetPCB_EOS();
             break;
         default:
-            memset(PCBTable,0,0x10000);
+            // CONFIG briefly reuses the old PCB area as stack/workspace
+            // before initializing and relocating it. Unknown bytes are not a
+            // bus reset; retain the hooks so the following SYNC/SNA is visible.
+            if (!AdamFujiNetPC::enabled()) memset(PCBTable,0,0x10000);
             break;
         }
     }
@@ -404,6 +391,7 @@ void WritePCB_EOS(word A,byte V)
 void ResetPCB_EOS(void)
 {
     mcu2_disk_reset();
+    fujinet_pc_reset();
     m_cpm_selected = false;
 
     /*
@@ -427,6 +415,7 @@ void ResetPCB_EOS(void)
     /* Set starting PCB address */
     PCBAddr = 0x0000;
     MovePCB(0xFEC0,15);
+    if(adam_hd_is_mounted())ReportDevice(0x0b,0x0400,1);
 
     /* Reset keyboard state */
     ResetKBDPendingRead();
@@ -451,12 +440,11 @@ void UpdateDCB_EOS(byte Dev,int V)
     /* Compute device ID */
     DevID = (GetDCB(Dev,DCB_DEV_NUM)<<4) + (GetDCB(Dev,DCB_ADD_CODE)&0x0F);
 
-    if (V > 0)
-        adamnet_eos_trace("DCB dev=%u devid=%02X command=%02X", Dev, DevID, V);
-
     /* Depending on the device ID... */
+    if (AdamFujiNetPC::forwards(DevID)) { UpdateFUJINET_PC(Dev,V); return; }
     switch(DevID)
     {
+    case 0x0B: UpdateHD(Dev,V);break;
     case 0x01: UpdateKBD(Dev,V);break;
     case 0x02: UpdatePRN(Dev,V);break;
     case 0x04:
@@ -547,11 +535,13 @@ void WritePCB_CPM(word A, byte V)
 void ResetPCB_CPM(void)
 {
     mcu2_disk_reset();
+    fujinet_pc_reset();
     ResetKBDPendingRead();
     m_cpm_selected = true;
     std::memset(PCBTable, 0, 0x10000);
     PCBAddr = 0x0000;
     MovePCB(0xFEC0, 15);
+    if(adam_hd_is_mounted())ReportDevice(0x0b,0x0400,1);
 
     KBDStatus = (byte)(RSP_STATUS | 0x00);
     LastKey = 0x00;
@@ -583,6 +573,8 @@ void AdamFlushCache_CPM(void)
 
         const byte DevID = (GetDCB(Dev, DCB_DEV_NUM) << 4) + (GetDCB(Dev, DCB_ADD_CODE) & 0x0F);
 
+        if (AdamFujiNetPC::forwards(DevID)) { UpdateFUJINET_PC(Dev,V); return; }
+
         /* Some ADAM CP/M loaders build a second, temporary block DCB whose
          * device-number/add-code fields are workspace values rather than the
          * normal 00/04 D5 identity.  The local software drive historically
@@ -596,7 +588,11 @@ void AdamFlushCache_CPM(void)
                                         : (V & 0x7F));
         const bool knownDevice = DevID == 0x01 || DevID == 0x02
                               || DevID == 0x04 || DevID == 0x05
-                              || DevID == 0x08 || DevID == 0x18;
+                              || DevID == 0x08 || DevID == 0x18 || DevID == 0x0B;
+        if (!knownDevice && AdamFujiNetPC::enabled() && GetDCBLen(Dev)==0x0400
+            && (V<0 || command==CMD_READ)) {
+            UpdateFUJINET_PC_CPM_D5(Dev,V); return;
+        }
         const bool physicalCpmD5Block = !knownDevice
                                      && mcu2_block_device_is_enabled(0x04)
                                      && GetDCBLen(Dev) == 0x0400
@@ -631,7 +627,8 @@ void AdamFlushCache_CPM(void)
 
         switch (DevID)
         {
-            case 0x01: UpdateKBD(Dev,V);break;
+            case 0x0B: UpdateHD(Dev,V);break;
+    case 0x01: UpdateKBD(Dev,V);break;
             case 0x02: UpdatePRN(Dev,V);break;
             case 0x04:
                 if (mcu2_block_device_is_enabled(DevID)) {
@@ -747,6 +744,7 @@ void WritePCB_TDOS(word A,byte V)
 void ResetPCB_TDOS(void)
 {
     mcu2_disk_reset();
+    fujinet_pc_reset();
     ResetKBDPendingRead();
     m_cpm_selected = false;
     /* PCB/DCB not mapped yet */
@@ -777,8 +775,10 @@ void UpdateDCB_TDOS(byte Dev, int V)
 
 
     DevID = (GetDCB(Dev,DCB_DEV_NUM)<<4) + (GetDCB(Dev,DCB_ADD_CODE)&0x0F);
+    if (AdamFujiNetPC::forwards(DevID)) { UpdateFUJINET_PC(Dev,V); return; }
     switch(DevID)
     {
+    case 0x0B: UpdateHD(Dev,V);break;
     case 0x01: UpdateKBD(Dev,V);break;
     case 0x02: UpdatePRN(Dev,V);break;
     case 0x04:
@@ -806,3 +806,88 @@ void UpdateDCB_TDOS(byte Dev, int V)
     }
 }
 //--------------------------------------------------------------------------------------
+
+// H: uses device 0B in ADAM CP/M BIOS v72.
+#include "adam_harddisk.h"
+static AdamHardDiskImage s_hardDisk;
+static std::string s_hdError, s_hdLabel;
+int adam_hd_open(const char* path) { s_hdError.clear(); return s_hardDisk.open(path,s_hdError); }
+int adam_hd_create(const char* path,const char* source) { s_hdError.clear(); return AdamHardDiskImage::create(path,source,s_hdError); }
+int adam_hd_close(void) { return s_hardDisk.close(); }
+int adam_hd_flush(void) { return s_hardDisk.flush(); }
+int adam_hd_is_mounted(void) { return s_hardDisk.mounted(); }
+int adam_hd_is_bootable(void) { return s_hardDisk.bootable(); }
+const char* adam_hd_error(void) { return s_hdError.c_str(); }
+const char* adam_hd_label(void) { s_hdLabel=s_hardDisk.label(); return s_hdLabel.c_str(); }
+unsigned int adam_hd_blocks(void) { return s_hardDisk.blocks(); }
+int adam_hd_read_boot(unsigned char* data) {
+    const bool ok = s_hardDisk.read(0,data);
+    if (ok) g_diskSoundActive.store(true, std::memory_order_relaxed);
+    return ok;
+}
+void UpdateHD(byte Dev,int V)
+{
+    // Diagnostics only: preserve the existing synchronous HD behaviour.
+    static unsigned traceLines = 0;
+    static unsigned polls[256] = {};
+    if (V < 0) {
+        const unsigned count = ++polls[Dev];
+        if ((count == 1 || count == 1000 || count == 1000000) && traceLines < 5000) {
+            ++traceLines;
+            qDebug() << "[HDTRACE] POLL DCB=" << int(Dev)
+                     << "reply=" << Qt::hex << int(GetDCB(Dev, DCB_CMD_STAT))
+                     << "PC=" << int(Z80.pc.w.l) << "count=" << Qt::dec << count;
+        }
+        return; // commands complete synchronously; preserve reply
+    }
+    polls[Dev] = 0;
+    const bool trace = traceLines < 5000;
+    if (trace) {
+        ++traceLines;
+        qDebug() << "[HDTRACE] COMMAND DCB=" << int(Dev)
+                 << "cmd=" << Qt::hex << V << "PC=" << int(Z80.pc.w.l)
+                 << "buffer=" << int(GetDCBBase(Dev))
+                 << "port60=" << int(coleco_port60)
+                 << "length=" << Qt::dec << int(GetDCBLen(Dev))
+                 << "block=" << GetDCBSector(Dev);
+    }
+    V &= 0x7f;
+    SetDCB(Dev,DCB_NODE_TYPE,(GetDCB(Dev,DCB_NODE_TYPE)&0xf0) | (s_hardDisk.mounted()?0:3));
+    if(V==CMD_STATUS) {ReportDevice(Dev,0x0400,1);SetDCB(Dev,DCB_CMD_STAT,s_hardDisk.mounted()?RSP_STATUS:RSP_TIMEOUT);return;}
+    if(V==CMD_RESET || V==CMD_SOFT_RESET) {SetDCB(Dev,DCB_CMD_STAT,s_hardDisk.mounted()?RSP_STATUS:RSP_TIMEOUT);return;}
+    if(V!=CMD_READ && V!=CMD_WRITE) {SetDCB(Dev,DCB_CMD_STAT,RSP_ACK+0x0b);return;}
+    const word buffer=GetDCBBase(Dev);
+    const unsigned len=GetDCBLen(Dev),block=GetDCBSector(Dev);
+    unsigned char data[1024];
+    if(!len || len>sizeof(data)) {
+        SetDCB(Dev,DCB_CMD_STAT,RSP_TIMEOUT);
+        if (trace) qDebug() << "[HDTRACE] rejected length=" << len
+                           << "reply=" << Qt::hex << int(RSP_TIMEOUT);
+        return;
+    }
+    // Use the same activity sound trigger as the floppy drives.
+    if (s_hardDisk.mounted())
+        g_diskSoundActive.store(true, std::memory_order_relaxed);
+    bool ok;
+    if(V==CMD_READ) {
+        ok=s_hardDisk.read(block,data,len);
+        if(ok)for(unsigned i=0;i<len;++i) {
+            const word address=word(buffer+i);
+            if(!PCBTable[address]) RAM_Memory[address]=data[i];
+        }
+    } else {
+        for(unsigned i=0;i<len;++i)data[i]=RAM_Memory[word(buffer+i)];
+        ok=s_hardDisk.write(block,data,len);
+    }
+    SetDCB(Dev,DCB_CMD_STAT,ok?RSP_STATUS:RSP_TIMEOUT);
+    if(!ok)SetDCB(Dev,DCB_NODE_TYPE,GetDCB(Dev,DCB_NODE_TYPE)|2);
+    io_show_status=V==CMD_READ?1:2;
+    if (trace) {
+        unsigned checksum = 2166136261u;
+        if (ok) for (unsigned i=0; i<len; ++i) checksum = (checksum ^ data[i]) * 16777619u;
+        qDebug() << "[HDTRACE] COMPLETE ok=" << ok
+                 << "reply=" << Qt::hex << int(GetDCB(Dev,DCB_CMD_STAT))
+                 << "data-checksum=" << checksum
+                 << "node=" << int(GetDCB(Dev,DCB_NODE_TYPE));
+    }
+}

@@ -26,6 +26,7 @@
 #include <cstring>
 #include <QDebug>
 #include <QFile>
+#include <QSaveFile>
 #include <QIODevice>
 #include <QFileInfo>
 #include <QDir>
@@ -35,6 +36,9 @@
 #include "cv.h"
 #include "cvbank.h"
 #include "z80.h"
+#include "adam_phantom_clock.h"
+
+static AdamPhantomClock s_adamPhantomClock;
 #include "psg_bridge.h"
 #include "CORE/c24xx.h"
 #include "6801/adnet_core.h"
@@ -45,6 +49,8 @@
 #include "BIOS/bios_coleco.h"
 #include "BIOS/bios_adam.h"
 #include "6801/fdidisk.h"
+#include "6801/adam_disk_image.h"
+#include "6801/adam_fujinet_pc.h"
 #include <errno.h>
 #include <string.h>
 #include "input_bridge.h"
@@ -84,10 +90,12 @@ static quint16 hardwarePsgCaller()
 
 static BYTE filterHardwareEosMenuBuzz(BYTE data)
 {
-    if (!mcu2_disk_is_enabled())
+    if (!emulator || emulator->currentMachineType != MACHINEADAM)
+        return data;
+    if (!mcu2_disk_is_enabled() && !AdamFujiNetPC::eosSoundSessionActive())
         return data;
 
-    /* The physical FujiNet menu continuously asks the EOS sound manager to
+    /* The FujiNet CONFIG menu continuously asks the EOS sound manager to
      * alternate channel-1 volume B7/BA at roughly 60 Hz. On a real ADAM this
      * is not heard, but feeding those writes into the emulated SN76489 creates
      * the reported nervous buzz. Suppress only those two volume bytes from
@@ -105,179 +113,7 @@ static BYTE filterHardwareEosMenuBuzz(BYTE data)
     return data;
 }
 
-static void adamp_vdp_trace(const char *event, unsigned value)
-{
-    static QFile traceFile(
-        QCoreApplication::applicationDirPath() + "/ADAMP_VDP_TRACE.log");
-    static unsigned count = 0;
-    if (count++ >= 250000) return;
 
-    if (!traceFile.isOpen())
-    {
-        if (!traceFile.open(QIODevice::WriteOnly |
-                            QIODevice::Text |
-                            QIODevice::Truncate))
-            return;
-    }
-
-    char line[512];
-    const int lineLength = std::snprintf(
-        line, sizeof(line),
-        "%s pc=%04X val=%02X key=%u addr=%04X mode=%u sr=%02X "
-        "r0=%02X r1=%02X r2=%02X r3=%02X r4=%02X r5=%02X r6=%02X r7=%02X\n",
-        event, (unsigned)Z80.pc.w.l, value & 0xFFu,
-        (unsigned)tms.VKey, (unsigned)tms.VAddr, (unsigned)tms.Mode,
-        (unsigned)tms.SR,
-        tms.VR[0], tms.VR[1], tms.VR[2], tms.VR[3],
-        tms.VR[4], tms.VR[5], tms.VR[6], tms.VR[7]);
-
-    if (lineLength > 0)
-        traceFile.write(line, lineLength < (int)sizeof(line) ? lineLength : (int)sizeof(line) - 1);
-    traceFile.flush();
-}
-
-// Diagnostic snapshots, refreshed once per second while the TMS VDP is active.
-// The files are written next to the emulator executable.
-static void adamp_dump_machine_state()
-{
-    const QString base = QCoreApplication::applicationDirPath();
-
-    QFile vramFile(base + "/ADAMP_VRAM.bin");
-    if (vramFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
-    {
-        vramFile.write(reinterpret_cast<const char *>(VDP_Memory), 0x4000);
-        vramFile.close();
-    }
-
-    QFile ramFile(base + "/ADAMP_RAM.bin");
-    if (ramFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
-    {
-        // Include the 64 KiB intrinsic RAM and both 64 KiB expansion banks.
-        ramFile.write(reinterpret_cast<const char *>(RAM_Memory),
-                      MAX_RAM_SIZE * 1024);
-        ramFile.close();
-    }
-
-    // Snapshot exactly what the Z80 sees, without using coleco_ReadByte()
-    // (which has AdamNet read side effects at PCB addresses).
-    QFile activeFile(base + "/ADAMP_ACTIVE_RAM.bin");
-    if (activeFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
-    {
-        for (unsigned page = 0; page < 8; ++page)
-            activeFile.write(
-                reinterpret_cast<const char *>(MemoryMap[page]), 0x2000);
-        activeFile.close();
-    }
-
-    QFile stateFile(base + "/ADAMP_STATE.txt");
-    if (stateFile.open(QIODevice::WriteOnly |
-                       QIODevice::Text |
-                       QIODevice::Truncate))
-    {
-        char state[1024];
-        const int length = std::snprintf(
-            state, sizeof(state),
-            "PC=%04X VDP_ADDR=%04X VDP_KEY=%u MODE=%u SR=%02X CUR_LINE=%u\n"
-            "PORT20=%02X PORT60=%02X RAM_PAGE=%u RAM_PAGES=%u\n"
-            "VR0=%02X VR1=%02X VR2=%02X VR3=%02X VR4=%02X VR5=%02X VR6=%02X VR7=%02X\n"
-            "NAME=%04X PATTERN=%04X COLOR=%04X SPR_ATTR=%04X SPR_PATTERN=%04X\n"
-            "MAP0=%p MAP1=%p MAP2=%p MAP3=%p MAP4=%p MAP5=%p MAP6=%p MAP7=%p\n",
-            (unsigned)Z80.pc.w.l, (unsigned)tms.VAddr, (unsigned)tms.VKey,
-            (unsigned)tms.Mode, (unsigned)tms.SR, (unsigned)tms.CurLine,
-            (unsigned)coleco_port20, (unsigned)coleco_port60,
-            (unsigned)RAMPage, (unsigned)RAMPages,
-            tms.VR[0], tms.VR[1], tms.VR[2], tms.VR[3],
-            tms.VR[4], tms.VR[5], tms.VR[6], tms.VR[7],
-            (unsigned)(tms.ChrTab - VDP_Memory),
-            (unsigned)(tms.ChrGen - VDP_Memory),
-            (unsigned)(tms.ColTab - VDP_Memory),
-            (unsigned)(tms.SprTab - VDP_Memory),
-            (unsigned)(tms.SprGen - VDP_Memory),
-            (void *)MemoryMap[0], (void *)MemoryMap[1],
-            (void *)MemoryMap[2], (void *)MemoryMap[3],
-            (void *)MemoryMap[4], (void *)MemoryMap[5],
-            (void *)MemoryMap[6], (void *)MemoryMap[7]);
-
-        if (length > 0)
-            stateFile.write(state,
-                length < (int)sizeof(state) ? length : (int)sizeof(state) - 1);
-        stateFile.close();
-    }
-}
-
-struct AdampCpuSample
-{
-    unsigned short pc;
-    unsigned short sp;
-    unsigned char bytes[4];
-};
-
-// Preserve the instruction history immediately before Recipe/SmartFILER
-// unexpectedly enters the directory buffer at page zero.
-static void adamp_cpu_crash_trace()
-{
-    static AdampCpuSample history[256];
-    static unsigned historyPos = 0;
-    static unsigned historyCount = 0;
-    static int postTrigger = -1;
-    static QFile traceFile;
-
-    AdampCpuSample sample;
-    sample.pc = Z80.pc.w.l;
-    sample.sp = Z80.sp.w.l;
-    for (unsigned i = 0; i < 4; ++i)
-    {
-        const unsigned address = (sample.pc + i) & 0xFFFFu;
-        sample.bytes[i] = *(MemoryMap[address >> 13] + (address & 0x1FFF));
-    }
-
-    history[historyPos] = sample;
-    historyPos = (historyPos + 1u) & 255u;
-    if (historyCount < 256u) ++historyCount;
-
-    // Restrict the trigger to the final Graphics-II application screen.
-    if (postTrigger < 0 &&
-        tms.Mode == 2 && tms.VR[1] == 0x48 && sample.pc < 0x0100)
-    {
-        traceFile.setFileName(
-            QCoreApplication::applicationDirPath() + "/ADAMP_CPU_CRASH.log");
-        if (traceFile.open(QIODevice::WriteOnly |
-                           QIODevice::Text |
-                           QIODevice::Truncate))
-        {
-            const unsigned start = (historyPos + 256u - historyCount) & 255u;
-            for (unsigned n = 0; n < historyCount; ++n)
-            {
-                const AdampCpuSample &s = history[(start + n) & 255u];
-                char line[96];
-                const int len = std::snprintf(
-                    line, sizeof(line),
-                    "%s PC=%04X SP=%04X BYTES=%02X %02X %02X %02X\n",
-                    (n + 1u == historyCount) ? "TRIGGER" : "BEFORE ",
-                    (unsigned)s.pc, (unsigned)s.sp,
-                    s.bytes[0], s.bytes[1], s.bytes[2], s.bytes[3]);
-                if (len > 0) traceFile.write(line, len);
-            }
-            traceFile.flush();
-            postTrigger = 512;
-        }
-    }
-    else if (postTrigger > 0 && traceFile.isOpen())
-    {
-        char line[96];
-        const int len = std::snprintf(
-            line, sizeof(line),
-            "AFTER   PC=%04X SP=%04X BYTES=%02X %02X %02X %02X\n",
-            (unsigned)sample.pc, (unsigned)sample.sp,
-            sample.bytes[0], sample.bytes[1], sample.bytes[2], sample.bytes[3]);
-        if (len > 0) traceFile.write(line, len);
-        if (--postTrigger == 0)
-        {
-            traceFile.flush();
-            traceFile.close();
-        }
-    }
-}
 
 int breakpoints[MAX_BREAKPOINTS];
 int breakpoint_count = 0;
@@ -494,9 +330,8 @@ static inline void vdp_writectrl_active(BYTE value)
         return;
     }
 
-    adamp_vdp_trace("CTRL-B", value);
     tms9918_writectrl(value);
-    adamp_vdp_trace("CTRL-A", value);
+
 }
 
 static inline BYTE vdp_readdata_active(void)
@@ -537,7 +372,7 @@ static inline BYTE vdp_readctrl_active(void)
     }
 
     value = tms9918_readctrl();
-    adamp_vdp_trace("STATUS", value);
+
 
     /*
      * Reading VDP status clears the VDP interrupt latch.
@@ -1144,6 +979,8 @@ static void coleco_apply_dka2018_mapping()
 //---------------------------------------------------------------------------
 void coleco_reset(void)
 {
+    AdamFujiNetPC::resetEosSoundSession();
+    s_adamPhantomClock.resetBus();
 #if DKA_TRACE_BANKS
     g_dkaBankTraceCount = 0;
 #endif
@@ -1381,6 +1218,7 @@ void coleco_reset(void)
 //---------------------------------------------------------------------------
 void coleco_reset_and_restart_bios()
 {
+    AdamFujiNetPC::resetEosSoundSession();
     // --------------------------------------------------------------------
     // 1. Hardware / machine memory mapping
     // --------------------------------------------------------------------
@@ -1526,6 +1364,7 @@ void coleco_hide_current_vdp_sprites(void)
 //---------------------------------------------------------------------------
 void coleco_hardreset(void)
 {
+    AdamFujiNetPC::resetEosSoundSession();
     if (emulator->romCartridgeType == ROMCARTRIDGEOPCODE) banking_supergamecart_saveflash();
 
     // 1) Maak de cartbuffer “open bus”: 0xFF
@@ -2080,7 +1919,10 @@ BYTE coleco_ReadByte(int Address)
     // ------------------------------------------------------------
     // Normale memory mapped read
     // ------------------------------------------------------------
-    return *(MemoryMap[Address >> 13] + (Address & 0x1FFF));
+    BYTE value = *(MemoryMap[Address >> 13] + (Address & 0x1FFF));
+    if (emulator && emulator->currentMachineType == MACHINEADAM)
+        value = s_adamPhantomClock.read(unsigned(Address), value);
+    return value;
 }
 //---------------------------------------------------------------------------
 // Z80 geheugenlees-hook
@@ -2357,52 +2199,6 @@ void coleco_setSpinner(int player, int analogValue)
 }
 
 //---------------------------------------------------------------------------
-static FILE *s_drive_trace_file = nullptr;
-
-static void drive_trace_open()
-{
-    if (s_drive_trace_file) return;
-    QByteArray path = QFile::encodeName(
-        QDir(QCoreApplication::applicationDirPath())
-            .filePath(QStringLiteral("driving_controller_trace.log")));
-    s_drive_trace_file = std::fopen(path.constData(), "w");
-    if (!s_drive_trace_file) {
-        path = QFile::encodeName(
-            QDir::current().filePath(QStringLiteral("driving_controller_trace.log")));
-        s_drive_trace_file = std::fopen(path.constData(), "w");
-    }
-    if (s_drive_trace_file) {
-        std::fprintf(s_drive_trace_file,
-            "ADAMP driving-controller IRQ trace\n"
-            "columns: tstates event analog gear PC SP IFF1 IFF2 IM IRQ ACK NMI_COUNT NMI_STATE/PENDING PSG_COUNT/LAST mem7000-700f mem71c0-71ff mem73e0-73ef\n");
-        std::fflush(s_drive_trace_file);
-    }
-}
-
-static void drive_trace(const char *event, int analogX)
-{
-    if (!s_drive_trace_file) return;
-    std::fprintf(s_drive_trace_file,
-        "%10u %-8s %6d GEAR=%u PC=%04X SP=%04X IFF=%u/%u IM=%u IRQ=%u ACK=%d NMI=%llu STATE=%u/%u PSG=%llu/%02X 7000:",
-        unsigned(tStatesCount), event, analogX, unsigned(ib_driving_gear),
-        unsigned(Z80.pc.w.l), unsigned(Z80.sp.w.l),
-        unsigned(Z80.iff1), unsigned(Z80.iff2), unsigned(Z80.im),
-        unsigned(Z80.irq_state), int(z80_irq_acknowledged),
-        z80_nmi_accepted_count, unsigned(Z80.nmi_state),
-        unsigned(Z80.nmi_pending), s_psg_write_count,
-        unsigned(s_psg_last_data));
-    for (int i = 0; i < 16; ++i)
-        std::fprintf(s_drive_trace_file, "%02X", unsigned(coleco_ReadByte(0x7000 + i)));
-    std::fprintf(s_drive_trace_file, " 71C0:");
-    for (int i = 0; i < 64; ++i)
-        std::fprintf(s_drive_trace_file, "%02X", unsigned(coleco_ReadByte(0x71C0 + i)));
-    std::fprintf(s_drive_trace_file, " 73E0:");
-    for (int i = 0; i < 16; ++i)
-        std::fprintf(s_drive_trace_file, "%02X", unsigned(coleco_ReadByte(0x73E0 + i)));
-    std::fputc('\n', s_drive_trace_file);
-    std::fflush(s_drive_trace_file);
-}
-
 //---------------------------------------------------------------------------
 void coleco_paddle(void)
 {
@@ -2411,26 +2207,12 @@ void coleco_paddle(void)
     static unsigned long long s_last_drive_tstates = 0;
     static bool s_drive_irq_asserted = false;
     static unsigned long long s_drive_irq_started = 0;
-    static bool s_drive_trace_active = false;
-    static unsigned int s_drive_last_sample = 0;
-    static unsigned int s_drive_last_gear = 0;
 
     if (coleco_drivingModeEnabled()) {
-        if (!s_drive_trace_active) {
-            drive_trace_open();
-            drive_trace("MODE_ON", int(ib_analog_x1));
-            s_drive_trace_active = true;
-            s_drive_last_sample = unsigned(tStatesCount);
-            s_drive_last_gear = unsigned(ib_driving_gear);
-        }
 
-        if (s_drive_last_gear != unsigned(ib_driving_gear)) {
-            drive_trace("GEAR", int(ib_analog_x1));
-            s_drive_last_gear = unsigned(ib_driving_gear);
-        }
 
         if (s_drive_irq_asserted && z80_irq_acknowledged) {
-            drive_trace("IRQ_ACK", int(ib_analog_x1));
+
             z80_set_irq_line(0, CLEAR_LINE);
             z80_irq_acknowledged = 0;
             s_drive_irq_asserted = false;
@@ -2439,7 +2221,7 @@ void coleco_paddle(void)
             // The physical controller produces a pulse, not an IRQ that can
             // remain stuck throughout a DI/game-over section.  If the CPU did
             // not accept it promptly, let this wheel transition expire.
-            drive_trace("TIMEOUT", int(ib_analog_x1));
+
             z80_set_irq_line(0, CLEAR_LINE);
             coleco_driveWheelReleaseEvent();
             s_drive_irq_asserted = false;
@@ -2480,27 +2262,15 @@ void coleco_paddle(void)
                 z80_set_irq_line(0, ASSERT_LINE);
                 s_drive_irq_asserted = true;
                 s_drive_irq_started = now;
-                drive_trace("IRQ_SET", analogX);
+
             }
         } else {
             s_drive_accumulator = 0;
         }
 
-        if (unsigned(tStatesCount) - s_drive_last_sample >= 500000u) {
-            drive_trace("SAMPLE", analogX);
-            s_drive_last_sample = unsigned(tStatesCount);
-        }
         return;
     }
 
-    if (s_drive_trace_active) {
-        drive_trace("MODE_OFF", int(ib_analog_x1));
-        if (s_drive_trace_file) {
-            std::fclose(s_drive_trace_file);
-            s_drive_trace_file = nullptr;
-        }
-        s_drive_trace_active = false;
-    }
     if (s_drive_irq_asserted) {
         z80_set_irq_line(0, CLEAR_LINE);
         s_drive_irq_asserted = false;
@@ -2619,7 +2389,6 @@ int coleco_do_scanline(void)
                     );
             }
 
-            adamp_cpu_crash_trace();
             ts = z80_do_opcode();
 
             CurScanLine_len -= ts;
@@ -2636,13 +2405,6 @@ int coleco_do_scanline(void)
     // VDP scanline update
     // ------------------------------------------------------------
     vdp_loop_active();
-    if (!coleco_vdp_is_f18a() && tms.CurLine == TMS9918_END_LINE)
-    {
-        static unsigned diagnosticFrame = 0;
-        adamp_vdp_trace("FRAME", 0);
-        if ((++diagnosticFrame % 60u) == 0u)
-            adamp_dump_machine_state();
-    }
 
     const bool vdp_irq_level = vdp_irq_level_active();
 
@@ -2758,7 +2520,18 @@ byte coleco_load_tape(int drive, const char *filename) {
 }
 
 int coleco_save_disk(int drive, const char *filename) {
-    return SaveFDI(&Disks[drive], filename, FMT_ADMDSK);
+    if (drive < 0 || drive >= MAX_DISKS || !filename || !*filename)
+        return FDI_SAVE_FAILED;
+    std::vector<byte> bytes;
+    if (!AdamDiskImage::rawBytes(Disks[drive], bytes)) return FDI_SAVE_FAILED;
+    QSaveFile file(QFile::decodeName(filename));
+    if (!file.open(QIODevice::WriteOnly)) return FDI_SAVE_FAILED;
+    const qint64 size = qint64(bytes.size());
+    if (file.write(reinterpret_cast<const char*>(bytes.data()), size) != size) {
+        file.cancelWriting();
+        return FDI_SAVE_FAILED;
+    }
+    return file.commit() ? FDI_SAVE_OK : FDI_SAVE_FAILED;
 }
 int coleco_save_tape(int drive, const char *filename) {
     return SaveFDI(&Tapes[drive], filename, FMT_DDP);
