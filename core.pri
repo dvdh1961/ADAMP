@@ -26,6 +26,8 @@ SOURCES += \
     $$PWD/source/SOUND/snd_sn76489.c
 
 HEADERS += \
+    $$PWD/source/6801/adam_harddisk.h \
+    $$PWD/source/CORE/adam_phantom_clock.h \
     $$PWD/source/ATARI2600/a2600_core.h \
     $$PWD/source/6801/adnet_core.h \
     $$PWD/source/6801/adnet_mcu2.h \
@@ -48,3 +50,8 @@ HEADERS += \
     $$PWD/source/GRAPH/tms9928a.h \
     $$PWD/source/SOUND/snd_ay8910.h \
     $$PWD/source/SOUND/snd_sn76489.h
+
+SOURCES += $$PWD/source/6801/adam_fujinet_pc.cpp $$PWD/source/6801/adnet_fujinet_pc.cpp
+HEADERS += $$PWD/source/6801/adam_fujinet_pc.h
+win32:LIBS += -lws2_32
+unix:LIBS += -lpthread

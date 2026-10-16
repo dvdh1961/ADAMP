@@ -74,3 +74,5 @@ HEADERS += \
 
 RESOURCES += \
            $$PWD/scrcpp/resources.qrc
+
+SOURCES += $$PWD/scrcpp/fujinetpcui.cpp
