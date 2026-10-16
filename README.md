@@ -17,6 +17,8 @@ Language Models (LLMs), we can achieve the full potential of our programming ski
 
 It serves as a central platform for integrating a wide range of hardware-related devices, all developed as part of the broader ADAM+ hardware project.
 
+[![HARDWARE](https://github.com/dvdh1961/ADAMPADAMP_HWD.png)]([https://youtu.be/JlMo5caZGwo](https://github.com/dvdh1961/ADAMP_HWD))
+
 ## 🎥 ADAM+ WHAT'S THIS ?!?
 
 [![release](https://github.com/dvdh1961/ADAMP/blob/main/scrcpp/ADAMP_INTRO.png)](https://youtu.be/JlMo5caZGwo)
