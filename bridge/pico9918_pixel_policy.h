@@ -25,4 +25,13 @@
 #define PICO9918_PIXEL_FROM_RGB12_PAIR(packed) (packed)
 #define PICO9918_PIXEL_PAIR(p)                 PICO9918_PIXEL_FROM_RGB12(p)
 
+/* Wide text uses the same one-ARGB-pixel-per-entry policy as other modes. */
+#define PICO9918_EXPAND_INDEXED_WIDE(dst, src, n, lut) \
+  do { \
+    const uint8_t* _s = (const uint8_t*)(src); \
+    PICO9918_PIXEL_T* _d = (PICO9918_PIXEL_T*)(dst); \
+    const PICO9918_PALETTE_LUT_T* _l = (lut); \
+    for (unsigned _i = 0; _i < (unsigned)(n); ++_i) _d[_i] = _l[_s[_i]]; \
+  } while (0)
+
 #endif /* ADAMP_PICO9918_PIXEL_POLICY_H */

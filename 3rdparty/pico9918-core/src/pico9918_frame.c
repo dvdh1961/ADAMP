@@ -438,7 +438,11 @@ bool __time_critical_func(pico9918_frame_scanline)(PICO9918_INST_ARG uint16_t y,
     PICO9918_EXPAND_INDEXED(dPixels + halfHBorder, lineSource, TMS9918_PIXELS_X, pico9918_palette_lut);
 
   // right border
-  PICO9918_FILL32_TRIGGER(PICO9918_FILL_BORDER, dPixels + halfHBorder + TMS9918_PIXELS_X);
+  /* Desktop pixels occupy a whole word; wide text emits 512 of them.
+     The Pico output still packs two 16-bit pixels into each word. */
+  const uint32_t activeWords =
+    sizeof(PICO9918_PIXEL_T) == sizeof(uint32_t) ? lineBytes : TMS9918_PIXELS_X;
+  PICO9918_FILL32_TRIGGER(PICO9918_FILL_BORDER, dPixels + halfHBorder + activeWords);
 
   /* the overlay is part of what the line costs, so it draws before the sample closes.
      Border lines draw it host-side instead - the banner has to come first there. */
