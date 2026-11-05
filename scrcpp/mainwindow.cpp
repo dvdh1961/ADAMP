@@ -622,6 +622,18 @@ MainWindow::MainWindow(QWidget *parent)
             },
             Qt::QueuedConnection);
 
+    // Startup media must be mounted on the worker before its boot reset.
+    // Queued calls to the same controller retain load-then-reset ordering.
+    if (m_machineType == MACHINE_ADAM && !m_ctrlAdamNet &&
+        !m_autoBootHardDisk && m_adamBootMode != AdamBootWriter &&
+        QFileInfo(m_adamStartupPath).isFile()) {
+        QTimer::singleShot(0, this, [this]() {
+            mountAdamStartupImageIfNeeded();
+            QMetaObject::invokeMethod(m_colecoController, "resetAdam",
+                                      Qt::QueuedConnection, Q_ARG(bool, false));
+        });
+    }
+
     m_allowSaveSettings = true;
 
     qDebug() << "[SETTINGS] saving enabled after startup";
